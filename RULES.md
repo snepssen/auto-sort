@@ -239,3 +239,56 @@ Prints the facts that were established and how, then each rule in order with
 why it did or did not match, then the destination it would choose. Every
 support conversation about this tool will start here, so it ships in milestone
 1 with the engine rather than later.
+
+## Previewing, applying and undoing
+
+`sort` is read-only while `dry_run = yes` (the default):
+
+```sh
+auto-sort sort ~/Downloads
+```
+
+Use `--apply` to explicitly request the moves. The first apply for each watched
+folder and exact rules-file revision is still forced to be a dry run; review
+its output and repeat the command to apply it. Changing the rules requires a
+fresh preview.
+
+```sh
+auto-sort sort ~/Downloads --apply
+auto-sort undo last
+```
+
+Every bundle member is recorded in `state.db` before the filesystem operation.
+Same-volume moves preserve the original inode. Cross-volume moves copy to a
+temporary name, verify SHA-256, install without replacing anything, and only
+then remove the source. `undo` performs the same hash check in reverse and
+refuses the entire bundle if any member changed or its original path is now
+occupied.
+
+## Running the watcher
+
+The persistent watcher runs in the foreground so a terminal, launch agent, or
+service manager can own its lifetime:
+
+```sh
+auto-sort watch --apply
+```
+
+It polls each `[watch]` folder, stores bundle observations in `state.db`, and
+only hands an item to the normal sorter after its size and timestamps remain
+unchanged for `settle_seconds`. Pulling a removable watched volume retains its
+queue. Paths produced by sorting are excluded from subsequent scans, including
+destinations inside a watched folder.
+
+The first real background sort for a folder and exact rules revision creates a
+preview, prints every proposed destination, and pauses. Review it, then run:
+
+```sh
+auto-sort resume
+auto-sort sort-now
+```
+
+`pause` and `resume` are durable state, not signals, so the choice survives a
+restart. `status` reports whether the loopback single-instance port is live and
+counts queued items by state. Use `watch --once` for one observation cycle in a
+script or test; normal operation leaves it running.

@@ -6,20 +6,46 @@ sit in the tray, watch the folders it has been told to watch, work out what
 each file actually is, and file it where the rules say — one file at a time,
 as they arrive, for as long as the machine is on.
 
-**It does not move anything yet.** This is milestone one of six: the part that
-works out what a file is. See [DESIGN.md](DESIGN.md) for the whole shape and
-[RULES.md](RULES.md) for the configuration format the rules engine will read.
+Identification, the safety-critical moving core, and the persistent watcher
+are complete. A sort is a dry run by default, every member is written to a
+SQLite ledger before it is touched, and the first attempted apply for a folder
+and rule file is forcibly turned into a preview. Real moves verify content,
+never overwrite, keep bundles together, and can be restored with `undo`. The
+watcher keeps its settle queue and paused state across restarts. See
+[DESIGN.md](DESIGN.md) for the whole shape and [RULES.md](RULES.md) for
+configuration.
 
 ## What works now
 
 ```sh
 python3 autosort.py explain ~/Downloads/some-file.bin
+python3 autosort.py explain ~/Downloads/some-file.bin --rules ./rules.ini
 python3 autosort.py scan ~/Downloads --list 40
+python3 autosort.py check-rules ./rules.ini
+python3 autosort.py sort ~/Downloads --rules ./rules.ini
+python3 autosort.py sort ~/Downloads --rules ./rules.ini --apply
+python3 autosort.py undo last
+python3 autosort.py watch --rules ./rules.ini --apply
+python3 autosort.py status
+python3 autosort.py pause
+python3 autosort.py resume
+python3 autosort.py sort-now
 ```
 
 `explain` prints every fact about one file, which reader established it, and
-how sure that reader was. `scan` groups a folder into items and counts what is
-in it. Neither writes anything.
+how sure that reader was. When a rules file is present, it also prints each rule
+tried and the destination the first match would choose. `check-rules` catches a
+bad section, option, expression or template without touching any files. `scan`
+groups a folder into items and counts what is in it. `sort` journals a complete
+plan and prints it without moving anything unless `--apply` is given or
+`dry_run = no` is set. Even then, a new folder/rules pairing must complete one
+preview first. `undo` verifies that each destination still has the recorded
+hash before restoring it. `watch` runs the low-priority polling service in the
+foreground, which makes it suitable for a terminal now and a platform service
+later. It persists observations until bundles have been unchanged for
+`settle_seconds`, keeps queued work when a watched volume disappears, and never
+watches its own output. `pause` and `resume` survive both daemon and machine
+restarts; `sort-now` wakes the loop without waiting for its next interval.
 
 ```
   IMG_1354.HEIC
@@ -117,15 +143,15 @@ their absence costs facts rather than function.
 python3 -m unittest discover -s tests
 ```
 
-44 tests, no fixtures committed: every sample file is assembled from its own
-specification at test time.
+110 tests, no binary fixtures committed: every sample file is assembled from
+its own specification at test time.
 
 ## Where this is going
 
-1. **Identification, grouping and `explain`** ← you are here
-2. Rules engine, ledger, real moves and `undo`
-3. The background daemon: watch, settle, queue, pause
-4. The log page on `127.0.0.1`, reveal-in-file-manager, and the tray
+1. **Identification, grouping and `explain`** ✓
+2. **Rules engine, ledger, real moves and `undo`** ✓
+3. **The background daemon: watch, settle, queue, pause** ✓
+4. The log page on `127.0.0.1`, reveal-in-file-manager, and the tray ← next
 5. Starting at log-in, on all three platforms
 6. `bootstrap.py` and the launchers
 

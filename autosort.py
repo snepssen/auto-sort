@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""auto-sort — work out what a file is, and eventually put it somewhere.
+"""auto-sort — identify, explain and safely file things as they arrive.
 
-This milestone does the working out and none of the putting. Two commands:
-
-    auto-sort explain PATH      every fact, its source, and how sure it is
-    auto-sort scan FOLDER       what is in there, grouped and counted
-
-`explain` is the one that matters. Every argument anybody will ever have with
-this tool is about a single file that went somewhere surprising, and the whole
-answer has to be one command and one screen. It ships now, with the engine,
-rather than later with the user interface, because a classifier whose
-reasoning cannot be read is a classifier nobody should let near their disk.
+The command-line interface provides inspection, one-shot transactional sorts,
+undo, and a persistent polling service.  The service deliberately calls the
+same planner and mover as ``sort``: there is only one implementation entrusted
+with filesystem changes.
 """
 
 from __future__ import annotations
@@ -20,10 +14,15 @@ import os
 import sys
 
 import bundles
+import daemon as daemon_module
 import evidence
 import identify
+import ledger as ledger_module
+import paths
+import rules
+import sorter
 
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 
 _TIERS = {"stat": identify.TIER_STAT, "signature": identify.TIER_SIGNATURE,
           "header": identify.TIER_HEADER, "all": identify.TIER_ALL}
@@ -42,7 +41,7 @@ def _colourless(text, width):
     return text if len(text) <= width else text[:width - 1] + "…"
 
 
-def explain(path, tier=identify.TIER_ALL, as_json=False):
+def explain(path, tier=identify.TIER_ALL, as_json=False, rule_set=None):
     if not os.path.exists(path):
         print("No such file: %s" % path, file=sys.stderr)
         return 1
@@ -57,6 +56,10 @@ def explain(path, tier=identify.TIER_ALL, as_json=False):
         target = bundles.Item(os.path.abspath(path))
 
     record = identify.identify(target, tier=tier)
+    evaluations = []
+    if rule_set is not None:
+        source_root = rule_set.source_root_for(path)
+        evaluations = rule_set.evaluate(record, source_root)
 
     if as_json:
         print(json.dumps({
@@ -67,6 +70,16 @@ def explain(path, tier=identify.TIER_ALL, as_json=False):
                           for name, fact in record.items()),
             "notes": record.notes,
             "conflicts": [str(conflict) for conflict in record.conflicts],
+            "rules": [{
+                "name": result.rule.name,
+                "matched": result.matched,
+                "reason": result.reason,
+                "mode": result.rule.mode,
+                "destination": result.destination,
+                "trace": [{"comparison": comparison, "matched": matched,
+                           "actual": actual}
+                          for comparison, matched, actual in result.trace],
+            } for result in evaluations],
         }, indent=2, default=str))
         return 0
 
@@ -115,7 +128,208 @@ def explain(path, tier=identify.TIER_ALL, as_json=False):
         print("  Notes")
         for note in record.notes:
             print("    - %s" % note)
+    if evaluations:
+        print()
+        print("  Rules")
+        for result in evaluations:
+            marker = "MATCH" if result.matched else "no"
+            print("    %-16s %-24s %s" % (
+                marker, result.rule.name, result.reason))
+            if result.destination:
+                print("      -> %s" % result.destination)
     print()
+    return 0
+
+
+def check_rules(filename=None):
+    try:
+        rule_set = rules.load(filename)
+    except rules.RuleError as error:
+        print("Rules error: %s" % error, file=sys.stderr)
+        return 2
+    print("Rules OK: %s" % rule_set.source)
+    print("  %d watched folder%s" % (
+        len(rule_set.watch.folders),
+        "" if len(rule_set.watch.folders) == 1 else "s"))
+    print("  %d rule%s" % (len(rule_set.rules),
+                            "" if len(rule_set.rules) == 1 else "s"))
+    print("  dry run %s" % ("on" if rule_set.settings.dry_run else "off"))
+    return 0
+
+
+def sort_folders(roots, rule_set, state_file=None, dry_run=None,
+                 as_json=False):
+    reports = []
+    worst = 0
+    with ledger_module.Ledger(state_file) as journal:
+        recovery = sorter.reconcile(journal)
+        for root in roots:
+            if not os.path.isdir(root):
+                print("Not a folder: %s" % root, file=sys.stderr)
+                worst = max(worst, 2)
+                continue
+            protected = (rule_set.source, journal.filename,
+                         journal.filename + "-wal", journal.filename + "-shm")
+            plan = sorter.build_plan(root, rule_set, exclude=protected)
+            result = sorter.execute(plan, rule_set, journal, dry_run)
+            reports.append((plan, result))
+            if result.failed:
+                worst = max(worst, 1)
+        if as_json:
+            print(json.dumps({
+                "recovery": recovery,
+                "runs": [_sort_report(plan, result)
+                         for plan, result in reports],
+            }, indent=2))
+            return worst
+
+        for message in recovery:
+            print("Recovered: %s" % message)
+        for plan, result in reports:
+            heading = "DRY RUN" if result.dry_run else "SORTED"
+            print("%s  run %d  %s" % (heading, result.run_id, plan.root))
+            if result.forced_preview:
+                print("  First apply for this folder and rules: preview only.")
+                print("  Review this list, then repeat with --apply.")
+            for item in plan.items:
+                for member in item.members:
+                    verb = "copy" if item.operation == "copy" else "move"
+                    print("  %-5s %s" % (verb, member.source))
+                    print("        -> %s  [%s]" % (member.destination,
+                                                   item.rule_name))
+            for source, reason in plan.skipped:
+                print("  leave %s  (%s)" % (source, reason))
+            for message in result.messages:
+                print("  ! %s" % message)
+            print("  %d item%s planned, %d skipped" % (
+                len(plan.items), "" if len(plan.items) == 1 else "s",
+                len(plan.skipped)))
+    return worst
+
+
+def _sort_report(plan, result):
+    return {
+        "run_id": result.run_id,
+        "root": plan.root,
+        "dry_run": result.dry_run,
+        "forced_preview": result.forced_preview,
+        "completed": result.completed,
+        "failed": result.failed,
+        "items": [{
+            "rule": item.rule_name,
+            "operation": item.operation,
+            "members": [{"source": member.source,
+                         "destination": member.destination,
+                         "size": member.size,
+                         "sha256": member.sha256}
+                        for member in item.members],
+        } for item in plan.items],
+        "skipped": [{"source": source, "reason": reason}
+                    for source, reason in plan.skipped],
+        "messages": result.messages,
+    }
+
+
+def undo_run(run_id="last", state_file=None, dry_run=False, as_json=False):
+    try:
+        with ledger_module.Ledger(state_file) as journal:
+            recovery = sorter.reconcile(journal)
+            result = sorter.undo(journal, run_id, dry_run=dry_run)
+            rows = journal.moves(result.run_id)
+    except (ValueError, OSError, RuntimeError) as error:
+        print("Undo error: %s" % error, file=sys.stderr)
+        return 2
+    if as_json:
+        print(json.dumps({
+            "run_id": result.run_id,
+            "dry_run": result.dry_run,
+            "completed": result.completed,
+            "failed": result.failed,
+            "recovery": recovery,
+            "moves": [{"source": row["source"],
+                       "destination": row["destination"],
+                       "status": row["status"], "error": row["error"]}
+                      for row in rows],
+            "messages": result.messages,
+        }, indent=2))
+        return 1 if result.failed else 0
+    for message in recovery:
+        print("Recovered: %s" % message)
+    print("%s  undo run %d" % (
+        "DRY RUN" if result.dry_run else "UNDONE", result.run_id))
+    for row in rows:
+        print("  restore %s" % row["source"])
+        print("       -> %s  (%s)" % (row["destination"], row["status"]))
+    for message in result.messages:
+        print("  ! %s" % message)
+    return 1 if result.failed else 0
+
+
+def watch(rule_path=None, state_file=None, dry_run=None, port=None,
+          once=False):
+    try:
+        rule_set = rules.load(rule_path)
+    except rules.RuleError as error:
+        print("Rules error: %s" % error, file=sys.stderr)
+        return 2
+    if not rule_set.watch.folders:
+        print("watch needs at least one folder in [watch]", file=sys.stderr)
+        return 2
+    try:
+        with daemon_module.PollingDaemon(
+                rule_path, state_file, dry_run, port) as service:
+            service.run(once=once)
+    except daemon_module.AlreadyRunning as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("\nSorting stopped.")
+    return 0
+
+
+def daemon_control(command, state_file=None, as_json=False):
+    if command in ("pause", "resume"):
+        with ledger_module.Ledger(state_file) as journal:
+            journal.set_paused(command == "pause")
+        running = daemon_module.wake(state_file, command)
+        if as_json:
+            print(json.dumps({"paused": command == "pause",
+                              "running": running}, indent=2))
+        else:
+            print("Sorting %s%s." % (
+                "paused" if command == "pause" else "resumed",
+                "" if running else " (daemon is not running)"))
+        return 0
+
+    if command == "sort-now":
+        running = daemon_module.wake(state_file, command)
+        if as_json:
+            print(json.dumps({"running": running, "woken": running},
+                             indent=2))
+        elif running:
+            print("Sort requested.")
+        else:
+            print("auto-sort daemon is not running", file=sys.stderr)
+        return 0 if running else 1
+
+    with ledger_module.Ledger(state_file) as journal:
+        paused = journal.paused()
+        counts = dict((row["status"], row["count"])
+                      for row in journal.queue_counts())
+        port = int(journal.get_state("daemon_port",
+                                     daemon_module.DEFAULT_PORT))
+    running = daemon_module.wake(state_file, "status")
+    report = {"running": running, "paused": paused, "port": port,
+              "queue": counts}
+    if as_json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print("Daemon: %s on 127.0.0.1:%d" % (
+            "running" if running else "not running", port))
+        print("Sorting: %s" % ("paused" if paused else "active"))
+        print("Queue: %s" % (", ".join(
+            "%s %d" % (name, count)
+            for name, count in sorted(counts.items())) or "empty"))
     return 0
 
 
@@ -192,11 +406,24 @@ USAGE = """auto-sort %s
 
   auto-sort explain PATH        every fact about one file, and where it came from
   auto-sort scan FOLDER         what is in a folder, grouped into items
+  auto-sort check-rules [FILE]  validate a rules file without changing anything
+  auto-sort sort [FOLDER]       plan a sort; dry-run unless configuration says otherwise
+  auto-sort undo [RUN|last]     restore a completed move run
+  auto-sort watch               run the persistent polling sorter
+  auto-sort pause|resume        persistently pause or resume background sorting
+  auto-sort status              show daemon and queue state
+  auto-sort sort-now            wake the daemon for an immediate scan
 
 Options
   --tier stat|signature|header|all   how far up the ladder to climb (default all)
   --depth N                          how far into subfolders to look (scan, default 3)
   --list N                           print the first N items (scan)
+  --rules FILE                       rules to show while explaining a file
+  --state FILE                       ledger database (default: platform state folder)
+  --apply                            perform a sort after its required preview
+  --dry-run                          force a read-only sort or undo preview
+  --once                             run one watch cycle and exit
+  --port N                           loopback daemon port (default 47653)
   --json                             machine-readable output
 """ % VERSION
 
@@ -215,6 +442,11 @@ def main(argv=None):
     depth = 3
     show = 0
     as_json = False
+    rule_path = None
+    state_file = None
+    dry_run = None
+    once = False
+    port = None
     targets = []
     while argv:
         argument = argv.pop(0)
@@ -226,6 +458,25 @@ def main(argv=None):
             show = int(argv.pop(0))
         elif argument == "--json":
             as_json = True
+        elif argument == "--rules" and argv:
+            rule_path = argv.pop(0)
+        elif argument == "--state" and argv:
+            state_file = argv.pop(0)
+        elif argument == "--apply":
+            dry_run = False
+        elif argument == "--dry-run":
+            dry_run = True
+        elif argument == "--once":
+            once = True
+        elif argument == "--port" and argv:
+            try:
+                port = int(argv.pop(0))
+            except ValueError:
+                print("--port needs a number", file=sys.stderr)
+                return 2
+            if not 0 <= port <= 65535:
+                print("--port must be between 0 and 65535", file=sys.stderr)
+                return 2
         elif argument.startswith("-"):
             print("Unknown option: %s" % argument, file=sys.stderr)
             return 2
@@ -236,13 +487,54 @@ def main(argv=None):
         if not targets:
             print("explain needs a path", file=sys.stderr)
             return 2
+        rule_set = None
+        candidate = paths.rules_file(rule_path)
+        if rule_path or os.path.exists(candidate):
+            try:
+                rule_set = rules.load(rule_path)
+            except rules.RuleError as error:
+                print("Rules error: %s" % error, file=sys.stderr)
+                return 2
         worst = 0
         for target in targets:
-            worst = max(worst, explain(target, tier, as_json))
+            worst = max(worst, explain(target, tier, as_json, rule_set))
         return worst
     if command == "scan":
         return scan(targets[0] if targets else ".", tier, depth, show,
                     as_json)
+    if command == "check-rules":
+        if len(targets) > 1:
+            print("check-rules takes at most one file", file=sys.stderr)
+            return 2
+        return check_rules(targets[0] if targets else rule_path)
+    if command == "sort":
+        try:
+            rule_set = rules.load(rule_path)
+        except rules.RuleError as error:
+            print("Rules error: %s" % error, file=sys.stderr)
+            return 2
+        roots = targets or rule_set.watch.folders
+        if not roots:
+            print("sort needs a folder or [watch] folders", file=sys.stderr)
+            return 2
+        return sort_folders(roots, rule_set, state_file, dry_run, as_json)
+    if command == "undo":
+        if len(targets) > 1:
+            print("undo takes one run number or 'last'", file=sys.stderr)
+            return 2
+        return undo_run(targets[0] if targets else "last", state_file,
+                        dry_run is True, as_json)
+    if command == "watch":
+        if targets:
+            print("watch takes no paths; configure [watch] folders",
+                  file=sys.stderr)
+            return 2
+        return watch(rule_path, state_file, dry_run, port, once)
+    if command in ("pause", "resume", "status", "sort-now"):
+        if targets:
+            print("%s takes no arguments" % command, file=sys.stderr)
+            return 2
+        return daemon_control(command, state_file, as_json)
     print("Unknown command: %s\n" % command, file=sys.stderr)
     print(USAGE)
     return 2
