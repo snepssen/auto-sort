@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+build/
+dist/
+*.egg-info/
+# Written by the daemon, once there is one. Never committed: it holds the
+# ledger of every file this machine has moved.
+state.db
+rules.ini
