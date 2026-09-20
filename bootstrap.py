@@ -43,11 +43,22 @@ def module_line(module):
 
 
 def install_modules(chosen, on_line=None):
-    """pip installs for this interpreter. Never root, never fatal."""
+    """pip installs into auto-sort's own environment. Never root, never fatal.
+
+    The environment is made first if it does not exist. Installing into the
+    Python that happens to be running is not an option worth keeping: most
+    system Pythons now refuse it outright under PEP 668, and the ones that
+    allow it should not be written to by a file sorter.
+    """
     import subprocess
+    interpreter = programs.make_runtime()
+    if interpreter is None:
+        return [(module, False,
+                 "could not create auto-sort's own Python environment")
+                for module in chosen]
     results = []
     for module in chosen:
-        command = programs.module_command(module)
+        command = programs.module_command(module, interpreter)
         if on_line:
             on_line("$ " + " ".join(command))
         try:
@@ -57,18 +68,10 @@ def install_modules(chosen, on_line=None):
         except Exception as error:
             results.append((module, False, str(error)))
             continue
-        if module.present():
+        if module.present(interpreter):
             results.append((module, True, ""))
             continue
         output = (done.stderr or done.stdout or "")
-        if "externally-managed-environment" in output:
-            # A Python the operating system owns. Saying so is more use than
-            # a pip traceback, and installing anyway would be exactly the
-            # kind of damage the check exists to prevent.
-            results.append((module, False,
-                            "this Python is managed by the system; the icon "
-                            "needs a Python you own"))
-            continue
         detail = output.strip().splitlines()
         results.append((module, False, detail[-1] if detail else
                         "exit %d" % done.returncode))
@@ -184,8 +187,9 @@ def _offer_modules(modules, assume_yes, quiet):
         # it.
         if quiet or not sys.stdin or not sys.stdin.isatty():
             return
-        for module in modules:
-            print("  " + module_line(module))
+        print("  auto-sort will make its own small Python environment in")
+        print("  %s" % programs.runtime_dir())
+        print("  and install there. No system Python is touched.")
         try:
             answer = input("Install the menu bar icon? [Y/n] ").strip().lower()
         except (EOFError, KeyboardInterrupt, ValueError):

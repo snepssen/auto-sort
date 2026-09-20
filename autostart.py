@@ -28,14 +28,38 @@ def platform_name():
 
 
 def command(rules_file):
+    """The argv launchd, XDG autostart or the Startup folder will run.
+
+    Prefers auto-sort's own environment when it exists, because that is where
+    the optional packages live -- the menu bar icon among them. Recording
+    whichever interpreter happened to run `autostart install` would mean a
+    login item that starts, finds no Cocoa, and quietly runs headless
+    forever.
+    """
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "autosort.py")
-    executable = sys.executable
+    executable = _preferred_python()
     if platform_name() == "windows":
         candidate = os.path.join(os.path.dirname(executable), "pythonw.exe")
         if os.path.exists(candidate):
             executable = candidate
     return [executable, script, "watch", "--rules", os.path.abspath(rules_file)]
+
+
+def _preferred_python():
+    try:
+        import platform_support
+    except ImportError:
+        return sys.executable
+    runtime = platform_support.runtime_python()
+    if not runtime:
+        return sys.executable
+    # Only if it can actually do something this interpreter cannot.
+    for module in platform_support.MODULES.values():
+        if module.applies_here() and not module.present() \
+                and module.present(runtime):
+            return runtime
+    return sys.executable
 
 
 def target():

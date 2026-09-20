@@ -443,8 +443,19 @@ is nobody to answer, and never blocks the sorter when something fails.
 
 PyObjC is the one Python package, and only because there is no way to put an
 icon in a Mac's menu bar without Cocoa and Apple stopped shipping it with the
-system Python. It installs with `--user` outside a virtual environment, so it
-never writes into a system Python's site-packages.
+system Python.
+
+It installs into **a small environment auto-sort owns**, under the state
+folder, and never into the Python that happens to be running. That is not
+tidiness. Homebrew's Python, Debian's, Fedora's and a growing number of others
+are marked externally managed under PEP 668, so `pip install --user` is
+refused outright — on the machine this was developed on, that meant the menu
+bar icon could not be installed by anybody, ever. A directory of our own
+sidesteps the question: nothing outside it is touched, a system Python cannot
+be damaged by something that never writes to it, and removing auto-sort
+removes it. `autostart` then records that interpreter in the login item, so
+the icon is there at login rather than the daemon starting, finding no Cocoa,
+and running headless forever.
 
 For a copied checkout, use `./start.sh` on macOS/Linux, double-click
 `Start auto-sort.command` on macOS, or use `start.bat` on Windows. These

@@ -158,7 +158,17 @@ class Module(object):
             return "macos" in self.platforms
         return "linux" in self.platforms
 
-    def present(self):
+    def present(self, python=None):
+        """Whether the package can be imported, here or in a given Python."""
+        if python:
+            try:
+                done = subprocess.run(
+                    [python, "-c", "import %s" % self.module],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    timeout=60)
+                return done.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                return False
         try:
             import importlib.util
             return importlib.util.find_spec(self.module) is not None
@@ -178,22 +188,69 @@ def in_virtualenv():
     return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
 
 
-def module_command(module):
-    """The pip invocation for this interpreter, without ever needing root.
+def runtime_dir():
+    """Where auto-sort keeps the small environment it owns."""
+    import paths
+    return os.path.join(paths.state_dir(), "runtime")
 
-    `--user` outside a virtual environment, because a tool that installs into
-    a system Python's site-packages is a tool that breaks the system Python.
+
+def runtime_python():
+    """The interpreter inside that environment, if it has been made."""
+    base = runtime_dir()
+    for relative in (("bin", "python3"), ("bin", "python"),
+                     ("Scripts", "python.exe")):
+        candidate = os.path.join(base, *relative)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def make_runtime(runner=None):
+    """Create the private environment. Returns its interpreter, or None.
+
+    auto-sort installs Python packages into an environment it owns rather
+    than into the Python it happens to be running under, and that is not
+    tidiness. Homebrew's Python, Debian's, Fedora's and an increasing number
+    of others are marked externally managed under PEP 668, so `pip install
+    --user` is refused outright -- which on this machine meant the menu bar
+    icon could never be installed at all, by anybody, ever.
+
+    A directory of our own sidesteps the whole question. Nothing outside it
+    is touched, removing auto-sort removes it, and a system Python cannot be
+    damaged by something that never writes to it.
     """
-    command = [sys.executable, "-m", "pip", "install"]
-    if not in_virtualenv():
-        command.append("--user")
-    command.append(module.package)
-    return command
+    runner = runner or subprocess.run
+    base = runtime_dir()
+    existing = runtime_python()
+    if existing:
+        return existing
+    try:
+        os.makedirs(os.path.dirname(base), exist_ok=True)
+        runner([sys.executable, "-m", "venv", base],
+               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return runtime_python()
+
+
+def module_command(module, python=None):
+    """The pip invocation that installs a package, without ever needing root.
+
+    Into auto-sort's own environment by default. `--user` is deliberately not
+    used: on an externally managed Python it is refused, and on one that
+    allows it it writes into a directory shared with everything else the
+    person has installed.
+    """
+    interpreter = python or runtime_python() or sys.executable
+    return [interpreter, "-m", "pip", "install", module.package]
 
 
 def missing_modules():
+    """Optional packages that are not importable here or in our environment."""
+    interpreter = runtime_python()
     return [module for module in MODULES.values()
-            if module.applies_here() and not module.present()]
+            if module.applies_here() and not module.present()
+            and not (interpreter and module.present(interpreter))]
 
 
 def pip_available():

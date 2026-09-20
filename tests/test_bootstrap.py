@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -13,12 +15,31 @@ import bootstrap                                           # noqa: E402
 import platform_support as programs                        # noqa: E402
 
 
+def tearDownModule():
+    """Nothing in this file may touch the real state folder.
+
+    Written after a test called `offer(assume_yes=True)` without stubbing the
+    module list, which happily created a forty-megabyte virtual environment
+    in the user's Application Support and pip-installed into it. Checked at
+    the end of the module rather than inside one test, because the test that
+    does the damage is not the test that would notice.
+    """
+    real = programs.runtime_dir()
+    if os.path.exists(real):
+        raise AssertionError(
+            "the test run created %s -- stub programs.missing_modules or "
+            "bootstrap.install_modules in whichever test calls offer()"
+            % real)
+
+
 class BootstrapTests(unittest.TestCase):
     def setUp(self):
         programs.forget()
+        self.directory = tempfile.mkdtemp()
 
     def tearDown(self):
         programs.forget()
+        shutil.rmtree(self.directory, ignore_errors=True)
 
     def test_every_program_is_optional(self):
         self.assertTrue(programs.PROGRAMS)
@@ -51,19 +72,30 @@ class BootstrapTests(unittest.TestCase):
         for module in programs.MODULES.values():
             self.assertFalse(module.required)
 
-    def test_a_python_package_is_installed_into_this_interpreter(self):
-        command = programs.module_command(programs.MODULES["pyobjc"])
-        self.assertEqual(command[0], sys.executable)
+    def test_a_python_package_goes_into_our_own_environment(self):
+        # Never into the Python that happens to be running: most system
+        # Pythons refuse it outright under PEP 668, and the ones that allow
+        # it should not be written to by a file sorter.
+        fake = os.path.join(self.directory, "runtime", "bin", "python3")
+        with mock.patch.object(programs, "runtime_python",
+                               return_value=fake):
+            command = programs.module_command(programs.MODULES["pyobjc"])
+        self.assertEqual(command[0], fake)
         self.assertEqual(command[1:4], ["-m", "pip", "install"])
         self.assertIn("pyobjc-framework-Cocoa", command)
 
-    def test_installing_never_needs_root(self):
-        command = programs.module_command(programs.MODULES["pyobjc"])
+    def test_installing_never_needs_root_and_never_uses_user(self):
+        fake = os.path.join(self.directory, "runtime", "bin", "python3")
+        with mock.patch.object(programs, "runtime_python",
+                               return_value=fake):
+            command = programs.module_command(programs.MODULES["pyobjc"])
         self.assertNotIn("sudo", command)
-        if not programs.in_virtualenv():
-            self.assertIn("--user", command,
-                          "outside a virtual environment this would write "
-                          "into a system Python's site-packages")
+        self.assertNotIn("--user", command,
+                         "--user is refused on an externally managed Python "
+                         "and shares a directory with everything else on one "
+                         "that allows it")
+
+
 
     def test_the_offer_never_prompts_when_nobody_can_answer(self):
         # A launcher started by the system has no stdin. An input() there
@@ -87,6 +119,8 @@ class BootstrapTests(unittest.TestCase):
         with mock.patch.object(programs, "current_manager", return_value="apt"), \
                 mock.patch.object(programs, "missing",
                                   return_value=[programs.PROGRAMS["ffprobe"]]), \
+                mock.patch.object(programs, "missing_modules",
+                                  return_value=[]), \
                 mock.patch.object(bootstrap, "install") as install:
             self.assertTrue(bootstrap.offer(assume_yes=True, quiet=True))
         install.assert_not_called()
