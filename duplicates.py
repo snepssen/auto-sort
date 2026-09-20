@@ -30,10 +30,13 @@ from __future__ import annotations
 
 import collections
 import os
+import re
 import stat
 
 import bundles
+import kinds
 import mover
+import userdirs
 
 
 class Index(object):
@@ -135,15 +138,51 @@ def annotate(record, index, path, size=None):
 # economy as above: sizes come free from walking, and only a size collision
 # is worth opening a file for.
 
-# Sorting priority. The lower number loses. Where a copy sits says what it
-# is: a funnel is somewhere files pass through, a holding folder is somewhere
-# auto-sort put something it could not place, and anywhere else is somewhere
-# a person chose. The one in the place somebody chose is the real file.
+# Which copy is the real one, decided in two parts.
+#
+# First: is it in the folder its kind belongs to? A lyric sheet is a document
+# and belongs under Documents however many times it was copied next to the
+# music it was written for. That question comes first because it is the same
+# one the sorter itself answers -- documents to Documents, music to Music --
+# and a duplicate check that contradicted it would file a thing one way and
+# tidy it the other.
+#
+# Second, among copies that agree on that: how it got there. A funnel is
+# somewhere files pass through, a holding folder is somewhere auto-sort put
+# what it could not place, and anywhere else is somewhere a person chose.
 INTAKE = 0        # a watched folder: Downloads, the funnel
 HOLDING = 1       # Unfiled, Unsorted: auto-sort's own "not yet" drawer
 KEPT = 2          # anywhere else, which means somebody put it there
 
 MIN_SIZE = 4096   # below this, identical files are usually stubs and icons
+
+
+_TOKEN = re.compile(r"[A-Za-z0-9]+")
+_HEXISH = re.compile(r"^[0-9a-f]{4,}$", re.I)
+
+# Below this a name is machine noise rather than something a person wrote.
+READABLE = 0.5
+
+
+def name_information(stem):
+    """Roughly how much a name tells somebody, from 0 to 1.
+
+    No vocabulary and no list: a run of digits or of hex characters carries
+    nothing a person can use, and a run of letters usually does. A UUID
+    scores near zero however long it is, which is the point.
+    """
+    tokens = _TOKEN.findall(stem)
+    if not tokens:
+        return 0.0
+    useful = 0
+    for token in tokens:
+        if token.isdigit():
+            continue
+        if _HEXISH.match(token) and not token.isalpha():
+            continue
+        if any(character.isalpha() for character in token):
+            useful += 1
+    return useful / float(len(tokens))
 
 
 class Group(object):
@@ -153,7 +192,9 @@ class Group(object):
         self.digest = digest
         self.size = size
         # Best place first, so `keeper` is simply the first one.
-        self.paths = sorted(paths, key=lambda path: (-places[path], path))
+        self.paths = sorted(
+            paths, key=lambda path: (tuple(-part for part in places[path]),
+                                     path))
         self.places = places
 
     @property
@@ -162,9 +203,29 @@ class Group(object):
 
     @property
     def losers(self):
-        """Copies in a lesser place than the keeper. Possibly none."""
+        """Copies in a lesser place than the keeper. Possibly none.
+
+        Except when binning one would throw away the only readable name.
+        The copy that survives is the one somebody will have to find again,
+        and a folder of `exec-63512093-74d5-4282-a7fc-159ff1ce12ea.png`
+        where `B04 - Oli.png` used to exist has lost something the bytes do
+        not hold. Reclaiming disk is not worth that, so the group is
+        reported and left whole.
+        """
         best = self.places[self.keeper]
+        if self.keeper_is_nameless:
+            return []
         return [path for path in self.paths[1:] if self.places[path] < best]
+
+    @property
+    def keeper_is_nameless(self):
+        keeper = name_information(os.path.splitext(
+            os.path.basename(self.keeper))[0])
+        if keeper >= READABLE:
+            return False
+        return any(name_information(os.path.splitext(
+            os.path.basename(path))[0]) >= READABLE
+            for path in self.paths[1:])
 
     @property
     def undecided(self):
@@ -174,22 +235,54 @@ class Group(object):
         filing, not a mistake to correct. They are reported and left alone.
         """
         best = self.places[self.keeper]
+        if self.keeper_is_nameless:
+            return list(self.paths[1:])
         return [path for path in self.paths[1:] if self.places[path] >= best]
 
     def wasted(self):
         return self.size * len(self.losers)
 
 
+def _under(path, prefix):
+    """Is `path` inside `prefix`? Expanded, because a rules file says `~`."""
+    prefix = os.path.abspath(os.path.expanduser(prefix))
+    return path == prefix or path.startswith(os.path.join(prefix, ""))
+
+
+def at_home(path):
+    """Is this file under the folder its own kind belongs in?
+
+    By extension alone. Opening the file would be more certain and would
+    cost a read of every candidate to answer a question the extension gets
+    right for the cases this decides -- a `.md` beside a `.wav`.
+    """
+    extension = os.path.splitext(path)[1].lstrip(".").lower()
+    classified = kinds.classify_extension(extension)
+    if not classified:
+        return False
+    home = userdirs.KIND_HOMES.get(classified[0])
+    if not home:
+        return False
+    try:
+        return _under(os.path.abspath(path), userdirs.path(home[0]))
+    except (OSError, KeyError):
+        return False
+
+
 def place_of(path, intake=(), holding=()):
-    """What kind of folder this copy is sitting in."""
+    """`(in its own home, how it got here)` -- bigger is the better copy."""
     path = os.path.abspath(path)
+    level = KEPT
     for prefix in holding:
-        if path.startswith(os.path.join(os.path.abspath(prefix), "")):
-            return HOLDING
-    for prefix in intake:
-        if path.startswith(os.path.join(os.path.abspath(prefix), "")):
-            return INTAKE
-    return KEPT
+        if _under(path, prefix):
+            level = HOLDING
+            break
+    else:
+        for prefix in intake:
+            if _under(path, prefix):
+                level = INTAKE
+                break
+    return (1 if at_home(path) else 0, level)
 
 
 def scan(folders, intake=(), holding=(), min_size=MIN_SIZE, limit=200000,

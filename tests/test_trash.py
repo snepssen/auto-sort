@@ -153,3 +153,53 @@ class WhichCopyIsReal(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ANameIsWorthMoreThanTheDiskSpace(unittest.TestCase):
+    """Binning the readable copy of a file is a loss the bytes do not show."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-names-")
+        self.holding = os.path.join(self.dir, "Documents", "Codex")
+        self.chosen = os.path.join(self.dir, "Pictures", "Art")
+        for folder in (self.holding, self.chosen):
+            os.makedirs(folder)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def write(self, folder, name, body):
+        path = os.path.join(folder, name)
+        with open(path, "wb") as handle:
+            handle.write(body)
+        return path
+
+    def scan(self):
+        return duplicates.scan([self.dir], intake=[],
+                               holding=[self.holding], min_size=1)
+
+    def test_a_uuid_scores_near_nothing(self):
+        self.assertLess(duplicates.name_information(
+            "exec-63512093-74d5-4282-a7fc-159ff1ce12ea"), 0.25)
+        self.assertEqual(duplicates.name_information("B04 - Oli"), 1.0)
+
+    def test_the_only_readable_name_is_not_binned(self):
+        """Observed on a real disk: it would have kept 138 UUIDs.
+
+        The copy that survives is the one somebody has to find again.
+        """
+        body = b"png" * 3000
+        self.write(self.chosen,
+                   "exec-63512093-74d5-4282-a7fc-159ff1ce12ea.png", body)
+        self.write(self.holding, "B04 - Oli.png", body)
+        group = self.scan()[0]
+        self.assertEqual(group.losers, [])
+        self.assertEqual(len(group.undecided), 1)
+
+    def test_a_readable_keeper_still_wins_normally(self):
+        body = b"png" * 3000
+        keep = self.write(self.chosen, "Arctic Fox.png", body)
+        spare = self.write(self.holding, "B01 - Arctic Fox v3.png", body)
+        group = self.scan()[0]
+        self.assertEqual(group.keeper, keep)
+        self.assertEqual(group.losers, [spare])
