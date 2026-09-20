@@ -175,7 +175,8 @@ def sort_folders(roots, rule_set, state_file=None, dry_run=None,
                 continue
             protected = (rule_set.source, journal.filename,
                          journal.filename + "-wal", journal.filename + "-shm")
-            plan = sorter.build_plan(root, rule_set, exclude=protected)
+            plan = sorter.build_plan(root, rule_set, exclude=protected,
+                                     journal=journal)
             result = sorter.execute(plan, rule_set, journal, dry_run)
             reports.append((plan, result))
             if result.failed:

@@ -17,6 +17,7 @@ import stat
 import time
 
 import bundles
+import duplicates
 import identify
 import mover
 import paths
@@ -91,8 +92,14 @@ def rules_hash(rule_set):
     return digest.hexdigest()
 
 
-def build_plan(root, rule_set, exclude=(), items=None):
+def build_plan(root, rule_set, exclude=(), items=None, journal=None):
+    """Plan a sort. `journal` lets it recognise files it has filed before.
+
+    The ledger is optional here on purpose: a plan is still a plan without
+    it, just one that cannot tell a second copy from a first.
+    """
     root = os.path.abspath(root)
+    seen = duplicates.Index(journal)
     planned = []
     skipped = []
     reserved = set()
@@ -128,6 +135,13 @@ def build_plan(root, rule_set, exclude=(), items=None):
             skipped.append((item.primary,
                             "cloud placeholder is not present on this device"))
             continue
+        # Identical to something already filed, or to something earlier in
+        # this same plan. The second case matters as much as the first:
+        # copies usually arrive together, because the copy was the point.
+        if len(item.members) == 1 and not item.is_dir:
+            duplicates.annotate(record, seen, item.primary,
+                                record.value("size"))
+
         decision, near_miss = rule_set.decide(record, source_root=root)
         if decision is None:
             if rule_set.settings.unsorted != "gather":
@@ -199,6 +213,11 @@ def build_plan(root, rule_set, exclude=(), items=None):
                             % error))
             continue
         reserved.update(_collision_key(path) for path in destinations)
+        for member in members:
+            # Anything planned is about to exist at its destination, so a
+            # later copy in this same run is a duplicate of it.
+            seen.remember(member.size, member.sha256, member.destination,
+                          must_exist=False)
         planned.append(PlannedItem(item, rule_name, operation, members,
                                    record.as_dict(), holding))
     return Plan(root, planned, skipped)

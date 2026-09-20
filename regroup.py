@@ -118,6 +118,9 @@ def build(journal, rule_set, source_root=None, limit=20000):
     plans = []
     for root, group in sorted(grouped.items()):
         items = [bundles.Item(candidate.path) for candidate in group]
+        # No ledger here on purpose: a promotion is a file that is
+        # already in the ledger moving again, so it would be found as a
+        # duplicate of itself.
         plan = sorter.build_plan(root, promoting, items=items)
         # Everything that matched nothing is simply still waiting, which is
         # the normal case and not worth reporting as a skip.

@@ -364,7 +364,7 @@ class PollingDaemon(object):
         if requested_dry or not has_preview:
             plan = sorter.build_plan(
                 root, rule_set, exclude=self._protected_paths(rule_set),
-                items=[item for _row, item in valid])
+                items=[item for _row, item in valid], journal=self.journal)
             if not plan.items:
                 reasons = dict((sorter._collision_key(path), reason)
                                for path, reason in plan.skipped)
@@ -418,7 +418,7 @@ class PollingDaemon(object):
             self.journal.set_queue_status(row["id"], "processing")
             plan = sorter.build_plan(
                 root, rule_set, exclude=self._protected_paths(rule_set),
-                items=[item])
+                items=[item], journal=self.journal)
             if not plan.items:
                 reason = plan.skipped[0][1] if plan.skipped else "nothing to do"
                 if _retryable_skip(reason):
