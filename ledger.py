@@ -18,7 +18,7 @@ import time
 import paths
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def now():
@@ -174,6 +174,21 @@ class Ledger(object):
 
                     PRAGMA user_version = 5;
                 """)
+            version = 5
+        if version == 5:
+            with self.connection:
+                columns = [row[1] for row in self.connection.execute(
+                    "PRAGMA table_info(moves)").fetchall()]
+                if "holding" not in columns:
+                    # Whether the rule that placed a file considered its
+                    # destination provisional. Recorded at the time rather
+                    # than worked out later from the rule's name, because
+                    # names change every time a rules file is regenerated and
+                    # a file's history must not depend on that.
+                    self.connection.execute(
+                        "ALTER TABLE moves ADD COLUMN holding "
+                        "INTEGER NOT NULL DEFAULT 0")
+                self.connection.execute("PRAGMA user_version = 6")
 
     def record_directories(self, run_id, directories):
         """Remember the folders a run had to create, so undo can remove them.
@@ -267,7 +282,7 @@ class Ledger(object):
 
     def add_move(self, run_id, item_number, member_number, operation,
                  rule_name, source, destination, size, sha256,
-                 status="planned", facts=None):
+                 status="planned", facts=None, holding=False):
         facts_json = json.dumps(facts, sort_keys=True, default=str) \
             if facts else None
         with self.connection:
@@ -275,11 +290,11 @@ class Ledger(object):
                 INSERT INTO moves(
                     run_id, item_number, member_number, operation, rule_name,
                     source, destination, size, sha256, status, created_at,
-                    facts_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    facts_json, holding
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (run_id, item_number, member_number, operation, rule_name,
                     source, destination, int(size), sha256, status, now(),
-                    facts_json))
+                    facts_json, int(bool(holding))))
         return cursor.lastrowid
 
     def update_move(self, move_id, status, error=None, restored_to=None):

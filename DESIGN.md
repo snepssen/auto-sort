@@ -105,6 +105,42 @@ in place instead. Filing an external drive into the home folders turns every
 move from a rename into a copy, a verification and a delete, and moves data
 the person deliberately keeps elsewhere onto their internal disk.
 
+## What was filed too early has to be reachable
+
+A corpus reveals itself over time, so the files that arrive first are always
+filed worst — not through error, but because there was nothing to learn from
+yet. A sorter that cannot revisit them has a permanent floor on how well it
+can ever do, and the only workaround is asking somebody to move files back
+into the funnel so they can come out again, which is absurd on its face.
+
+The ledger makes it unnecessary. It records where each file was put, by which
+rule, and what was known about it, which is enough to ask the question again
+without the file moving anywhere first.
+
+Everything then turns on scope, because the obvious version of this feature is
+a disaster: reconsidering every placement whenever the rules change would
+reshuffle a disk endlessly and invisibly. So:
+
+**Only placements marked provisional are revisited.** A rule declares
+`holding = yes` when its destination is a waiting room rather than an answer,
+and only files it placed may be promoted — to a rule that is not a holding
+rule. A specific decision is never relitigated. This makes the operation
+idempotent by construction: run it twice and the second run finds nothing.
+
+**Provisionality is recorded, not re-derived.** The flag goes in the ledger
+when the move happens. Working it out later from the rule's name would tie a
+file's history to a string that changes every time a rules file is
+regenerated.
+
+**A file that moved is out of scope entirely.** Not where the ledger says it
+is means somebody moved it, which is an answer. Corrections learn from those;
+regrouping does not touch them.
+
+And a promotion is not a special kind of move. It goes through the same
+planner, the same collision and volume checks, the same forced preview, the
+same ledger and the same undo — which is the only reason it is safe to let a
+background process do it at all.
+
 ## Disagreement is the best evidence there is
 
 Everything else in this design reads files. A correction reads the person.

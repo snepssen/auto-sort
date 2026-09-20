@@ -298,6 +298,53 @@ the ones that at least name their source. Sorting them further needs something
 that looks at the picture, which is the [deferred Tier 3
 seam](DESIGN.md#what-a-file-is) and not built.
 
+## Going back for what was filed too early
+
+A folder teaches auto-sort gradually. The first three pictures from an artist
+are not a pattern; the twentieth makes one. Everything that arrived before
+that point went into a holding folder — correctly, there was nothing better to
+do with it — and the obvious failure is that it stays there forever while only
+new arrivals benefit.
+
+```sh
+auto-sort regroup ~/Downloads          # show what could move
+auto-sort regroup ~/Downloads --apply  # move it
+```
+
+```
+  3 files can move out of a holding folder into structure
+  that has become visible since they were filed.
+
+  Into
+    ...Pictures/By name/kinniro                     1
+    ...Pictures/By name/lemas                       1
+    ...Pictures/By name/koul                        1
+```
+
+Nobody drags anything back into Downloads. The ledger already records where
+each file was put, by which rule, and what was known about it at the time,
+which is enough to reconsider the decision without the file ever moving back.
+
+**Promotion only, and only out of holding.** A file placed by a rule marked
+`holding = yes` may move to a rule that is not. Nothing else is ever
+reconsidered. That single restriction is what stops this becoming churn: a
+decision that was already specific is never relitigated, so editing a rules
+file cannot quietly reshuffle a disk and a file cannot ping-pong between two
+rules that both want it. Run it twice and the second run does nothing.
+
+**Anything you moved yourself is untouchable.** If a file is not exactly where
+the ledger says it was put, you moved it, and that is an answer rather than a
+gap — `corrections` learns from it, and regrouping will not overrule it.
+
+A promotion is an ordinary move: same planner, same collision handling, same
+forced preview the first time, same ledger, and `auto-sort undo` reverses it
+like anything else. The daemon checks every half hour and reports; set
+`regroup = apply` in `[settings]` to let it act.
+
+The flag lives in the ledger, recorded when the file was placed, rather than
+being worked out later from the rule's name — names change every time a rules
+file is regenerated, and a file's history must not depend on that.
+
 ## Learning from what you moved back
 
 The strongest signal available, and it costs nothing to collect: the ledger

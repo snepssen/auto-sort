@@ -486,6 +486,11 @@ def render(found, proposals):
     lines += [
         "; ---------------------------------------------------------------",
         "; The catch-alls. Everything above is a better answer than these,",
+        "; and they are marked `holding = yes`, which means a file they",
+        "; placed can be promoted out later: when enough more files arrive",
+        "; for a pattern to show, `auto-sort regroup` moves the ones already",
+        "; filed here into it, without anybody putting them back in",
+        "; Downloads first.",
         "; and these exist so that nothing is left where it was: a sorter",
         "; that keeps back what it did not recognise has not emptied",
         "; anything. Dated, because an undated holding folder becomes the",
@@ -502,6 +507,7 @@ def render(found, proposals):
         lines.append("into = %s"
                      % userdirs.short(os.path.join(
                          catch_all_root(found, kind), "{added:%Y-%m}")))
+        lines.append("holding = yes")
         lines.append("")
 
     lines += [
@@ -510,6 +516,7 @@ def render(found, proposals):
         "when = name is set",
         "into = %s" % userdirs.short(os.path.join(
             catch_all_root(found, "unknown"), "{added:%Y-%m}")),
+        "holding = yes",
         "",
     ]
 

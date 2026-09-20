@@ -39,12 +39,17 @@ class PlannedMember(object):
 
 
 class PlannedItem(object):
-    def __init__(self, item, rule_name, operation, members, facts=None):
+    def __init__(self, item, rule_name, operation, members, facts=None,
+                 holding=False):
         self.item = item
         self.rule_name = rule_name
         self.operation = operation
         self.members = members
         self.facts = facts or {}
+        # Whether the rule that chose this destination called it provisional.
+        # Carried into the ledger so that a later regroup can find what is
+        # waiting without depending on a rule still having the same name.
+        self.holding = holding
 
 
 class Plan(object):
@@ -135,6 +140,7 @@ def build_plan(root, rule_set, exclude=(), items=None):
             rule_name = "[unsorted]"
             operation = "move"
             renamed = False
+            holding = True
         elif decision.rule.mode == "leave":
             skipped.append((item.primary,
                             "rule %r says leave" % decision.rule.name))
@@ -143,6 +149,7 @@ def build_plan(root, rule_set, exclude=(), items=None):
             primary_destination = decision.destination
             rule_name = decision.rule.name
             operation = decision.rule.mode
+            holding = decision.rule.holding
             renamed = decision.rule.rename is not None
 
         try:
@@ -193,7 +200,7 @@ def build_plan(root, rule_set, exclude=(), items=None):
             continue
         reserved.update(_collision_key(path) for path in destinations)
         planned.append(PlannedItem(item, rule_name, operation, members,
-                                   record.as_dict()))
+                                   record.as_dict(), holding))
     return Plan(root, planned, skipped)
 
 
@@ -214,7 +221,7 @@ def execute(plan, rule_set, ledger, dry_run=None):
                 planned_item.rule_name, member.source, member.destination,
                 member.size, member.sha256,
                 status="dry-run" if dry_run else "planned",
-                facts=planned_item.facts)
+                facts=planned_item.facts, holding=planned_item.holding)
 
     if dry_run:
         ledger.record_preview(plan.root, fingerprint, run_id)

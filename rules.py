@@ -444,10 +444,12 @@ def parse(source):
 _SETTINGS_KEYS = {
     "dry_run", "unsorted", "unsorted_into", "on_collision",
     "min_confidence", "settle_seconds", "poll_seconds", "preserve_dates",
+    "regroup",
 }
 _WATCH_KEYS = {"folders", "ignore", "depth"}
 _RULE_KEYS = {
-    "when", "into", "as", "extract", "mode", "stop", "min_confidence",
+    "when", "into", "as", "extract", "holding", "mode", "stop",
+    "min_confidence",
     "newer_than", "older_than", "only_on",
 }
 _TEMPLATE = re.compile(r"\{([^{}]+)\}")
@@ -460,6 +462,13 @@ class Settings(object):
         self.unsorted = _choice(values.get("unsorted", "leave"),
                                 ("leave", "gather"), "unsorted")
         self.unsorted_into = values.get("unsorted_into", "~/Unsorted")
+        # What the background sorter does when files already filed into a
+        # holding folder could now be placed properly. `report` is the
+        # default because moving files nobody asked about, in the background,
+        # is a bigger promise than sorting new arrivals -- those were dropped
+        # into a funnel on purpose.
+        self.regroup = _choice(values.get("regroup", "report"),
+                               ("off", "report", "apply"), "regroup")
         self.on_collision = _choice(values.get("on_collision", "suffix"),
                                     ("suffix", "skip"), "on_collision")
         self.min_confidence = _bounded_float(
@@ -509,6 +518,13 @@ class Rule(object):
                             "rule %r mode" % name)
         self.stop = _boolean(values.get("stop", "yes"),
                              "rule %r stop" % name)
+        # A holding rule is a place to put something until there is a better
+        # answer, rather than an answer. Marking it says two things: that its
+        # destination is provisional, and that a file it placed may later be
+        # promoted out of it when the folder has taught auto-sort enough to
+        # do better. Files placed by an ordinary rule are never reconsidered.
+        self.holding = _boolean(values.get("holding", "no"),
+                                "rule %r holding" % name)
         self.min_confidence = _bounded_float(
             values.get("min_confidence", default_confidence),
             "rule %r min_confidence" % name, 0.0, 1.0)

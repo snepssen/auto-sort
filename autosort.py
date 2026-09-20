@@ -23,6 +23,7 @@ import ledger as ledger_module
 import logpage
 import paths
 import propose as propose_module
+import regroup as regroup_module
 import rules
 import sorter
 
@@ -440,6 +441,93 @@ def scan(root, tier=identify.TIER_ALL, depth=3, show=0, as_json=False):
     return 0
 
 
+def regroup(root=None, rule_path=None, state=None, apply_changes=False,
+            dry_run=None, as_json=False):
+    """Move already-filed files into structure that has since become visible.
+
+    The point of the whole exercise: a folder teaches auto-sort gradually, and
+    the files that arrived before it had learnt anything were put in a holding
+    folder because there was nothing better to do with them. Without this they
+    stay there while only new arrivals benefit, and the only remedy is
+    dragging them back into Downloads, which is absurd.
+    """
+    try:
+        rule_set = rules.load(rule_path)
+    except rules.RuleError as error:
+        print("Rules error: %s" % error, file=sys.stderr)
+        return 1
+
+    with ledger_module.Ledger(state) as journal:
+        plans = regroup_module.build(journal, rule_set,
+                                     os.path.abspath(root) if root else None)
+        total, by_rule, by_destination = regroup_module.summarise(plans)
+
+        if as_json:
+            print(json.dumps({
+                "promotions": total,
+                "by_rule": [{"rule": name, "files": count}
+                            for name, count in by_rule],
+                "by_destination": [{"folder": folder, "files": count}
+                                   for folder, count in by_destination],
+            }, indent=2, default=str))
+            return 0
+
+        holding = [rule.name for rule in rule_set.rules if rule.holding]
+        print()
+        if not holding:
+            print("  No rule is marked `holding = yes`, so nothing is")
+            print("  waiting to be promoted. Catch-all rules written by")
+            print("  `auto-sort propose` carry that mark.")
+            print()
+            return 0
+        if not total:
+            print("  Nothing to regroup: every file in a holding folder is")
+            print("  still there because nothing better has been learnt yet.")
+            print()
+            return 0
+
+        print("  %s file%s can move out of a holding folder into structure"
+              % ("{:,}".format(total), "" if total == 1 else "s"))
+        print("  that has become visible since they were filed.")
+        print()
+        print("  Into")
+        for folder, count in by_destination:
+            shown = propose_module.userdirs.short(folder)
+            if len(shown) > 52:
+                # Keep the end: the folder name is the interesting part, and
+                # fifty characters of shared prefix tells nobody anything.
+                shown = "..." + shown[-49:]
+            print("    %-52s %s" % (shown, "{:,}".format(count)))
+        print()
+        print("  By rule")
+        for name, count in by_rule:
+            print("    %-34s %s" % (name[:34], "{:,}".format(count)))
+
+        if not apply_changes:
+            print()
+            print("  Nothing has moved. Add --apply to do it.")
+            print()
+            return 0
+
+        print()
+        for plan_root, plan in plans:
+            result = sorter.execute(plan, rule_set, journal,
+                                    dry_run=False if dry_run is None
+                                    else dry_run)
+            label = "would move" if result.dry_run else "moved"
+            print("  %s %d item%s from %s"
+                  % (label, result.completed or len(plan.items),
+                     "" if len(plan.items) == 1 else "s",
+                     propose_module.userdirs.short(plan_root)))
+            if result.forced_preview:
+                print("  ! first regroup for this folder was a preview; "
+                      "run it again to move")
+            for message in result.messages:
+                print("    %s" % message)
+        print()
+    return 0
+
+
 def corrections(root=None, state=None, out=None, as_json=False):
     """Notice what was moved after auto-sort placed it, and what that implies.
 
@@ -722,6 +810,7 @@ USAGE = """auto-sort %s
   auto-sort init                write a starter rules file if there is not one
   auto-sort propose [FOLDER]    survey a folder and derive the rules it needs
   auto-sort corrections [FOLDER] what you moved afterwards, and what it implies
+  auto-sort regroup [FOLDER]    re-file what was filed before the pattern showed
   auto-sort check-rules [FILE]  validate a rules file without changing anything
   auto-sort sort [FOLDER]       plan a sort; dry-run unless configuration says otherwise
   auto-sort undo [RUN|last]     restore a completed move run
@@ -828,6 +917,9 @@ def main(argv=None):
     if command == "scan":
         return scan(targets[0] if targets else ".", tier, depth, show,
                     as_json)
+    if command == "regroup":
+        return regroup(targets[0] if targets else None, rule_path,
+                       state_file, dry_run is False, dry_run, as_json)
     if command == "corrections":
         return corrections(targets[0] if targets else None, state_file,
                            out_file, as_json)

@@ -26,6 +26,7 @@ import mover
 import logpage
 import rules
 import corrections as corrections_module
+import regroup as regroup_module
 import sorter
 import tray
 
@@ -168,6 +169,46 @@ class PollingDaemon(object):
                         "`auto-sort corrections` to see what it suggests."
                         % (len(moved), "" if len(moved) == 1 else "s"))
 
+    def _check_regroup(self, rule_set, now_value, requested_dry):
+        """Promote what is waiting, once the folder has taught enough.
+
+        Shares the corrections interval because both answer the same kind of
+        question -- has anything changed since we last looked -- and both are
+        cheap when the answer is no.
+        """
+        if rule_set.settings.regroup == "off":
+            return
+        last = self.journal.get_state("regroup_checked_at")
+        try:
+            last_value = float(last or 0)
+        except (TypeError, ValueError):
+            last_value = 0.0
+        if now_value - last_value < self.CORRECTION_INTERVAL:
+            return
+        self.journal.set_state("regroup_checked_at", repr(now_value))
+        try:
+            plans = regroup_module.build(self.journal, rule_set)
+        except (OSError, ValueError) as error:
+            self.output("Could not check for regrouping: %s" % error)
+            return
+        total = sum(len(plan.items) for _root, plan in plans)
+        if not total:
+            return
+        if rule_set.settings.regroup != "apply":
+            self.output("%d file%s in a holding folder could be filed "
+                        "properly now. Run `auto-sort regroup` to see, or "
+                        "set regroup = apply." % (total,
+                                                  "" if total == 1 else "s"))
+            return
+        for plan_root, plan in plans:
+            result = sorter.execute(plan, rule_set, self.journal,
+                                    dry_run=requested_dry)
+            self.output("Regrouped %d item%s from %s"
+                        % (result.completed or len(plan.items),
+                           "" if len(plan.items) == 1 else "s", plan_root))
+            for message in result.messages:
+                self.output("  %s" % message)
+
     def cycle(self, now_value=None):
         now_value = time.time() if now_value is None else float(now_value)
         rule_set = self._reload_rules()
@@ -205,6 +246,7 @@ class PollingDaemon(object):
                 break
         if not self.journal.paused():
             self._check_corrections(rule_set, now_value)
+            self._check_regroup(rule_set, now_value, requested_dry)
         return results
 
     def _observe_root(self, root, rule_set, fingerprint, now_value):
