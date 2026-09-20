@@ -45,6 +45,17 @@ class DaemonLock(object):
         requested = int(port if port is not None
                         else (saved if saved is not None else DEFAULT_PORT))
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # A restart must not have to wait out TIME_WAIT. Without this,
+        # stopping and starting the login item fails twice with "address
+        # already in use" before launchd's retry finally succeeds -- which
+        # looks exactly like a crash loop in the log. SO_REUSEADDR does not
+        # let a second live daemon bind: two listeners on one address need
+        # SO_REUSEPORT, which is deliberately not set, so the socket keeps
+        # working as the single-instance lock.
+        try:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except OSError:
+            pass
         try:
             self.socket.bind(("127.0.0.1", requested))
             self.socket.listen(4)
@@ -136,6 +147,13 @@ class PollingDaemon(object):
     # an hour should cost one index build, not seven hundred.
     CORRECTION_INTERVAL = 1800
 
+    # How often to say, in the log, that everything is fine. A process that
+    # is meant to run for months and only writes when something happens is
+    # indistinguishable from a process that died in March: the log looks the
+    # same either way. One line an hour is small enough to leave running
+    # forever and enough to answer "is it alive, and what has it been doing".
+    HEARTBEAT_INTERVAL = 3600
+
     def _check_corrections(self, rule_set, now_value):
         """Notice disagreement, record it, and say so. Never act on it.
 
@@ -209,6 +227,28 @@ class PollingDaemon(object):
             for message in result.messages:
                 self.output("  %s" % message)
 
+    def _heartbeat(self, rule_set, now_value):
+        last = self.journal.get_state("heartbeat_at")
+        try:
+            last_value = float(last or 0)
+        except (TypeError, ValueError):
+            last_value = 0.0
+        if last_value and now_value - last_value < self.HEARTBEAT_INTERVAL:
+            return
+        self.journal.set_state("heartbeat_at", repr(now_value))
+        # queue_counts returns rows, not a mapping.
+        waiting = sum(row["count"] for row in self.journal.queue_counts()
+                      if row["status"] in ("pending", "processing"))
+        moves = self.journal.connection.execute(
+            "SELECT count(*) FROM moves WHERE status IN ('done', 'copied')"
+        ).fetchone()[0]
+        self.output(
+            "Alive. Watching %d folder%s, %d waiting, %d file%s filed so far%s."
+            % (len(rule_set.watch.folders),
+               "" if len(rule_set.watch.folders) == 1 else "s",
+               waiting, moves, "" if moves == 1 else "s",
+               " (preview only)" if rule_set.settings.dry_run else ""))
+
     def cycle(self, now_value=None):
         now_value = time.time() if now_value is None else float(now_value)
         rule_set = self._reload_rules()
@@ -244,6 +284,7 @@ class PollingDaemon(object):
                 requested_dry, now_value))
             if self.journal.paused():
                 break
+        self._heartbeat(rule_set, now_value)
         if not self.journal.paused():
             self._check_corrections(rule_set, now_value)
             self._check_regroup(rule_set, now_value, requested_dry)

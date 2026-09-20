@@ -419,50 +419,35 @@ Nothing about that path requires knowing what Python is.
 
 ## Requirements
 
-**Python 3.8 or newer, and nothing else.** That is not an aesthetic
-preference. Reading headers, learning naming conventions, deciding, moving
-files and remembering every one of those decisions in the ledger are done with
-`struct`, `re`, `os` and `sqlite3`, which every Python already has. Once it is
-installed it runs by itself and improves by itself, without turning into a
-development environment somebody has to maintain.
+**Python 3.8 or newer, and nothing else.** No pip install, on any platform.
+That is not an aesthetic preference. Reading headers, learning naming
+conventions, deciding, moving files and remembering every one of those
+decisions in the ledger are done with `struct`, `re`, `os` and `sqlite3`,
+which every Python already has. Once it is installed it runs by itself and
+improves by itself, without turning into a development environment somebody
+has to maintain.
 
-Three optional extras genuinely add something, and the launcher offers them on
-first run — described by what they let the tool do, never by package name
+The menu bar icon is no exception. It is built on the Objective-C runtime
+through `ctypes`, the same way the Windows tray is built on
+`Shell_NotifyIcon` — both talk to the system directly. An earlier version used
+PyObjC and it was a mistake twice over: forty megabytes for one icon, and it
+**cannot be installed at all** on a Homebrew, Debian or Fedora Python, because
+those are marked externally managed under PEP 668 and refuse `pip install`.
+The icon was unreachable on exactly the machines most likely to run this.
+
+Two optional *programs* genuinely add something, and the launcher offers them
+on first run — described by what they let the tool do, never by package name
 first:
 
 | | What it adds | Without it |
 | --- | --- | --- |
 | `ffprobe` | durations and frame sizes for containers the built-in parsers decline | those facts are absent, and rules needing them decline |
 | `exiftool` | metadata from uncommon cameras and RAW formats | the same, for a smaller set of files |
-| PyObjC | the menu bar icon on a Mac, so there is something to click | the log page still works; there is just nothing to click |
 
-Declining all three still leaves a working sorter. `bootstrap.py` never runs
+Declining both still leaves a working sorter. `bootstrap.py` never runs
 `sudo` — on a system whose package manager needs root it prints the command
 for you to run — never installs without being asked, never prompts when there
 is nobody to answer, and never blocks the sorter when something fails.
-
-PyObjC is the one Python package, and only because there is no way to put an
-icon in a Mac's menu bar without Cocoa and Apple stopped shipping it with the
-system Python.
-
-It installs into **a small environment auto-sort owns**, under the state
-folder, and never into the Python that happens to be running. That is not
-tidiness. Homebrew's Python, Debian's, Fedora's and a growing number of others
-are marked externally managed under PEP 668, so `pip install --user` is
-refused outright — on the machine this was developed on, that meant the menu
-bar icon could not be installed by anybody, ever. A directory of our own
-sidesteps the question: nothing outside it is touched, a system Python cannot
-be damaged by something that never writes to it, and removing auto-sort
-removes it. `autostart` then records that interpreter in the login item, so
-the icon is there at login rather than the daemon starting, finding no Cocoa,
-and running headless forever.
-
-For a copied checkout, use `./start.sh` on macOS/Linux, double-click
-`Start auto-sort.command` on macOS, or use `start.bat` on Windows. These
-launchers require only Python 3.8+. If `ffprobe` or `exiftool` is missing they
-offer, but never require, package-manager installation; declining or an
-unavailable package manager still starts auto-sort. Run `python3 bootstrap.py`
-yourself to make the same optional offer.
 
 ```sh
 python3 -m unittest discover -s tests

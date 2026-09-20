@@ -121,141 +121,26 @@ def missing():
 
 
 # ---------------------------------------------------------------------------
-# Python packages, which are a different question from external programs
+# Python packages: there are none, and that is the point
 # ---------------------------------------------------------------------------
+#
+# auto-sort had exactly one third-party dependency for about a day: PyObjC,
+# to put an icon in a Mac's menu bar. It is gone. The Objective-C runtime is
+# a plain C library and `ctypes` speaks C, so `tray.py` now talks to it
+# directly the way the Windows backend always did.
+#
+# That mattered for more than tidiness. PyObjC cannot be installed at all on
+# a Homebrew, Debian or Fedora Python -- they are marked externally managed
+# under PEP 668 and refuse `pip install` -- so the icon was unreachable on
+# the machines most likely to run this, and working around it meant auto-sort
+# building and owning a forty-megabyte virtual environment. Removing the
+# dependency removed the whole problem and about two hundred lines with it.
+#
+# These two functions remain because `bootstrap` and the tests ask, and
+# because an honest empty answer is worth more than a missing one.
 
-class Module(object):
-    """An importable package that unlocks something, and never a requirement.
-
-    auto-sort is standard library only, and that is not an aesthetic
-    preference: everything it does to earn its name -- read headers, learn
-    conventions, decide, move, remember in the ledger -- works on a bare
-    Python with nothing installed. `sqlite3`, `struct`, `re` and `os` are the
-    whole toolkit, and they are already there.
-
-    There is exactly one thing a bare Python cannot do, which is put an icon
-    in a Mac's menu bar. Cocoa is not reachable without PyObjC, and Apple
-    stopped shipping it with the system Python, so the choice is to offer the
-    install or to leave Mac users with no visible presence at all. Offering it
-    is the smaller compromise, and declining still leaves a working sorter
-    with its log page.
-    """
-
-    def __init__(self, key, module, purpose, package, platforms=()):
-        self.key = key
-        self.module = module
-        self.purpose = purpose
-        self.package = package
-        self.platforms = tuple(platforms)
-        self.required = False
-
-    def applies_here(self):
-        if not self.platforms:
-            return True
-        if os.name == "nt":
-            return "windows" in self.platforms
-        if sys.platform == "darwin":
-            return "macos" in self.platforms
-        return "linux" in self.platforms
-
-    def present(self, python=None):
-        """Whether the package can be imported, here or in a given Python."""
-        if python:
-            try:
-                done = subprocess.run(
-                    [python, "-c", "import %s" % self.module],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    timeout=60)
-                return done.returncode == 0
-            except (OSError, subprocess.SubprocessError):
-                return False
-        try:
-            import importlib.util
-            return importlib.util.find_spec(self.module) is not None
-        except (ImportError, ValueError, AttributeError):
-            return False
-
-
-MODULES = {
-    "pyobjc": Module(
-        "pyobjc", "AppKit",
-        "the menu bar icon, so there is something to click",
-        "pyobjc-framework-Cocoa", platforms=("macos",)),
-}
-
-
-def in_virtualenv():
-    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
-
-
-def runtime_dir():
-    """Where auto-sort keeps the small environment it owns."""
-    import paths
-    return os.path.join(paths.state_dir(), "runtime")
-
-
-def runtime_python():
-    """The interpreter inside that environment, if it has been made."""
-    base = runtime_dir()
-    for relative in (("bin", "python3"), ("bin", "python"),
-                     ("Scripts", "python.exe")):
-        candidate = os.path.join(base, *relative)
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return None
-
-
-def make_runtime(runner=None):
-    """Create the private environment. Returns its interpreter, or None.
-
-    auto-sort installs Python packages into an environment it owns rather
-    than into the Python it happens to be running under, and that is not
-    tidiness. Homebrew's Python, Debian's, Fedora's and an increasing number
-    of others are marked externally managed under PEP 668, so `pip install
-    --user` is refused outright -- which on this machine meant the menu bar
-    icon could never be installed at all, by anybody, ever.
-
-    A directory of our own sidesteps the whole question. Nothing outside it
-    is touched, removing auto-sort removes it, and a system Python cannot be
-    damaged by something that never writes to it.
-    """
-    runner = runner or subprocess.run
-    base = runtime_dir()
-    existing = runtime_python()
-    if existing:
-        return existing
-    try:
-        os.makedirs(os.path.dirname(base), exist_ok=True)
-        runner([sys.executable, "-m", "venv", base],
-               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return runtime_python()
-
-
-def module_command(module, python=None):
-    """The pip invocation that installs a package, without ever needing root.
-
-    Into auto-sort's own environment by default. `--user` is deliberately not
-    used: on an externally managed Python it is refused, and on one that
-    allows it it writes into a directory shared with everything else the
-    person has installed.
-    """
-    interpreter = python or runtime_python() or sys.executable
-    return [interpreter, "-m", "pip", "install", module.package]
+MODULES = {}
 
 
 def missing_modules():
-    """Optional packages that are not importable here or in our environment."""
-    interpreter = runtime_python()
-    return [module for module in MODULES.values()
-            if module.applies_here() and not module.present()
-            and not (interpreter and module.present(interpreter))]
-
-
-def pip_available():
-    try:
-        import importlib.util
-        return importlib.util.find_spec("pip") is not None
-    except (ImportError, ValueError, AttributeError):
-        return False
+    return []

@@ -14,11 +14,13 @@ let the tool do rather than by what they are called:
 
   ffprobe    durations and frame sizes for containers our own parsers decline
   exiftool   metadata from uncommon cameras and RAW formats
-  PyObjC     the menu bar icon on a Mac, so there is something to click
 
-Declining any of them leaves a working sorter. Declining all of them leaves a
-working sorter. The only thing that genuinely disappears is the Mac icon, and
-even then the log page is still there on 127.0.0.1.
+There is no third-party Python package in that list, on any platform. The
+menu bar icon is built on the Objective-C runtime through `ctypes`, the same
+way the Windows one is built on `Shell_NotifyIcon`, so neither needs anything
+installed. Declining both programs above still leaves a working sorter; what
+is lost is durations for a few container formats and metadata for a few
+unusual cameras.
 
 It never runs `sudo`. On a system whose package manager needs root the
 commands are printed for somebody to run, because a program that silently
@@ -34,48 +36,7 @@ import platform_support as programs
 
 def survey():
     return {"manager": programs.current_manager(),
-            "optional": programs.missing(),
-            "modules": programs.missing_modules()}
-
-
-def module_line(module):
-    return " ".join(programs.module_command(module))
-
-
-def install_modules(chosen, on_line=None):
-    """pip installs into auto-sort's own environment. Never root, never fatal.
-
-    The environment is made first if it does not exist. Installing into the
-    Python that happens to be running is not an option worth keeping: most
-    system Pythons now refuse it outright under PEP 668, and the ones that
-    allow it should not be written to by a file sorter.
-    """
-    import subprocess
-    interpreter = programs.make_runtime()
-    if interpreter is None:
-        return [(module, False,
-                 "could not create auto-sort's own Python environment")
-                for module in chosen]
-    results = []
-    for module in chosen:
-        command = programs.module_command(module, interpreter)
-        if on_line:
-            on_line("$ " + " ".join(command))
-        try:
-            done = subprocess.run(command, stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE,
-                                  universal_newlines=True, timeout=1800)
-        except Exception as error:
-            results.append((module, False, str(error)))
-            continue
-        if module.present(interpreter):
-            results.append((module, True, ""))
-            continue
-        output = (done.stderr or done.stdout or "")
-        detail = output.strip().splitlines()
-        results.append((module, False, detail[-1] if detail else
-                        "exit %d" % done.returncode))
-    return results
+            "optional": programs.missing()}
 
 
 def command_for(program, manager):
@@ -121,9 +82,8 @@ def install(chosen, manager, on_line=None):
 def offer(assume_yes=False, quiet=False):
     state = survey()
     missing = state["optional"]
-    modules = state["modules"]
     manager = state["manager"]
-    if not missing and not modules:
+    if not missing:
         if not quiet:
             print("Everything optional is already installed. auto-sort needs "
                   "nothing else.")
@@ -132,13 +92,7 @@ def offer(assume_yes=False, quiet=False):
         print("auto-sort already works. These would let it do more:")
         for program in missing:
             print("  %-10s %s" % (program.key, program.purpose))
-        for module in modules:
-            print("  %-10s %s" % (module.key, module.purpose))
         print()
-    if modules:
-        _offer_modules(modules, assume_yes, quiet)
-    if not missing:
-        return True
     if not manager:
         if not quiet:
             print("No supported package manager was found; continuing without them.")
@@ -169,40 +123,6 @@ def offer(assume_yes=False, quiet=False):
             print("  %s %s%s" % ("+" if ok else "!", program.key,
                                   (": " + detail) if detail else ""))
     return True
-
-
-def _offer_modules(modules, assume_yes, quiet):
-    """The Python-package half, which no system package manager covers."""
-    if not programs.pip_available():
-        if not quiet:
-            print("  (no pip on this Python, so the menu bar icon cannot be "
-                  "installed; the log page still works)")
-            print()
-        return
-    if not assume_yes:
-        # Nothing may prompt here unless there is somebody to answer. `quiet`
-        # means this call is not talking to a person, and a closed stdin
-        # means the launcher was started by the system rather than typed --
-        # in either case an `input()` hangs forever and takes the sorter with
-        # it.
-        if quiet or not sys.stdin or not sys.stdin.isatty():
-            return
-        print("  auto-sort will make its own small Python environment in")
-        print("  %s" % programs.runtime_dir())
-        print("  and install there. No system Python is touched.")
-        try:
-            answer = input("Install the menu bar icon? [Y/n] ").strip().lower()
-        except (EOFError, KeyboardInterrupt, ValueError):
-            print()
-            return
-        if answer in ("n", "no"):
-            return
-    results = install_modules(modules, on_line=None if quiet else print)
-    if not quiet:
-        for module, ok, detail in results:
-            print("  %s %s%s" % ("+" if ok else "!", module.key,
-                                 (": " + detail) if detail else ""))
-        print()
 
 
 def main(argv=None):

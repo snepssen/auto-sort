@@ -34,172 +34,291 @@ def create(actions):
         return UnavailableTray("native tray unavailable: %s" % error)
 
 
-# Objective-C class names are registered process-wide, so the target class
-# can only be built once. Defining it inside the factory meant a second call
-# raised "Target is overriding existing Objective-C class", which turns into
-# a silent fall back to headless -- so a tray could never be rebuilt after
-# being closed.
+# ---------------------------------------------------------------------------
+# macOS, through the Objective-C runtime directly
+# ---------------------------------------------------------------------------
+#
+# Not PyObjC. That was the first implementation and it cost more than it was
+# worth: forty-odd megabytes for one icon, and -- worse -- it cannot be
+# installed at all on a Homebrew, Debian or Fedora Python, because those are
+# marked externally managed under PEP 668 and refuse `pip install`. The menu
+# bar icon was therefore unreachable on the machines most likely to run this.
+#
+# The Objective-C runtime is a plain C library with an ABI that has not moved
+# in twenty years, and `ctypes` speaks C. So macOS now does what Windows
+# already did: talks to the system directly, with nothing installed. auto-sort
+# has no third-party dependency on any platform again, which is the claim the
+# whole project rests on.
+
+# Objective-C registers class names process-wide, so the target class can be
+# built exactly once. The methods therefore cannot close over one tray's
+# callbacks; they go through whichever tray is currently active instead.
+# There is only ever one.
 _MAC_TARGET = None
+_ACTIVE = None
 
 
-def _mac_target():                                           # pragma: no cover
-    global _MAC_TARGET
-    if _MAC_TARGET is not None:
-        return _MAC_TARGET
+class _Runtime(object):                                      # pragma: no cover
+    """Just enough Objective-C to own a status item."""
 
-    from AppKit import (NSApplication, NSEventTypeRightMouseUp,
-                        NSEventModifierFlagControl)
-    from Foundation import NSObject
-    import objc
+    def __init__(self):
+        import ctypes
+        import ctypes.util
+        self.ctypes = ctypes
+        self.objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        for framework in ("AppKit", "Foundation"):
+            ctypes.cdll.LoadLibrary(ctypes.util.find_library(framework))
+        void_p = ctypes.c_void_p
+        for name, restype, argtypes in (
+                ("objc_getClass", void_p, [ctypes.c_char_p]),
+                ("sel_registerName", void_p, [ctypes.c_char_p]),
+                ("objc_allocateClassPair", void_p,
+                 [void_p, ctypes.c_char_p, ctypes.c_size_t]),
+                ("objc_registerClassPair", None, [void_p]),
+                ("class_addMethod", ctypes.c_bool,
+                 [void_p, void_p, void_p, ctypes.c_char_p])):
+            function = getattr(self.objc, name)
+            function.restype = restype
+            function.argtypes = argtypes
+        self.libc = ctypes.CDLL(None)
+        self._kept = []          # trampolines must outlive the class
 
-    class AutoSortTrayTarget(NSObject):
-        def initWithActions_(self, callbacks):
-            # objc.super, not the builtin. An Objective-C subclass has no
-            # Python superclass to call `init` on, so the builtin raises and
-            # the whole tray falls back to headless -- silently, because
-            # `create` turns every failure into "continuing headless". That
-            # is why this code sat broken and unnoticed: nothing failed
-            # loudly, the icon was simply never there.
-            self = objc.super(AutoSortTrayTarget, self).init()
-            if self is not None:
-                self.callbacks = callbacks
-                self.showMenu = None
-            return self
+    def cls(self, name):
+        found = self.objc.objc_getClass(name.encode())
+        if not found:
+            raise RuntimeError("no Objective-C class %r" % name)
+        return found
 
-        def clicked_(self, _sender):
-            """Left click opens the log; right click shows the menu.
+    def sel(self, name):
+        return self.objc.sel_registerName(name.encode())
 
-            A status item with a menu attached swallows the click and only
-            ever shows the menu, which is not what somebody glancing at the
-            menu bar wants -- they want to see what it has been doing. So the
-            menu is attached only for the length of a right click and
-            detached again straight afterwards, which is the usual way to
-            have both behaviours on one status item.
-            """
-            event = NSApplication.sharedApplication().currentEvent()
-            secondary = False
-            if event is not None:
-                secondary = (event.type() == NSEventTypeRightMouseUp
-                             or bool(event.modifierFlags()
-                                     & NSEventModifierFlagControl))
-            if secondary and self.showMenu is not None:
-                self.showMenu()
-            else:
-                self.callbacks["open_log"]()
+    def send(self, restype, receiver, selector, *args):
+        """One `objc_msgSend`, declared for exactly this signature.
 
-        def openLog_(self, _sender):
-            self.callbacks["open_log"]()
+        Re-declaring per call is not an optimisation problem worth solving:
+        `objc_msgSend` is variadic in C and calling it through a single
+        ctypes prototype passes the wrong registers on arm64.
+        """
+        function = self.libc.objc_msgSend
+        function.restype = restype
+        function.argtypes = [self.ctypes.c_void_p, self.ctypes.c_void_p] + \
+            [kind for kind, _value in args]
+        return function(receiver, self.sel(selector),
+                        *[value for _kind, value in args])
 
-        def togglePause_(self, _sender):
-            self.callbacks["toggle_pause"]()
+    def string(self, text):
+        return self.send(self.ctypes.c_void_p, self.cls("NSString"),
+                         "stringWithUTF8String:",
+                         (self.ctypes.c_char_p, text.encode("utf-8")))
 
-        def sortNow_(self, _sender):
-            self.callbacks["sort_now"]()
+    def define(self, name, methods):
+        """Register a class whose selectors call Python functions."""
+        ctypes = self.ctypes
+        created = self.objc.objc_allocateClassPair(self.cls("NSObject"),
+                                                   name.encode(), 0)
+        if not created:
+            raise RuntimeError("could not create Objective-C class %r" % name)
+        prototype = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p,
+                                     ctypes.c_void_p)
+        for selector, handler in methods.items():
+            def make(callback):
+                def method(_self, _cmd, _sender):
+                    try:
+                        callback()
+                    except Exception:            # noqa: BLE001
+                        pass                     # never unwind into ObjC
+                return prototype(method)
+            trampoline = make(handler)
+            self._kept.append(trampoline)
+            self.objc.class_addMethod(
+                created, self.sel(selector),
+                ctypes.cast(trampoline, ctypes.c_void_p), b"v@:@")
+        self.objc.objc_registerClassPair(created)
+        return created
 
-        def quit_(self, _sender):
-            self.callbacks["quit"]()
 
-    _MAC_TARGET = AutoSortTrayTarget
-    return _MAC_TARGET
+def _dispatch(name):                                         # pragma: no cover
+    """Route a menu selector to the tray that is currently up."""
+    tray = _ACTIVE
+    if tray is None:
+        return
+    if name == "clicked":
+        tray._clicked()
+        return
+    action = tray.actions.get(name)
+    if action:
+        action()
 
 
 def _mac_tray(actions):                                      # pragma: no cover
-    """PyObjC implementation, loaded only when the host happens to provide it."""
-    from AppKit import (NSApplication, NSApplicationActivationPolicyAccessory,
-                        NSAnyEventMask, NSEventMaskLeftMouseUp,
-                        NSEventMaskRightMouseUp, NSImage, NSMenu, NSMenuItem,
-                        NSStatusBar, NSVariableStatusItemLength)
-    from Foundation import NSDate, NSDefaultRunLoopMode
+    """A status item built on the Objective-C runtime, with no dependencies."""
+    import ctypes
+
+    runtime = _Runtime()
+    void_p = ctypes.c_void_p
 
     class MacTray(object):
         available = True
         reason = ""
 
         def __init__(self):
-            application = NSApplication.sharedApplication()
-            application.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+            self.runtime = runtime
+            self.actions = actions
+            self.menu_showing = False
+            application = runtime.send(void_p, runtime.cls("NSApplication"),
+                                       "sharedApplication")
+            # Accessory: a menu bar presence with no Dock icon.
+            runtime.send(None, application, "setActivationPolicy:",
+                         (ctypes.c_long, 1))
             # Without this the application never becomes ready to receive
-            # events. The status item is still drawn -- the system does that
-            # -- so the icon appears and simply does nothing when clicked,
-            # which is a worse failure than not appearing at all.
-            application.finishLaunching()
+            # events. The item is still drawn -- the system does that -- so
+            # the icon appears and does nothing, which is worse than absent.
+            runtime.send(None, application, "finishLaunching")
             self.application = application
-            self.status_bar = NSStatusBar.systemStatusBar()
-            self.status_item = self.status_bar.statusItemWithLength_(
-                NSVariableStatusItemLength)
-            button = self.status_item.button()
-            try:
-                image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
-                    "doc", "auto-sort")
-                image.setTemplate_(True)
-                button.setImage_(image)
-            except AttributeError:
-                button.setTitle_("□")
-            self.target = _mac_target().alloc().initWithActions_(actions)
-            button.setTarget_(self.target)
-            button.setAction_("clicked:")
-            button.sendActionOn_(NSEventMaskLeftMouseUp
-                                 | NSEventMaskRightMouseUp)
-            self.button = button
-            self.menu = NSMenu.alloc().init()
-            self.menu.addItem_(self._item("Open log", "openLog:"))
-            self.pause_item = self._item("Pause sorting", "togglePause:")
-            self.menu.addItem_(self.pause_item)
-            self.menu.addItem_(self._item("Sort now", "sortNow:"))
-            self.menu.addItem_(NSMenuItem.separatorItem())
-            self.menu.addItem_(self._item("Quit auto-sort", "quit:"))
-            # Built here, attached only while a right click is being
-            # serviced. Attached permanently it would intercept every click
-            # and the icon would stop opening the log.
-            self.target.showMenu = self._popup
 
-        def _popup(self):
-            self.status_item.setMenu_(self.menu)
-            self.button.performClick_(None)
-            self.status_item.setMenu_(None)
+            self.status_bar = runtime.send(void_p, runtime.cls("NSStatusBar"),
+                                           "systemStatusBar")
+            self.status_item = runtime.send(
+                void_p, self.status_bar, "statusItemWithLength:",
+                (ctypes.c_double, -1.0))       # NSVariableStatusItemLength
+            self.button = runtime.send(void_p, self.status_item, "button")
 
-        def _item(self, title, action):
-            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                title, action, "")
-            item.setTarget_(self.target)
-            return item
+            self.target = self._make_target()
+            instance = runtime.send(void_p, runtime.send(
+                void_p, self.target, "alloc"), "init")
+            self.instance = instance
+            runtime.send(None, self.button, "setTarget:", (void_p, instance))
+            runtime.send(None, self.button, "setAction:",
+                         (void_p, runtime.sel("clicked:")))
+            # Left and right mouse up, so one item can do both jobs.
+            runtime.send(None, self.button, "sendActionOn:",
+                         (ctypes.c_ulonglong, (1 << 2) | (1 << 4)))
+            self._set_icon()
+            self._build_menu()
+
+        def _make_target(self):
+            global _MAC_TARGET
+            if _MAC_TARGET is not None:
+                return _MAC_TARGET
+            _MAC_TARGET = runtime.define("AutoSortStatusTarget", {
+                "clicked:": lambda: _dispatch("clicked"),
+                "openLog:": lambda: _dispatch("open_log"),
+                "togglePause:": lambda: _dispatch("toggle_pause"),
+                "sortNow:": lambda: _dispatch("sort_now"),
+                "quit:": lambda: _dispatch("quit"),
+            })
+            return _MAC_TARGET
+
+        def _set_icon(self):
+            image = runtime.send(
+                void_p, runtime.cls("NSImage"),
+                "imageWithSystemSymbolName:accessibilityDescription:",
+                (void_p, runtime.string("doc")),
+                (void_p, runtime.string("auto-sort")))
+            if image:
+                runtime.send(None, image, "setTemplate:", (ctypes.c_bool, True))
+                runtime.send(None, self.button, "setImage:", (void_p, image))
+            else:
+                runtime.send(None, self.button, "setTitle:",
+                             (void_p, runtime.string("AS")))
+
+        def _build_menu(self):
+            self.menu = runtime.send(void_p, runtime.send(
+                void_p, runtime.cls("NSMenu"), "alloc"), "init")
+            self.pause_item = None
+            for title, selector in (("Open log", "openLog:"),
+                                    ("Pause sorting", "togglePause:"),
+                                    ("Sort now", "sortNow:"),
+                                    (None, None),
+                                    ("Quit auto-sort", "quit:")):
+                if title is None:
+                    separator = runtime.send(void_p,
+                                             runtime.cls("NSMenuItem"),
+                                             "separatorItem")
+                    runtime.send(None, self.menu, "addItem:",
+                                 (void_p, separator))
+                    continue
+                item = runtime.send(
+                    void_p, runtime.send(void_p, runtime.cls("NSMenuItem"),
+                                         "alloc"),
+                    "initWithTitle:action:keyEquivalent:",
+                    (void_p, runtime.string(title)),
+                    (void_p, runtime.sel(selector)),
+                    (void_p, runtime.string("")))
+                runtime.send(None, item, "setTarget:", (void_p, self.instance))
+                runtime.send(None, self.menu, "addItem:", (void_p, item))
+                if selector == "togglePause:":
+                    self.pause_item = item
+
+        def _clicked(self):
+            """Left click opens the log; right click raises the menu.
+
+            A menu attached permanently swallows every click and the icon
+            stops opening the log, so it is attached for the length of one
+            right click and taken away again.
+            """
+            event = runtime.send(void_p, self.application, "currentEvent")
+            secondary = False
+            if event:
+                kind = runtime.send(ctypes.c_ulonglong, event, "type")
+                modifiers = runtime.send(ctypes.c_ulonglong, event,
+                                         "modifierFlags")
+                secondary = (kind == 4                      # RightMouseUp
+                             or bool(modifiers & (1 << 18)))  # Control
+            if secondary:
+                runtime.send(None, self.status_item, "setMenu:",
+                             (void_p, self.menu))
+                runtime.send(None, self.button, "performClick:",
+                             (void_p, None))
+                runtime.send(None, self.status_item, "setMenu:",
+                             (void_p, None))
+            else:
+                actions["open_log"]()
 
         def set_paused(self, paused):
-            self.pause_item.setTitle_("Resume sorting" if paused
-                                      else "Pause sorting")
+            if self.pause_item:
+                runtime.send(None, self.pause_item, "setTitle:",
+                             (void_p, runtime.string(
+                                 "Resume sorting" if paused
+                                 else "Pause sorting")))
 
         def pump(self, seconds):
-            """Dequeue and dispatch whatever the window server has sent.
+            """Dequeue and dispatch what the window server has sent.
 
-            Running the run loop is not enough and was the bug: mouse events
-            on a status item are delivered into the application's own event
-            queue, and only `nextEventMatchingMask_` takes them out of it.
-            `NSRunLoop.runUntilDate_` services timers and input sources and
-            leaves that queue untouched, so every click sat in it unread
-            while the icon looked perfectly healthy.
-
-            This is what `NSApplication.run` does; it is written out here
-            because the sorter owns the loop and only lends the tray a
-            quarter of a second at a time.
+            Running the run loop is not enough: status item clicks land in
+            the application's own event queue and only
+            `nextEventMatchingMask:` takes them out of it.
             """
-            until = NSDate.dateWithTimeIntervalSinceNow_(max(0.001, seconds))
-            now = NSDate.date()
+            NSDate = runtime.cls("NSDate")
+            until = runtime.send(void_p, NSDate,
+                                 "dateWithTimeIntervalSinceNow:",
+                                 (ctypes.c_double, max(0.001, seconds)))
+            immediately = runtime.send(void_p, NSDate, "date")
+            mode = runtime.string("kCFRunLoopDefaultMode")
             deadline = until
             while True:
-                event = self.application \
-                    .nextEventMatchingMask_untilDate_inMode_dequeue_(
-                        NSAnyEventMask, deadline, NSDefaultRunLoopMode, True)
-                if event is None:
+                event = runtime.send(
+                    void_p, self.application,
+                    "nextEventMatchingMask:untilDate:inMode:dequeue:",
+                    (ctypes.c_ulonglong, 0xFFFFFFFFFFFFFFFF),
+                    (void_p, deadline), (void_p, mode),
+                    (ctypes.c_bool, True))
+                if not event:
                     return
-                self.application.sendEvent_(event)
-                # Anything already queued behind it goes now rather than
-                # waiting another quarter second.
-                deadline = now
+                runtime.send(None, self.application, "sendEvent:",
+                             (void_p, event))
+                deadline = immediately
 
         def close(self):
-            self.status_bar.removeStatusItem_(self.status_item)
+            global _ACTIVE
+            runtime.send(None, self.status_bar, "removeStatusItem:",
+                         (void_p, self.status_item))
+            if _ACTIVE is self:
+                _ACTIVE = None
 
-    return MacTray()
+    global _ACTIVE
+    _ACTIVE = MacTray()
+    return _ACTIVE
 
 
 def _windows_tray(actions):                                  # pragma: no cover
