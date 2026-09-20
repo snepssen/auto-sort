@@ -126,12 +126,34 @@ class PollingDaemon(object):
         self.close()
 
     def _reload_rules(self):
+        """Load the rules, pausing while they are broken and only while.
+
+        A rules file that does not parse has to stop the sorter -- carrying
+        on with a stale rule set would file things by a configuration nobody
+        can see. But the pause has to lift by itself when the file is fixed,
+        or a typo stops sorting permanently and silently, and the only
+        symptom is that nothing happens ever again. That is what it did:
+        `contains = video` failed to parse, the daemon paused, the rules were
+        corrected, and it stayed paused because the flag it set was the same
+        one a person sets by hand.
+
+        So the two are told apart. A pause the daemon took because it could
+        not read its own configuration is lifted the moment it can; a pause
+        somebody asked for is never touched.
+        """
         try:
             loaded = rules.load(self.rule_path)
         except rules.RuleError as error:
-            self.output("Rules error; sorting paused: %s" % error)
-            self.journal.set_paused(True)
+            if not self.journal.paused():
+                self.output("Rules error; sorting paused: %s" % error)
+                self.journal.set_paused(True, by="rules")
             return None
+
+        if self.journal.paused() \
+                and self.journal.get_state("paused_by") == "rules":
+            self.journal.set_paused(False)
+            self.output("Rules load again; sorting resumed.")
+
         identity = (loaded.source, loaded.source_hash)
         if identity != self._rule_identity:
             self.rule_set = loaded

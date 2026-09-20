@@ -490,3 +490,54 @@ class DaemonCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PauseReasons(unittest.TestCase):
+    """A pause the daemon took must lift itself; a pause you took must not.
+
+    A rules file that does not parse has to stop the sorter, but the pause
+    has to lift when the file is fixed -- otherwise a typo stops sorting
+    permanently and the only symptom is that nothing ever happens again.
+    That is exactly what it did once.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.root = os.path.join(self.directory, "inbox")
+        os.makedirs(self.root)
+        self.rules_file = os.path.join(self.directory, "rules.ini")
+        self.state = os.path.join(self.directory, "state.db")
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def write_rules(self, when="kind = image"):
+        with open(self.rules_file, "w", encoding="utf-8") as handle:
+            handle.write("[settings]\ndry_run = yes\nsettle_seconds = 0\n\n"
+                         "[watch]\nfolders = %s\n\n[rule: images]\nwhen = %s\n"
+                         "into = %s/out\n" % (self.root, when, self.directory))
+
+    def service(self):
+        return daemon.PollingDaemon(rule_path=self.rules_file,
+                                    state_file=self.state, port=0,
+                                    output=lambda _message: None)
+
+    def test_a_broken_rules_file_pauses_and_a_fixed_one_resumes(self):
+        self.write_rules(when="kind = = image")          # will not parse
+        with self.service() as service:
+            self.assertIsNone(service._reload_rules())
+            self.assertTrue(service.journal.paused())
+            self.assertEqual(service.journal.get_state("paused_by"), "rules")
+
+            self.write_rules()                            # fixed
+            self.assertIsNotNone(service._reload_rules())
+            self.assertFalse(service.journal.paused(),
+                             "a pause the daemon took must lift itself")
+
+    def test_a_pause_you_asked_for_is_never_lifted(self):
+        self.write_rules()
+        with self.service() as service:
+            service.journal.set_paused(True)              # by="user"
+            self.assertIsNotNone(service._reload_rules())
+            self.assertTrue(service.journal.paused(),
+                            "the daemon must not resume what you paused")

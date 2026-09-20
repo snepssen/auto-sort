@@ -402,8 +402,15 @@ class Ledger(object):
     def paused(self):
         return self.get_state("paused", "0") == "1"
 
-    def set_paused(self, paused):
+    def set_paused(self, paused, by="user"):
+        """Pause or resume, recording who asked.
+
+        Who matters: a pause the daemon took because its rules would not
+        parse has to lift by itself once they do, and a pause somebody asked
+        for must never be lifted by anything but them.
+        """
         self.set_state("paused", "1" if paused else "0")
+        self.set_state("paused_by", by if paused else "")
 
     # -- persistent work queue -------------------------------------------
 
