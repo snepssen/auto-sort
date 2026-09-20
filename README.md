@@ -151,6 +151,78 @@ and is never descended into. Whatever the rules eventually decide, the whole
 item moves — which is the difference between a sorted folder and a folder full
 of 3D models that open grey.
 
+## Structure that builds itself
+
+A folder does not need to be told what shape it should be. `propose` surveys
+one, counts the groupings that actually exist in it, and writes the rules that
+folder turns out to need:
+
+```sh
+auto-sort propose ~/Downloads --out my-rules.ini
+auto-sort sort ~/Downloads --rules my-rules.ini
+```
+
+```
+  696 items, 757 files, 10.1 GB
+
+  Downloaded from
+    twitter               50
+    furaffinity           43
+
+  Structure this folder suggests
+    site-only             100 items ->    3 folders, median 43 each
+    duration               60 items ->    4 folders, median 7.5 each
+    format                695 items ->   22 folders, median 3 each
+
+  Considered, not proposed
+    site-uploader      the middle folder would hold 1 file
+    camera             only 0.3% of items have camera
+    music              nothing in this folder has artist
+```
+
+**What it refuses matters more than what it proposes.** A folder per artist is
+the obvious structure for downloaded art — and on that folder it was declined,
+because twenty-one artists across forty-three files means the middle folder
+would hold one picture. That is not organisation, it is the same pile with
+more steps. The test is the *median* group, never the mean, because one
+prolific artist and twenty one-offs has a flattering mean. Give it a folder
+where artists repeat and the same facet is accepted.
+
+Destinations default to a subfolder of the folder being surveyed, so every
+move stays on one volume — a rename rather than a copy, a hash and a delete.
+That matters most on the external drive somebody is tidying.
+
+### Where the filenames come from
+
+Most of a download folder was named by software that followed a convention,
+and the convention carries the facts:
+
+| Written by | Yields |
+| --- | --- |
+| FurAffinity `1770665382.artist_title.png` | site, **uploader**, post id, title, post date |
+| DeviantArt `Title_by_Artist_d9abcdef.png` | site, **uploader**, post id, title |
+| Booru tag lists `__artist_tag_tag__<md5>.jpg` | site, uploader, tags |
+| Pixiv `98765432_p0.jpg` | site, post id, page |
+| e621, Tumblr, Patreon, Newgrounds, Inkbunny | site, post id, sometimes uploader |
+| Twitter/X `GzVwz2cXEAIcI4s.jpeg` | site, post id — and nothing else |
+| A bare checksum `9212888c…027.webm` | a hash, and **nothing else at all** |
+
+The uploader is what makes structure emergent: nobody configures a folder per
+artist, it is simply a fact like a camera model, and a rule filing by
+`{uploader}` builds whatever folders the corpus needs.
+
+**Nothing here touches the network.** Every one of these sites has a tag page
+that would say far more, and reaching for it means accounts, credentials, rate
+limits, and a tool that stops working offline. What is on the disk is what
+gets used.
+
+A checksum name is deliberately not guessed at. Boorus name files that way,
+and so do browser caches, download managers and git — so the hash is recorded,
+the file is marked `opaque`, and no site is claimed. Those files are the
+honest boundary of cheap processing, and the report says how many there are.
+Sorting them further would need something that looks at the picture, which is
+the [deferred Tier 3 seam](DESIGN.md#what-a-file-is) and not built.
+
 ## Starting from nothing
 
 ```sh

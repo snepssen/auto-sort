@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 
+import sites
 from evidence import CERTAIN, STRONG, LIKELY, WEAK
 
 
@@ -190,7 +191,8 @@ def detect_dates(ctx, out):
         seconds = int(match.group(1))
         if 1000000000 < seconds < 2000000000:
             import datetime
-            stamp = datetime.datetime.utcfromtimestamp(seconds)
+            stamp = datetime.datetime.fromtimestamp(
+                seconds, datetime.timezone.utc)
             out.add("date", "name_date", stamp.strftime("%Y-%m-%d"), WEAK)
             out.add("date", "name_time", stamp.strftime("%H:%M:%S"), WEAK)
             return
@@ -836,6 +838,28 @@ def detect_sequence(ctx, out):
     out.add("sequence", "sequence_number", int(number), WEAK)
 
 
+def detect_site(ctx, out):
+    """Filenames written by the site a file was downloaded from.
+
+    Placed first among the shape detectors because these conventions are
+    exact. A FurAffinity name is a timestamp, a dot, a username and a title,
+    and letting the music parser see it first reads the whole thing as an
+    artist and a track at the same confidence as a real one.
+
+    This is also where emergent structure comes from. Nobody decides in
+    advance that there should be a folder per artist: `uploader` is just a
+    fact, and a rule filing by it builds whatever folders the corpus needs.
+    """
+    name, found = sites.read(ctx.stem, ctx.ext, ctx.kind)
+    if not found:
+        return
+    for fact, (value, confidence) in found.items():
+        out.add("site:" + name, fact, value, confidence)
+    site = found.get("site")
+    if site:
+        out.label("site:" + name, site[0], site[1])
+
+
 # Detector, and the kinds it is allowed to speak about. `None` means any,
 # including a file whose kind is not yet settled.
 #
@@ -847,6 +871,7 @@ def detect_sequence(ctx, out):
 _ANY = None
 _DETECTORS = (
     ("litter", detect_litter, _ANY),
+    ("site", detect_site, ("image", "video", "audio")),
     ("screenshot", detect_screenshot, ("image", "video")),
     ("messaging", detect_messaging, ("image", "video", "audio", "document")),
     ("camera", detect_camera, ("image", "video")),

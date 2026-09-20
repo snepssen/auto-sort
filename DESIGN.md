@@ -75,6 +75,34 @@ NTFS alternate data stream holds the referrer. Both are free to read, and
 `from_host = bandcamp.com` is a better basis for a decision than any amount of
 audio analysis. Read them at Tier 0, and preserve them when moving.
 
+## Structure is derived, not configured
+
+The rules file says where things go, and writing one by hand means deciding in
+advance what shape a folder should be. That is backwards for the folders this
+tool exists for: a disk with four hundred thousand files on it already has a
+shape, and the job is to find it rather than impose one.
+
+`propose` surveys a folder, counts every fact that recurs in it, and judges
+each possible grouping on three questions:
+
+- **Coverage** — how many items even have this fact. A camera model on eleven
+  files out of forty thousand is a detail, not a structure.
+- **Shape** — how many folders it would make and how full they would be,
+  measured at the *median* rather than the mean, because one prolific artist
+  and nine hundred one-offs has a flattering mean.
+- **Residue** — what is left over. A proposal that files an eighth of a folder
+  and leaves the rest looks like progress and is worse than doing nothing.
+
+What survives becomes a rules file with the counts that justified each rule
+written above it, which a person reads before anything runs. The generated
+file then goes through the same preview, ledger and undo as a hand-written
+one. A tool that reorganised a disk according to a structure nobody had seen
+would be a tool nobody could check, so the derivation stops at a proposal.
+
+This is also where the tiers pay off. The survey runs at whatever depth is
+affordable — stat alone on a first pass over a huge folder, headers when it
+matters — and the facts simply get thinner rather than absent.
+
 ## The unit of work is not always a file
 
 The single most common way a sorter ruins a folder is moving one file out of a

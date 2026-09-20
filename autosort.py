@@ -21,6 +21,7 @@ import identify
 import ledger as ledger_module
 import logpage
 import paths
+import propose as propose_module
 import rules
 import sorter
 
@@ -438,6 +439,107 @@ def scan(root, tier=identify.TIER_ALL, depth=3, show=0, as_json=False):
     return 0
 
 
+def propose(root=".", tier=identify.TIER_HEADER, depth=3, out=None,
+            limit=None, as_json=False):
+    """Survey a folder and write the rules it turns out to need.
+
+    The report is the point as much as the file is. It says what was found,
+    what was proposed, what was considered and rejected and why, and how much
+    of the folder would still be left alone -- because a proposal that sorts
+    an eighth of a folder and looks tidy is the failure mode here.
+    """
+    if not os.path.isdir(root):
+        print("Not a folder: %s" % root, file=sys.stderr)
+        return 1
+
+    def progress(count):
+        sys.stderr.write("\r  surveyed %s items..." % "{:,}".format(count))
+        sys.stderr.flush()
+
+    found = propose_module.survey(root, tier=tier, depth=depth, limit=limit,
+                                  on_progress=None if as_json else progress)
+    if not as_json:
+        sys.stderr.write("\r" + " " * 40 + "\r")
+    proposals = propose_module.assess(found)
+    body = propose_module.render(found, proposals)
+
+    if as_json:
+        print(json.dumps({
+            "root": found.root, "items": found.items, "files": found.files,
+            "bytes": found.bytes, "opaque": found.opaque,
+            "kinds": dict(found.kinds), "sites": dict(found.sites),
+            "proposed": [{"facet": p.key, "covered": p.covered,
+                          "groups": p.groups, "median": p.median}
+                         for p in proposals if p.accepted],
+            "rejected": [{"facet": p.key, "reason": p.reason}
+                         for p in proposals if not p.accepted],
+        }, indent=2, default=str))
+        return 0
+
+    accepted = [p for p in proposals if p.accepted]
+    print()
+    print("  %s" % found.root)
+    print("  %s items, %s files, %s"
+          % ("{:,}".format(found.items), "{:,}".format(found.files),
+             propose_module._size(found.bytes)))
+    print()
+    print("  What is in there")
+    for kind, count in found.kinds.most_common(10):
+        share = 100.0 * count / found.items if found.items else 0
+        print("    %-14s %7s  %4.0f%%  %s"
+              % (kind, "{:,}".format(count), share, "▌" * int(share / 4)))
+    if found.sites:
+        print()
+        print("  Downloaded from")
+        for site, count in found.sites.most_common(8):
+            print("    %-16s %7s" % (site, "{:,}".format(count)))
+
+    print()
+    print("  Structure this folder suggests")
+    if not accepted:
+        print("    nothing grouped well enough to propose")
+    for proposal in sorted(accepted, key=lambda p: p.facet.precedence):
+        print("    %-18s %6s items -> %4d folder%s, median %g each"
+              % (proposal.key, "{:,}".format(proposal.covered),
+                 proposal.groups, " " if proposal.groups == 1 else "s",
+                 proposal.median))
+    rejected = [p for p in proposals if not p.accepted]
+    if rejected:
+        print()
+        print("  Considered, not proposed")
+        for proposal in rejected:
+            print("    %-18s %s" % (proposal.key, proposal.reason))
+    if found.opaque:
+        print()
+        placed = found.opaque - found.opaque_unplaceable
+        print("  %s items are named after a checksum or a site id."
+              % "{:,}".format(found.opaque))
+        if placed:
+            print("    %s of them still name the site they came from."
+                  % "{:,}".format(placed))
+        if found.opaque_unplaceable:
+            print("    %s have no handle at all -- that is where filename"
+                  % "{:,}".format(found.opaque_unplaceable))
+            print("    analysis ends and reading the content would begin.")
+
+    if out:
+        try:
+            with open(out, "w", encoding="utf-8") as handle:
+                handle.write(body)
+        except OSError as error:
+            print("Could not write %s: %s" % (out, error), file=sys.stderr)
+            return 1
+        print()
+        print("  Wrote %s" % out)
+        print("    auto-sort sort %s --rules %s"
+              % (propose_module._short(found.root), out))
+    else:
+        print()
+        print("  (pass --out FILE to write these as a rules file)")
+    print()
+    return 0
+
+
 def init(destination=None):
     """Write a starter rules file, and never over one that already exists.
 
@@ -490,6 +592,7 @@ USAGE = """auto-sort %s
   auto-sort explain PATH        every fact about one file, and where it came from
   auto-sort scan FOLDER         what is in a folder, grouped into items
   auto-sort init                write a starter rules file if there is not one
+  auto-sort propose [FOLDER]    survey a folder and derive the rules it needs
   auto-sort check-rules [FILE]  validate a rules file without changing anything
   auto-sort sort [FOLDER]       plan a sort; dry-run unless configuration says otherwise
   auto-sort undo [RUN|last]     restore a completed move run
@@ -510,6 +613,8 @@ Options
   --dry-run                          force a read-only sort or undo preview
   --once                             run one watch cycle and exit
   --port N                           loopback daemon port (default 47653)
+  --out FILE                         write proposed rules to FILE (propose)
+  --limit N                          stop surveying after N items (propose)
   --json                             machine-readable output
 """ % VERSION
 
@@ -527,6 +632,8 @@ def main(argv=None):
     tier = identify.TIER_ALL
     depth = 3
     show = 0
+    out_file = None
+    limit = None
     as_json = False
     rule_path = None
     state_file = None
@@ -542,6 +649,10 @@ def main(argv=None):
             depth = int(argv.pop(0))
         elif argument == "--list" and argv:
             show = int(argv.pop(0))
+        elif argument == "--out" and argv:
+            out_file = argv.pop(0)
+        elif argument == "--limit" and argv:
+            limit = int(argv.pop(0))
         elif argument == "--json":
             as_json = True
         elif argument == "--rules" and argv:
@@ -588,6 +699,9 @@ def main(argv=None):
     if command == "scan":
         return scan(targets[0] if targets else ".", tier, depth, show,
                     as_json)
+    if command == "propose":
+        return propose(targets[0] if targets else ".", tier, depth,
+                       out_file, limit, as_json)
     if command == "init":
         return init(targets[0] if targets else None)
     if command == "check-rules":
