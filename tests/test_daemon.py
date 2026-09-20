@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import http.client
 import io
 import os
 import shutil
@@ -356,6 +357,27 @@ folders = {other}
             self.assertEqual(command, "sort-now")
             self.assertEqual(result, [True])
 
+    def test_log_page_is_served_by_the_daemon_lock_socket(self):
+        self.configure()
+        with self.service() as service:
+            response = []
+
+            def fetch_status():
+                client = http.client.HTTPConnection(
+                    "127.0.0.1", service.lock.port, timeout=2)
+                client.request("GET", "/api/status?token=" + service.token)
+                reply = client.getresponse()
+                response.append((reply.status, reply.read()))
+                client.close()
+
+            thread = threading.Thread(target=fetch_status)
+            thread.start()
+            command = service.lock.wait(2, service.web.handle_connection)
+            thread.join(2)
+            self.assertEqual(command, "")
+            self.assertEqual(response[0][0], 200)
+            self.assertIn(b'"paused": false', response[0][1])
+
     def test_watch_once_cli_uses_the_persistent_queue(self):
         self.configure(settle=0, dry_run="yes")
         source = self.image()
@@ -382,7 +404,7 @@ folders = {other}
         with ledger.Ledger(self.state_file) as migrated:
             version = migrated.connection.execute(
                 "PRAGMA user_version").fetchone()[0]
-            self.assertEqual(version, 2)
+            self.assertEqual(version, ledger.SCHEMA_VERSION)
             self.assertTrue(migrated.paused())
             self.assertEqual(migrated.queue_counts(), [])
 
@@ -446,6 +468,24 @@ class DaemonCli(unittest.TestCase):
                 "sort-now", "--state", self.state_file)
         self.assertEqual(code, 1)
         self.assertIn("not running", errors)
+
+    def test_open_log_only_uses_the_daemon_stored_url(self):
+        with mock.patch("daemon.wake", return_value=True), \
+                mock.patch("logpage.open_log", return_value=True) as open_log:
+            code, _output, errors = self.run_cli(
+                "open-log", "--state", self.state_file)
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        open_log.assert_called_once_with(self.state_file)
+
+    def test_open_log_refuses_when_no_daemon_owns_the_port(self):
+        with mock.patch("daemon.wake", return_value=False), \
+                mock.patch("logpage.open_log") as open_log:
+            code, _output, errors = self.run_cli(
+                "open-log", "--state", self.state_file)
+        self.assertEqual(code, 1)
+        self.assertIn("not running", errors)
+        open_log.assert_not_called()
 
 
 if __name__ == "__main__":

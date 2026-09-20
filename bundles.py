@@ -276,6 +276,12 @@ def walk(root, max_depth=3, ignore=()):
         subdirectories[:] = [name for name in subdirectories
                              if name not in packages and name not in ignore
                              and not name.startswith(".")]
+        # A depth-zero watch is an inbox: ordinary top-level folders must be
+        # handled as atomic items or the inbox can never become empty. Do not
+        # inspect or split their contents; the mover hashes and journals the
+        # complete directory just like a platform package.
+        inbox_directories = list(subdirectories) \
+            if max_depth == 0 and depth == 0 else []
         if depth >= max_depth:
             subdirectories[:] = []
         for item in group(directory, names):
@@ -284,3 +290,7 @@ def walk(root, max_depth=3, ignore=()):
             yield Item(os.path.join(directory, name),
                        [os.path.join(directory, name)], is_dir=True,
                        reason="package directory")
+        for name in inbox_directories:
+            yield Item(os.path.join(directory, name),
+                       [os.path.join(directory, name)], is_dir=True,
+                       reason="top-level inbox folder")

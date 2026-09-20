@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import json
 import os
 import stat
 import time
@@ -38,11 +39,12 @@ class PlannedMember(object):
 
 
 class PlannedItem(object):
-    def __init__(self, item, rule_name, operation, members):
+    def __init__(self, item, rule_name, operation, members, facts=None):
         self.item = item
         self.rule_name = rule_name
         self.operation = operation
         self.members = members
+        self.facts = facts or {}
 
 
 class Plan(object):
@@ -121,10 +123,10 @@ def build_plan(root, rule_set, exclude=(), items=None):
             skipped.append((item.primary,
                             "cloud placeholder is not present on this device"))
             continue
-        decision = rule_set.decision(record, source_root=root)
+        decision, near_miss = rule_set.decide(record, source_root=root)
         if decision is None:
             if rule_set.settings.unsorted != "gather":
-                skipped.append((item.primary, "no rule matched"))
+                skipped.append((item.primary, _no_match_reason(near_miss)))
                 continue
             destination_dir = _unsorted_directory(
                 rule_set.settings.unsorted_into, root)
@@ -190,7 +192,8 @@ def build_plan(root, rule_set, exclude=(), items=None):
                             % error))
             continue
         reserved.update(_collision_key(path) for path in destinations)
-        planned.append(PlannedItem(item, rule_name, operation, members))
+        planned.append(PlannedItem(item, rule_name, operation, members,
+                                   record.as_dict()))
     return Plan(root, planned, skipped)
 
 
@@ -210,7 +213,8 @@ def execute(plan, rule_set, ledger, dry_run=None):
                 run_id, item_number, member_number, planned_item.operation,
                 planned_item.rule_name, member.source, member.destination,
                 member.size, member.sha256,
-                status="dry-run" if dry_run else "planned")
+                status="dry-run" if dry_run else "planned",
+                facts=planned_item.facts)
 
     if dry_run:
         ledger.record_preview(plan.root, fingerprint, run_id)
@@ -224,10 +228,16 @@ def execute(plan, rule_set, ledger, dry_run=None):
                          forced_preview=forced_preview, messages=messages)
 
     completed = failed = 0
+    created_directories = set()
     for planned_item in plan.items:
         moved = []
         item_failed = False
         for member_index, member in enumerate(planned_item.members):
+            # Asked before the transfer, while the answer is still "these do
+            # not exist". Afterwards there is no way to tell what this run
+            # made from what was already there.
+            created_directories.update(paths.missing_ancestors(
+                os.path.dirname(member.destination)))
             status = "copying" if planned_item.operation == "copy" else "moving"
             ledger.update_move(member.ledger_id, status)
             try:
@@ -268,6 +278,13 @@ def execute(plan, rule_set, ledger, dry_run=None):
         elif not item_failed:
             completed += 1
 
+    ledger.record_directories(run_id, created_directories)
+    # A rolled-back item leaves the folders it was halfway into. They are
+    # this run's, and they are empty, so they go now rather than waiting for
+    # an undo that may never be asked for.
+    if failed:
+        paths.prune_empty(created_directories)
+
     status = "partial" if failed else "completed"
     summary = "%d items completed, %d failed, %d skipped" % (
         completed, failed, len(plan.skipped))
@@ -291,11 +308,15 @@ def undo(ledger, run_id=None, dry_run=False):
     completed = failed = 0
     groups = {}
     for row in original_moves:
+        try:
+            facts = json.loads(row["facts_json"] or "{}")
+        except (KeyError, TypeError, ValueError):
+            facts = {}
         new_id = ledger.add_move(
             undo_run, row["item_number"], row["member_number"], "move",
             "[undo %s]" % original["id"],
             row["destination"], row["source"], row["size"], row["sha256"],
-            status="dry-run" if dry_run else "planned")
+            status="dry-run" if dry_run else "planned", facts=facts)
         groups.setdefault(row["item_number"], []).append((new_id, row))
 
     if dry_run:
@@ -381,6 +402,13 @@ def undo(ledger, run_id=None, dry_run=False):
         completed += 1
 
     status = "partial" if failed else "completed"
+    removed_directories = []
+    if not failed:
+        # Undo is meant to put the folder back as it was, and a tree of empty
+        # `Photos/2026/Canon EOS R6` folders is not how it was.
+        removed_directories = paths.prune_empty(
+            ledger.directories_for_run(original["id"]))
+        ledger.mark_directories_removed(original["id"], removed_directories)
     ledger.finish_run(undo_run, status,
                       "%d restored, %d failed" % (completed, failed))
     if not failed:
@@ -426,6 +454,20 @@ def reconcile(ledger):
         ledger.finish_run(run["id"], status,
                           "reconciled after an interrupted process")
     return messages
+
+
+def _no_match_reason(near_miss):
+    """Why nothing matched, in the words of the rule that came closest.
+
+    "no rule matched" is true and useless. A rules file that quietly does
+    nothing is the most common way this tool will be wrong, and the reason is
+    almost always one gate on one rule — a confidence floor, or a destination
+    template needing a tag the file does not carry.
+    """
+    if near_miss is None:
+        return "no rule matched"
+    return "no rule matched (closest: %r %s)" % (near_miss.rule.name,
+                                                 near_miss.reason)
 
 
 def _skip_reason(item, root, ignore_patterns, settle_seconds):

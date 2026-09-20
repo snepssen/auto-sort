@@ -228,6 +228,25 @@ class Names(unittest.TestCase):
         self.assertEqual(found.get("name_date"), "2026-09-19")
         self.assertNotIn("name_time", found)
 
+
+class DerivedFacts(unittest.TestCase):
+
+    def test_fur_affinity_creator_needs_matching_provenance(self):
+        filename = "1497725735.multyashka-sweet_by_artist.jpg"
+        record = evidence.Record(filename)
+        record.set("name", filename, "path", evidence.CERTAIN)
+        record.set("from_host", "d.furaffinity.net", "wherefroms",
+                   evidence.STRONG)
+        identify._derive(record)
+        self.assertEqual(record.value("creator"), "multyashka-sweet")
+
+    def test_epoch_filename_alone_does_not_invent_a_creator(self):
+        filename = "1497725735.multyashka-sweet_by_artist.jpg"
+        record = evidence.Record(filename)
+        record.set("name", filename, "path", evidence.CERTAIN)
+        identify._derive(record)
+        self.assertFalse(record.has("creator"))
+
     def test_pathological_names_do_not_raise(self):
         for filename in ("", ".", "..", "a" * 300 + ".jpg", "\x00.jpg",
                          "🎧 — ‽.mp3", "....", "no-extension"):
@@ -293,6 +312,19 @@ class Bundles(unittest.TestCase):
         items = list(bundles.walk(self.directory))
         self.assertEqual(len(items), 1)
         self.assertTrue(items[0].is_dir)
+
+    def test_depth_zero_treats_a_top_level_folder_as_one_inbox_item(self):
+        folder = self.path("Old project")
+        os.makedirs(folder)
+        fixtures.text(os.path.join(folder, "notes.txt"), b"keep together")
+
+        items = list(bundles.walk(self.directory, max_depth=0))
+
+        self.assertEqual([item.primary for item in items], [folder])
+        self.assertEqual(items[0].members, [folder])
+        self.assertTrue(items[0].is_dir)
+        self.assertEqual(items[0].reason, "top-level inbox folder")
+        self.assertEqual(identify.identify(items[0]).value("kind"), "folder")
 
 
 class EndToEnd(unittest.TestCase):

@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import contextlib
 import io
+import json
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,6 +20,7 @@ import autosort                                          # noqa: E402
 import bundles                                           # noqa: E402
 import ledger                                            # noqa: E402
 import mover                                             # noqa: E402
+import paths                                             # noqa: E402
 import provenance                                        # noqa: E402
 import rules                                             # noqa: E402
 import sorter                                            # noqa: E402
@@ -209,6 +211,33 @@ depth = 3
             rows = journal.moves(applied.run_id)
             self.assertEqual(rows[0]["status"], "done")
 
+    def test_depth_zero_inbox_moves_a_folder_intact_after_preview(self):
+        folder = os.path.join(self.root, "Old project")
+        os.makedirs(folder)
+        note = fixtures.text(os.path.join(folder, "notes.txt"), b"together")
+        rule_set = self.configure(body="""
+[rule: folders]
+when = is_dir = yes
+into = {output}/Folders
+""".format(output=self.output), dry_run="no")
+        items = list(bundles.walk(self.root, max_depth=0))
+        plan = sorter.build_plan(self.root, rule_set, items=items)
+        destination = os.path.join(self.output, "Folders", "Old project")
+
+        with ledger.Ledger(self.state_file) as journal:
+            preview = sorter.execute(plan, rule_set, journal, dry_run=False)
+            self.assertTrue(preview.dry_run)
+            self.assertTrue(os.path.exists(note))
+
+            applied = sorter.execute(plan, rule_set, journal, dry_run=False)
+            self.assertFalse(applied.dry_run)
+            self.assertFalse(os.path.exists(folder))
+            self.assertTrue(os.path.exists(
+                os.path.join(destination, "notes.txt")))
+            facts = json.loads(journal.moves(applied.run_id)[0]["facts_json"])
+            self.assertEqual(facts["kind"], "folder")
+            self.assertTrue(facts["is_dir"])
+
     def test_dry_run_records_intent_but_touches_no_paths(self):
         source = self.image()
         rule_set = self.configure()
@@ -220,6 +249,9 @@ depth = 3
             self.assertFalse(os.path.exists(plan.members[0].destination))
             self.assertEqual(journal.moves(result.run_id)[0]["status"],
                              "dry-run")
+            facts = json.loads(journal.moves(result.run_id)[0]["facts_json"])
+            self.assertEqual(facts["kind"], "image")
+            self.assertEqual(facts["format"], "png")
 
     def test_bundle_moves_together_and_undo_restores_it(self):
         video = os.path.join(self.root, "Film.mkv")
@@ -442,3 +474,85 @@ into = {output}/Changed
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class DirectoryCleanup(unittest.TestCase):
+    """Undo has to put the folder back, and a tree of empty folders is not back.
+
+    The asymmetry is the point: directories the run created are removed, and
+    directories that were already there are not, whether or not they are now
+    empty. Getting that backwards means an undo deletes a folder somebody
+    made, which nothing can recover.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.root = os.path.join(self.directory, "inbox")
+        self.output = os.path.join(self.directory, "output")
+        os.makedirs(self.root)
+        os.makedirs(self.output)
+        self.rules_file = os.path.join(self.directory, "rules.ini")
+        self.state_file = os.path.join(self.directory, "state.db")
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def build(self):
+        with open(self.rules_file, "w", encoding="utf-8") as handle:
+            handle.write("""
+[settings]
+dry_run = no
+settle_seconds = 0
+
+[watch]
+folders = {root}
+depth = 3
+
+[rule: images]
+when = kind = image
+into = {output}/Pictures/{{width}}
+""".format(root=self.root, output=self.output))
+        return rules.load(self.rules_file)
+
+    def test_undo_removes_what_the_run_created_and_nothing_else(self):
+        fixtures.png(os.path.join(self.root, "photo.png"))
+        kept = os.path.join(self.output, "Existing")
+        os.makedirs(kept)
+        rule_set = self.build()
+
+        with ledger.Ledger(self.state_file) as journal:
+            plan = sorter.build_plan(self.root, rule_set)
+            sorter.execute(plan, rule_set, journal, dry_run=False)   # preview
+            plan = sorter.build_plan(self.root, rule_set)
+            applied = sorter.execute(plan, rule_set, journal, dry_run=False)
+            self.assertFalse(applied.dry_run)
+            made = os.path.join(self.output, "Pictures", "1920")
+            self.assertTrue(os.path.isdir(made))
+
+            sorter.undo(journal, "last")
+
+        self.assertTrue(os.path.exists(os.path.join(self.root, "photo.png")))
+        self.assertFalse(os.path.exists(made))
+        self.assertFalse(os.path.exists(os.path.join(self.output, "Pictures")))
+        # Empty, but not ours.
+        self.assertTrue(os.path.isdir(kept))
+        self.assertTrue(os.path.isdir(self.output))
+
+    def test_missing_ancestors_reports_only_what_is_absent(self):
+        deep = os.path.join(self.output, "a", "b", "c")
+        self.assertEqual(paths.missing_ancestors(deep),
+                         [os.path.join(self.output, "a"),
+                          os.path.join(self.output, "a", "b"), deep])
+        os.makedirs(deep)
+        self.assertEqual(paths.missing_ancestors(deep), [])
+
+    def test_prune_leaves_directories_that_are_not_empty(self):
+        keep = os.path.join(self.output, "full")
+        os.makedirs(keep)
+        with open(os.path.join(keep, "x.txt"), "w") as handle:
+            handle.write("x")
+        empty = os.path.join(self.output, "empty")
+        os.makedirs(empty)
+        removed = paths.prune_empty([keep, empty])
+        self.assertEqual(removed, [empty])
+        self.assertTrue(os.path.isdir(keep))

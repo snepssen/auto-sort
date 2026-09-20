@@ -84,6 +84,49 @@ def ensure(directory):
     return directory
 
 
+def missing_ancestors(directory):
+    """The directories that would have to be created to reach `directory`.
+
+    Shallowest first, and empty when the whole path already exists. Asked
+    *before* a move so that undo can later remove exactly what the run
+    created and nothing else. A directory that was already there is never
+    recorded, and so can never be removed — which is the conservative
+    direction, and the only safe one when the alternative is deleting a
+    folder somebody made.
+    """
+    if not directory:
+        return []
+    missing = []
+    current = os.path.abspath(directory)
+    while current and not os.path.isdir(current):
+        missing.append(current)
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    missing.reverse()
+    return missing
+
+
+def prune_empty(directories):
+    """Remove directories that this run created and that are now empty.
+
+    Deepest first, so a three-level tree collapses in one pass. Anything that
+    is not empty, or that has gone already, is left exactly as it is: this
+    runs after an undo, when the user is trying to get back to where they
+    were, and an over-eager rmdir at that moment is unrecoverable.
+    """
+    removed = []
+    for directory in sorted(set(directories), key=len, reverse=True):
+        try:
+            if os.path.isdir(directory) and not os.listdir(directory):
+                os.rmdir(directory)
+                removed.append(directory)
+        except OSError:
+            continue
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Names
 # ---------------------------------------------------------------------------

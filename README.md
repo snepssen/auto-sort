@@ -11,7 +11,8 @@ are complete. A sort is a dry run by default, every member is written to a
 SQLite ledger before it is touched, and the first attempted apply for a folder
 and rule file is forcibly turned into a preview. Real moves verify content,
 never overwrite, keep bundles together, and can be restored with `undo`. The
-watcher keeps its settle queue and paused state across restarts. See
+watcher keeps its settle queue and paused state across restarts. Its local log
+shows every ledgered operation and can reveal the recorded file safely. See
 [DESIGN.md](DESIGN.md) for the whole shape and [RULES.md](RULES.md) for
 configuration.
 
@@ -27,9 +28,13 @@ python3 autosort.py sort ~/Downloads --rules ./rules.ini --apply
 python3 autosort.py undo last
 python3 autosort.py watch --rules ./rules.ini --apply
 python3 autosort.py status
+python3 autosort.py open-log
 python3 autosort.py pause
 python3 autosort.py resume
 python3 autosort.py sort-now
+python3 autosort.py autostart status
+python3 autosort.py autostart install --rules ./rules.ini
+python3 autosort.py autostart remove
 ```
 
 `explain` prints every fact about one file, which reader established it, and
@@ -46,6 +51,19 @@ later. It persists observations until bundles have been unchanged for
 `settle_seconds`, keeps queued work when a watched volume disappears, and never
 watches its own output. `pause` and `resume` survive both daemon and machine
 restarts; `sort-now` wakes the loop without waiting for its next interval.
+`open-log` opens the live daemon's loopback operations console, which shows
+recent moves and lets you pause, resume, sort now, or reveal a recorded file in
+its file manager. Its dense ledger defaults to the latest 50 files (up to 500
+in steps of 50) and shows the destination alongside the rule and the actual
+classification facts used by the sorter. Dates use the browser's locale and
+time zone. Column and manual destination preferences stay in that browser. Per
+row, it can reveal, copy, move, restore a recorded move, or move the current
+file to the system Trash/Recycle Bin; copy and move never overwrite, every
+operation is ledgered, and classification facts follow later file operations.
+`autostart` is deliberately separate from `watch`: `status` only reports the
+per-user login launcher, `install` first validates the rules file then adds it,
+and `remove` deactivates and deletes only that launcher. Nothing starts at
+login unless `install` is explicitly requested.
 
 ```
   IMG_1354.HEIC
@@ -139,11 +157,18 @@ Python 3.8 or newer. Nothing else — no pip install, no external programs, no
 models. `ffprobe` and `exiftool` will be used if they happen to be there, and
 their absence costs facts rather than function.
 
+For a copied checkout, use `./start.sh` on macOS/Linux, double-click
+`Start auto-sort.command` on macOS, or use `start.bat` on Windows. These
+launchers require only Python 3.8+. If `ffprobe` or `exiftool` is missing they
+offer, but never require, package-manager installation; declining or an
+unavailable package manager still starts auto-sort. Run `python3 bootstrap.py`
+yourself to make the same optional offer.
+
 ```sh
 python3 -m unittest discover -s tests
 ```
 
-110 tests, no binary fixtures committed: every sample file is assembled from
+131 tests, no binary fixtures committed: every sample file is assembled from
 its own specification at test time.
 
 ## Where this is going
@@ -151,9 +176,17 @@ its own specification at test time.
 1. **Identification, grouping and `explain`** ✓
 2. **Rules engine, ledger, real moves and `undo`** ✓
 3. **The background daemon: watch, settle, queue, pause** ✓
-4. The log page on `127.0.0.1`, reveal-in-file-manager, and the tray ← next
-5. Starting at log-in, on all three platforms
-6. `bootstrap.py` and the launchers
+4. **The loopback log page and ledger-ID file reveal** ✓
+   Optional native status items are available through PyObjC on macOS and the
+   standard-library Windows notification API. Linux continues headless when a
+   StatusNotifier service is not available, with the log page as its UI.
+5. **Explicit per-user start at login** ✓
+   `autostart install` writes a LaunchAgent on macOS, an XDG autostart entry on
+   Linux, or a Startup shortcut on Windows; `autostart remove` reverses it.
+6. **Self-contained bootstrap and launchers** ✓
+   `start.sh`, `Start auto-sort.command`, and `start.bat` start with Python
+   alone. `bootstrap.py` can offer optional `ffprobe` and `exiftool` installs,
+   but never invokes `sudo` and never blocks the sorter.
 
 [DESIGN.md](DESIGN.md) covers all six, including the filesystem hazards that
 have to be handled before anything is allowed to move a file.

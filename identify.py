@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import stat as stat_module
 
 import bundles
@@ -131,7 +132,7 @@ def _stat(item, record):
             record.note("extension %r is not in the table" % ext.lower())
     if item.is_dir and not claim:
         record.set("kind", "app" if item.primary.endswith(".app")
-                   else "document", "package", LIKELY)
+                   else "folder", "path", CERTAIN)
 
 
 def _bytes(path, record, tier):
@@ -191,9 +192,22 @@ def _name_and_provenance(item, record):
 _DURATION_BANDS = ((5, "clip"), (60, "short"), (600, "medium"),
                    (1800, "long"), (4800, "feature"))
 
+# Fur Affinity's download host serves files as
+# ``<upload epoch>.<creator>_<title>.<ext>``.  The shape alone is not enough
+# evidence to call the middle segment a creator, but the matching provenance
+# host makes it a useful, source-backed classification fact.
+_FURAFFINITY_NAME = re.compile(r"^\d{10}\.([A-Za-z0-9-]+)_.+")
+
 
 def _derive(record):
     """Facts that follow from other facts, and nothing new from the disk."""
+    host = str(record.value("from_host", "")).lower()
+    if host == "furaffinity.net" or host.endswith(".furaffinity.net"):
+        match = _FURAFFINITY_NAME.match(str(record.value("name", "")))
+        if match:
+            record.set("creator", match.group(1),
+                       "derived:filename+provenance", STRONG)
+
     width, height = record.value("width"), record.value("height")
     if width and height and not record.has("aspect"):
         record.set("aspect", round(width / float(height), 4), "derived",

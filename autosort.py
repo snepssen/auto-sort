@@ -14,15 +14,17 @@ import os
 import sys
 
 import bundles
+import autostart
 import daemon as daemon_module
 import evidence
 import identify
 import ledger as ledger_module
+import logpage
 import paths
 import rules
 import sorter
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 _TIERS = {"stat": identify.TIER_STAT, "signature": identify.TIER_SIGNATURE,
           "header": identify.TIER_HEADER, "all": identify.TIER_ALL}
@@ -312,6 +314,16 @@ def daemon_control(command, state_file=None, as_json=False):
             print("auto-sort daemon is not running", file=sys.stderr)
         return 0 if running else 1
 
+    if command == "open-log":
+        running = daemon_module.wake(state_file, "status")
+        if not running:
+            print("auto-sort daemon is not running", file=sys.stderr)
+            return 1
+        if not logpage.open_log(state_file):
+            print("could not open the log page", file=sys.stderr)
+            return 1
+        return 0
+
     with ledger_module.Ledger(state_file) as journal:
         paused = journal.paused()
         counts = dict((row["status"], row["count"])
@@ -330,6 +342,30 @@ def daemon_control(command, state_file=None, as_json=False):
         print("Queue: %s" % (", ".join(
             "%s %d" % (name, count)
             for name, count in sorted(counts.items())) or "empty"))
+    return 0
+
+
+def manage_autostart(action="status", rule_path=None, as_json=False):
+    try:
+        if action == "install":
+            rule_set = rules.load(rule_path)
+            report = autostart.install(rule_set.source)
+        elif action == "remove":
+            report = autostart.remove()
+        elif action == "status":
+            report = autostart.status()
+        else:
+            print("autostart accepts status, install, or remove", file=sys.stderr)
+            return 2
+    except (autostart.AutostartError, rules.RuleError, OSError) as error:
+        print("Autostart error: %s" % error, file=sys.stderr)
+        return 2
+    if as_json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print("Autostart: %s" % ("installed" if report["installed"]
+                                  else "not installed"))
+        print("  %s (%s)" % (report["path"], report["platform"]))
     return 0
 
 
@@ -412,7 +448,9 @@ USAGE = """auto-sort %s
   auto-sort watch               run the persistent polling sorter
   auto-sort pause|resume        persistently pause or resume background sorting
   auto-sort status              show daemon and queue state
+  auto-sort open-log            open the live loopback log page
   auto-sort sort-now            wake the daemon for an immediate scan
+  auto-sort autostart [ACTION]  show, install, or remove login launch (default status)
 
 Options
   --tier stat|signature|header|all   how far up the ladder to climb (default all)
@@ -530,11 +568,17 @@ def main(argv=None):
                   file=sys.stderr)
             return 2
         return watch(rule_path, state_file, dry_run, port, once)
-    if command in ("pause", "resume", "status", "sort-now"):
+    if command in ("pause", "resume", "status", "open-log", "sort-now"):
         if targets:
             print("%s takes no arguments" % command, file=sys.stderr)
             return 2
         return daemon_control(command, state_file, as_json)
+    if command == "autostart":
+        if len(targets) > 1:
+            print("autostart takes one action", file=sys.stderr)
+            return 2
+        return manage_autostart(targets[0] if targets else "status",
+                                rule_path, as_json)
     print("Unknown command: %s\n" % command, file=sys.stderr)
     print(USAGE)
     return 2

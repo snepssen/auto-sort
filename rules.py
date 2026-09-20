@@ -547,8 +547,7 @@ class Rule(object):
 
         matched, consulted = self.condition.evaluate(facts, trace)
         if not matched:
-            return Evaluation(self, False, "when expression did not match",
-                              trace)
+            return Evaluation(self, False, _NO_MATCH, trace)
 
         weak = []
         if hasattr(record, "confidence"):
@@ -594,6 +593,11 @@ class Rule(object):
                           os.path.join(directory, filename))
 
 
+# The one reason that means "this rule was simply not about this file", and
+# so is never worth reporting back to anybody.
+_NO_MATCH = "when expression did not match"
+
+
 class RuleSet(object):
     def __init__(self, settings, watch, rules_list, source=None,
                  source_hash=None):
@@ -619,11 +623,28 @@ class RuleSet(object):
         return evaluations
 
     def decision(self, record, source_root=None, platform=PLATFORM):
+        return self.decide(record, source_root, platform)[0]
+
+    def decide(self, record, source_root=None, platform=PLATFORM):
+        """(the decision or None, the most informative near miss or None).
+
+        A rule whose `when` did not match is not interesting — that is the
+        normal case for every rule but one. A rule that *did* match and then
+        failed a later gate is the whole explanation for a file that stayed
+        put, and it was previously reachable only by running `explain` again
+        by hand. Both come out of one pass, because evaluating the whole rule
+        set twice to produce a sentence is not worth it on a folder with
+        forty thousand files in it.
+        """
+        near_miss = None
         for result in self.evaluate(record, source_root, platform):
             if result.matched and (result.rule.mode == "leave"
                                    or result.destination is not None):
-                return result
-        return None
+                return result, None
+            if near_miss is None and not result.matched \
+                    and result.reason != _NO_MATCH:
+                near_miss = result
+        return None, near_miss
 
 
 def load(filename=None):
@@ -680,6 +701,17 @@ def render_template(template, facts):
     components = [part for part in re.split(r"[/\\]+", tail) if part]
     rendered = []
     for component in components:
+        # A `.` or `..` written in the template is path navigation and has to
+        # be handled before substitution, never after. `./out` is a natural
+        # way to write a relative destination and sanitising it as a name
+        # produced a literal folder called `_`. The same two characters
+        # arriving *from a fact* — an album tag reading `..` — are a traversal
+        # attempt and must still be sanitised into a harmless name, which is
+        # why this looks at the raw component only.
+        if component == ".":
+            continue
+        if component == "..":
+            raise RuleError("a destination cannot contain '..': %r" % template)
         value = _TEMPLATE.sub(lambda match: _template_value(match, facts),
                               component)
         rendered.append(paths.sanitise(value))

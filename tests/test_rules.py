@@ -259,3 +259,104 @@ min_confidnce = 0.9
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class DestinationNavigation(unittest.TestCase):
+    """`.` and `..` in a template are paths; the same text in a tag is a name.
+
+    Both halves matter. A leading `./` is the natural way to write a relative
+    destination and used to become a literal folder called `_`, because every
+    component was sanitised as though it were a name. Meanwhile `..` arriving
+    from an ID3 album tag is a traversal attempt and must stay sanitised --
+    the fix for the first must not become a hole for the second.
+    """
+
+    def test_a_leading_dot_means_here(self):
+        self.assertEqual(
+            rules.render_template("./out/Shots/{d}", {"d": "2026-09-19"}),
+            os.path.join("out", "Shots", "2026-09-19"))
+
+    def test_interior_dots_are_dropped_too(self):
+        self.assertEqual(rules.render_template("out/./Shots", {}),
+                         os.path.join("out", "Shots"))
+
+    def test_a_literal_dotdot_is_refused(self):
+        with self.assertRaises(rules.RuleError):
+            rules.render_template("../escape/{d}", {"d": "x"})
+
+    def test_dotdot_from_a_fact_is_only_a_name(self):
+        rendered = rules.render_template("out/{album}", {"album": ".."})
+        self.assertEqual(rendered, os.path.join("out", "_"))
+        self.assertNotIn("..", rendered)
+
+    def test_absolute_destinations_keep_their_root(self):
+        rendered = rules.render_template("/srv/media/{kind}",
+                                         {"kind": "video"})
+        self.assertTrue(os.path.isabs(rendered))
+        self.assertTrue(rendered.endswith(os.path.join("media", "video")))
+
+
+class NearMiss(unittest.TestCase):
+    """A rules file that quietly does nothing is the likeliest way to be wrong.
+
+    `decide` reports the rule that came closest so that the sort output can
+    say which gate stopped it, instead of "no rule matched".
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def build(self, body):
+        filename = os.path.join(self.directory, "rules.ini")
+        with open(filename, "w", encoding="utf-8") as handle:
+            handle.write("[settings]\nmin_confidence = 0.6\n\n"
+                         "[watch]\nfolders = %s\n\n%s" % (self.directory, body))
+        return rules.load(filename)
+
+    def record(self, facts, confidences=None):
+        confidences = confidences or {}
+        made = evidence.Record("/tmp/thing.pdf")
+        for name, value in facts.items():
+            made.set(name, value, "test",
+                     confidences.get(name, evidence.CERTAIN))
+        return made
+
+    def test_a_weak_fact_is_named_with_its_confidence(self):
+        rule_set = self.build("[rule: paperwork]\n"
+                              "when = kind = document and paperwork is set\n"
+                              "into = /tmp/out/{paperwork}\n")
+        record = self.record({"kind": "document", "paperwork": "invoice"},
+                             {"paperwork": evidence.WEAK})
+        decision, near_miss = rule_set.decide(record, source_root="/tmp")
+        self.assertIsNone(decision)
+        self.assertIsNotNone(near_miss)
+        self.assertIn("below confidence", near_miss.reason)
+        self.assertIn("paperwork", near_miss.reason)
+
+    def test_a_missing_template_fact_is_named(self):
+        rule_set = self.build("[rule: tagged music]\n"
+                              "when = kind = audio\n"
+                              "into = /tmp/out/{artist}/{album}\n")
+        decision, near_miss = rule_set.decide(self.record({"kind": "audio"}),
+                                              source_root="/tmp")
+        self.assertIsNone(decision)
+        self.assertIn("artist", near_miss.reason)
+
+    def test_rules_that_were_never_about_this_file_are_not_reported(self):
+        rule_set = self.build("[rule: video]\nwhen = kind = video\n"
+                              "into = /tmp/out\n")
+        decision, near_miss = rule_set.decide(self.record({"kind": "audio"}),
+                                              source_root="/tmp")
+        self.assertIsNone(decision)
+        self.assertIsNone(near_miss)
+
+    def test_a_match_reports_no_near_miss(self):
+        rule_set = self.build("[rule: audio]\nwhen = kind = audio\n"
+                              "into = /tmp/out\n")
+        decision, near_miss = rule_set.decide(self.record({"kind": "audio"}),
+                                              source_root="/tmp")
+        self.assertIsNotNone(decision)
+        self.assertIsNone(near_miss)

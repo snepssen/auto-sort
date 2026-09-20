@@ -292,3 +292,65 @@ auto-sort sort-now
 restart. `status` reports whether the loopback single-instance port is live and
 counts queued items by state. Use `watch --once` for one observation cycle in a
 script or test; normal operation leaves it running.
+
+With `depth = 0`, a watched folder acts as a strict inbox. Files and package
+directories are classified normally, while an ordinary top-level folder is
+treated as one atomic item: its contents are neither entered nor rearranged.
+This lets a rule such as `when = is_dir = yes` move the folder intact and keeps
+the intake empty without dismantling old projects or archives.
+
+## Reading the local log
+
+While the watcher is running, `open-log` opens its log page:
+
+```sh
+auto-sort open-log
+```
+
+The page is bound only to `127.0.0.1` and each daemon start creates a fresh,
+unguessable token embedded in the URL. Mutating requests also require the page's
+own loopback origin. The **Reveal** button sends only a ledger move ID: the
+daemon resolves the corresponding recorded source or destination itself and
+never accepts a path from the browser.
+
+The dense move ledger initially shows the latest 50 files and can load up to
+500 in steps of 50. Its defaults are Name, Kind, Format, Destination, Rule,
+Date, Size, and Status. Kind, format, dimensions, media tags, timestamps,
+provenance, and the other optional classification columns come from the same
+identified fact record evaluated by the rules engine; they are not a separate
+UI guess. The **View configuration** panel saves column choices and a manual
+Copy/Move destination folder in that browser. Displayed operation dates use the
+browser's locale and time zone instead of exposing the ledger's ISO timestamp.
+
+Reveal, Copy, Move, Restore, and Trash actions still send only a ledger move ID.
+Copy and Move require an existing destination folder and refuse collisions.
+Every new operation inherits the original classification facts so later rows
+remain filterable and auditable. **Trash** uses the operating system's
+Trash/Recycle Bin rather than permanently deleting a file.
+
+## Tray capability
+
+The watcher stays useful without a desktop integration. When PyObjC is present
+on macOS, or when Windows exposes its standard notification area API, it
+provides **Open log**, **Pause/Resume**, **Sort now**, and **Quit**. Linux
+desktops without a StatusNotifier service continue headless; `open-log`,
+`pause`, `resume`, and `sort-now` remain available from the command line.
+
+## Starting at login
+
+Starting at login is an explicit per-user choice; running `watch` alone never
+creates a background launcher. Inspect the current state, then install it only
+after the rules file passes validation:
+
+```sh
+auto-sort autostart status
+auto-sort autostart install --rules ~/Library/Application\ Support/auto-sort/rules.ini
+```
+
+`install` uses a macOS LaunchAgent, Linux XDG autostart entry, or Windows
+Startup shortcut. To stop future automatic launches and remove only the entry
+created for auto-sort:
+
+```sh
+auto-sort autostart remove
+```

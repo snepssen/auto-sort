@@ -18,7 +18,7 @@ import time
 import paths
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 
 def now():
@@ -130,6 +130,62 @@ class Ledger(object):
 
                     PRAGMA user_version = 2;
                 """)
+            version = 2
+        if version == 2:
+            with self.connection:
+                columns = [row[1] for row in self.connection.execute(
+                    "PRAGMA table_info(moves)").fetchall()]
+                if "facts_json" not in columns:
+                    self.connection.execute(
+                        "ALTER TABLE moves ADD COLUMN facts_json TEXT")
+                self.connection.execute("PRAGMA user_version = 3")
+            version = 3
+        if version == 3:
+            with self.connection:
+                self.connection.executescript("""
+                    CREATE TABLE IF NOT EXISTS directories (
+                        run_id INTEGER NOT NULL REFERENCES runs(id),
+                        path TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        removed_at TEXT,
+                        UNIQUE(run_id, path)
+                    );
+
+                    PRAGMA user_version = 4;
+                """)
+
+    def record_directories(self, run_id, directories):
+        """Remember the folders a run had to create, so undo can remove them.
+
+        Recorded after the moves rather than before: a directory that was
+        planned but never reached — because the item failed — was never
+        created and must not be listed as though it were.
+        """
+        rows = [(run_id, directory, now())
+                for directory in sorted(set(directories))
+                if os.path.isdir(directory)]
+        if not rows:
+            return 0
+        with self.connection:
+            self.connection.executemany(
+                "INSERT OR IGNORE INTO directories(run_id, path, created_at) "
+                "VALUES (?, ?, ?)", rows)
+        return len(rows)
+
+    def directories_for_run(self, run_id):
+        return [row[0] for row in self.connection.execute(
+            "SELECT path FROM directories WHERE run_id = ? "
+            "AND removed_at IS NULL ORDER BY length(path) DESC",
+            (run_id,)).fetchall()]
+
+    def mark_directories_removed(self, run_id, directories):
+        if not directories:
+            return
+        with self.connection:
+            self.connection.executemany(
+                "UPDATE directories SET removed_at = ? "
+                "WHERE run_id = ? AND path = ?",
+                [(now(), run_id, directory) for directory in directories])
 
     def start_run(self, action, source_root=None, rules_hash=None, dry_run=True):
         with self.connection:
@@ -147,15 +203,19 @@ class Ledger(object):
 
     def add_move(self, run_id, item_number, member_number, operation,
                  rule_name, source, destination, size, sha256,
-                 status="planned"):
+                 status="planned", facts=None):
+        facts_json = json.dumps(facts, sort_keys=True, default=str) \
+            if facts else None
         with self.connection:
             cursor = self.connection.execute("""
                 INSERT INTO moves(
                     run_id, item_number, member_number, operation, rule_name,
-                    source, destination, size, sha256, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source, destination, size, sha256, status, created_at,
+                    facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (run_id, item_number, member_number, operation, rule_name,
-                    source, destination, int(size), sha256, status, now()))
+                    source, destination, int(size), sha256, status, now(),
+                    facts_json))
         return cursor.lastrowid
 
     def update_move(self, move_id, status, error=None, restored_to=None):
@@ -202,6 +262,21 @@ class Ledger(object):
             parameters.extend(statuses)
         sql += " ORDER BY id %s" % ("DESC" if reverse else "ASC")
         return self.connection.execute(sql, parameters).fetchall()
+
+    def move(self, move_id):
+        return self.connection.execute("""
+            SELECT m.*, r.action, r.source_root, r.started_at, r.finished_at
+              FROM moves m JOIN runs r ON r.id = m.run_id
+             WHERE m.id = ?
+        """, (int(move_id),)).fetchone()
+
+    def recent_moves(self, limit=100):
+        limit = max(1, min(int(limit), 500))
+        return self.connection.execute("""
+            SELECT m.*, r.action, r.source_root, r.started_at, r.finished_at
+              FROM moves m JOIN runs r ON r.id = m.run_id
+             ORDER BY m.id DESC LIMIT ?
+        """, (limit,)).fetchall()
 
     def latest_undoable_run(self):
         return self.connection.execute("""

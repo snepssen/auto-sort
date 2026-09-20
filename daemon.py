@@ -13,16 +13,20 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import select
 import socket
 import stat
 import time
+import webbrowser
 
 import bundles
 import ledger as ledger_module
 import mover
+import logpage
 import rules
 import sorter
+import tray
 
 
 DEFAULT_PORT = 47653
@@ -53,7 +57,7 @@ class DaemonLock(object):
     def close(self):
         self.socket.close()
 
-    def wait(self, timeout):
+    def wait(self, timeout, request_handler=None):
         """Wait for a wake request or timeout; return the small command sent."""
         ready, _writable, _errors = select.select(
             [self.socket], [], [], max(0.0, timeout))
@@ -62,7 +66,13 @@ class DaemonLock(object):
         try:
             connection, _address = self.socket.accept()
             connection.settimeout(1)
-            command = connection.recv(64).decode("ascii", "replace").strip()
+            initial = connection.recv(4096)
+            if request_handler is not None:
+                command = request_handler(connection, initial)
+                if command is not None:
+                    connection.close()
+                    return command
+            command = initial.decode("ascii", "replace").strip()
             connection.sendall(b"ok\n")
             connection.close()
             return command
@@ -83,8 +93,14 @@ class PollingDaemon(object):
             self.journal.close()
             raise
         self.journal.recover_processing_queue()
+        self.token = secrets.token_urlsafe(24)
+        self.journal.set_state("web_token", self.token)
+        self.web = logpage.LogPage(self.journal, self.lock.port, self.token)
         self.rule_set = None
         self._rule_identity = None
+        self._quit_requested = False
+        self._sort_requested = False
+        self.output("Log: %s" % self.web.url)
 
     def close(self):
         self.lock.close()
@@ -318,13 +334,48 @@ class PollingDaemon(object):
                 os.nice(10)
             except OSError:
                 pass
-        while True:
+        if once:
             self.cycle()
-            if once:
+            return
+        status_item = tray.create({
+            "open_log": self._tray_open_log,
+            "toggle_pause": self._tray_toggle_pause,
+            "sort_now": self._tray_sort_now,
+            "quit": self._tray_quit,
+        })
+        if not status_item.available:
+            self.output("Tray: %s; continuing headless." % status_item.reason)
+        try:
+            while not self._quit_requested:
+                self.cycle()
+                interval = self.rule_set.settings.poll_seconds \
+                    if self.rule_set is not None else 5
+                status_item.set_paused(self.journal.paused())
+                self._wait_with_tray(interval, status_item)
+        finally:
+            status_item.close()
+
+    def _wait_with_tray(self, interval, status_item):
+        deadline = time.monotonic() + interval
+        while not self._quit_requested and not self._sort_requested:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return
-            interval = self.rule_set.settings.poll_seconds \
-                if self.rule_set is not None else 5
-            self.lock.wait(interval)
+            status_item.pump(min(0.25, remaining))
+            self.lock.wait(min(0.25, remaining), self.web.handle_connection)
+        self._sort_requested = False
+
+    def _tray_open_log(self):
+        webbrowser.open(self.web.url)
+
+    def _tray_toggle_pause(self):
+        self.journal.set_paused(not self.journal.paused())
+
+    def _tray_sort_now(self):
+        self._sort_requested = True
+
+    def _tray_quit(self):
+        self._quit_requested = True
 
 
 def item_fingerprint(item):
