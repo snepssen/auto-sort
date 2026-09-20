@@ -76,3 +76,81 @@ class TrayActions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeBackend(unittest.TestCase):
+    """Exercise the real backend when the host can load it.
+
+    `tray.create` turns any failure into "continuing headless", which is the
+    right behaviour for a sorter -- a missing status item must never stop
+    files being filed -- and is also why this code sat broken and unnoticed.
+    It called the builtin `super()` on an Objective-C subclass, which raises,
+    so on every Mac the tray silently did not exist. Nothing failed, nothing
+    was reported, and the only symptom was an absence.
+
+    So: when the frameworks are importable, assert the backend actually
+    starts rather than that it degrades politely.
+    """
+
+    def available(self):
+        try:
+            import AppKit                                  # noqa: F401
+            import objc                                    # noqa: F401
+        except ImportError:
+            return False
+        return sys.platform == "darwin"
+
+    def setUp(self):
+        if not self.available():
+            self.skipTest("PyObjC is not installed on this interpreter")
+        self.calls = []
+        self.actions = {
+            "open_log": lambda: self.calls.append("open_log"),
+            "toggle_pause": lambda: self.calls.append("toggle_pause"),
+            "sort_now": lambda: self.calls.append("sort_now"),
+            "quit": lambda: self.calls.append("quit"),
+        }
+
+    def test_the_status_item_actually_starts(self):
+        item = tray.create(self.actions)
+        try:
+            self.assertTrue(item.available,
+                            "tray fell back to headless: %s"
+                            % getattr(item, "reason", ""))
+        finally:
+            item.close()
+
+    def test_the_menu_is_reachable(self):
+        # Built but never attached, the menu is dead code and Pause, Sort now
+        # and Quit cannot be reached at all.
+        item = tray.create(self.actions)
+        try:
+            self.assertTrue(item.available)
+            titles = [item.menu.itemAtIndex_(index).title()
+                      for index in range(item.menu.numberOfItems())]
+            self.assertIn("Open log", titles)
+            self.assertIn("Pause sorting", titles)
+            self.assertIn("Sort now", titles)
+            self.assertTrue(callable(item.target.showMenu),
+                            "right click has no way to raise the menu")
+        finally:
+            item.close()
+
+    def test_clicking_the_icon_opens_the_log(self):
+        # The whole point of a constant presence in the menu bar.
+        item = tray.create(self.actions)
+        try:
+            item.target.clicked_(None)
+            self.assertEqual(self.calls, ["open_log"])
+        finally:
+            item.close()
+
+    def test_pausing_renames_the_menu_entry(self):
+        item = tray.create(self.actions)
+        try:
+            item.set_paused(True)
+            self.assertEqual(item.pause_item.title(), "Resume sorting")
+            item.set_paused(False)
+            self.assertEqual(item.pause_item.title(), "Pause sorting")
+        finally:
+            item.close()

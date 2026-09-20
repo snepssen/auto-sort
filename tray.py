@@ -34,19 +34,58 @@ def create(actions):
         return UnavailableTray("native tray unavailable: %s" % error)
 
 
-def _mac_tray(actions):                                      # pragma: no cover
-    """PyObjC implementation, loaded only when the host happens to provide it."""
-    from AppKit import (NSApplication, NSApplicationActivationPolicyAccessory,
-                        NSImage, NSMenu, NSMenuItem, NSStatusBar,
-                        NSVariableStatusItemLength)
-    from Foundation import NSDate, NSObject, NSRunLoop
+# Objective-C class names are registered process-wide, so the target class
+# can only be built once. Defining it inside the factory meant a second call
+# raised "Target is overriding existing Objective-C class", which turns into
+# a silent fall back to headless -- so a tray could never be rebuilt after
+# being closed.
+_MAC_TARGET = None
 
-    class Target(NSObject):
+
+def _mac_target():                                           # pragma: no cover
+    global _MAC_TARGET
+    if _MAC_TARGET is not None:
+        return _MAC_TARGET
+
+    from AppKit import (NSApplication, NSEventTypeRightMouseUp,
+                        NSEventModifierFlagControl)
+    from Foundation import NSObject
+    import objc
+
+    class AutoSortTrayTarget(NSObject):
         def initWithActions_(self, callbacks):
-            self = super(Target, self).init()
+            # objc.super, not the builtin. An Objective-C subclass has no
+            # Python superclass to call `init` on, so the builtin raises and
+            # the whole tray falls back to headless -- silently, because
+            # `create` turns every failure into "continuing headless". That
+            # is why this code sat broken and unnoticed: nothing failed
+            # loudly, the icon was simply never there.
+            self = objc.super(AutoSortTrayTarget, self).init()
             if self is not None:
                 self.callbacks = callbacks
+                self.showMenu = None
             return self
+
+        def clicked_(self, _sender):
+            """Left click opens the log; right click shows the menu.
+
+            A status item with a menu attached swallows the click and only
+            ever shows the menu, which is not what somebody glancing at the
+            menu bar wants -- they want to see what it has been doing. So the
+            menu is attached only for the length of a right click and
+            detached again straight afterwards, which is the usual way to
+            have both behaviours on one status item.
+            """
+            event = NSApplication.sharedApplication().currentEvent()
+            secondary = False
+            if event is not None:
+                secondary = (event.type() == NSEventTypeRightMouseUp
+                             or bool(event.modifierFlags()
+                                     & NSEventModifierFlagControl))
+            if secondary and self.showMenu is not None:
+                self.showMenu()
+            else:
+                self.callbacks["open_log"]()
 
         def openLog_(self, _sender):
             self.callbacks["open_log"]()
@@ -60,6 +99,18 @@ def _mac_tray(actions):                                      # pragma: no cover
         def quit_(self, _sender):
             self.callbacks["quit"]()
 
+    _MAC_TARGET = AutoSortTrayTarget
+    return _MAC_TARGET
+
+
+def _mac_tray(actions):                                      # pragma: no cover
+    """PyObjC implementation, loaded only when the host happens to provide it."""
+    from AppKit import (NSApplication, NSApplicationActivationPolicyAccessory,
+                        NSAnyEventMask, NSEventMaskLeftMouseUp,
+                        NSEventMaskRightMouseUp, NSImage, NSMenu, NSMenuItem,
+                        NSStatusBar, NSVariableStatusItemLength)
+    from Foundation import NSDate, NSDefaultRunLoopMode
+
     class MacTray(object):
         available = True
         reason = ""
@@ -67,6 +118,12 @@ def _mac_tray(actions):                                      # pragma: no cover
         def __init__(self):
             application = NSApplication.sharedApplication()
             application.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+            # Without this the application never becomes ready to receive
+            # events. The status item is still drawn -- the system does that
+            # -- so the icon appears and simply does nothing when clicked,
+            # which is a worse failure than not appearing at all.
+            application.finishLaunching()
+            self.application = application
             self.status_bar = NSStatusBar.systemStatusBar()
             self.status_item = self.status_bar.statusItemWithLength_(
                 NSVariableStatusItemLength)
@@ -78,9 +135,12 @@ def _mac_tray(actions):                                      # pragma: no cover
                 button.setImage_(image)
             except AttributeError:
                 button.setTitle_("□")
-            self.target = Target.alloc().initWithActions_(actions)
+            self.target = _mac_target().alloc().initWithActions_(actions)
             button.setTarget_(self.target)
-            button.setAction_("openLog:")
+            button.setAction_("clicked:")
+            button.sendActionOn_(NSEventMaskLeftMouseUp
+                                 | NSEventMaskRightMouseUp)
+            self.button = button
             self.menu = NSMenu.alloc().init()
             self.menu.addItem_(self._item("Open log", "openLog:"))
             self.pause_item = self._item("Pause sorting", "togglePause:")
@@ -88,6 +148,15 @@ def _mac_tray(actions):                                      # pragma: no cover
             self.menu.addItem_(self._item("Sort now", "sortNow:"))
             self.menu.addItem_(NSMenuItem.separatorItem())
             self.menu.addItem_(self._item("Quit auto-sort", "quit:"))
+            # Built here, attached only while a right click is being
+            # serviced. Attached permanently it would intercept every click
+            # and the icon would stop opening the log.
+            self.target.showMenu = self._popup
+
+        def _popup(self):
+            self.status_item.setMenu_(self.menu)
+            self.button.performClick_(None)
+            self.status_item.setMenu_(None)
 
         def _item(self, title, action):
             item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
@@ -100,8 +169,32 @@ def _mac_tray(actions):                                      # pragma: no cover
                                       else "Pause sorting")
 
         def pump(self, seconds):
+            """Dequeue and dispatch whatever the window server has sent.
+
+            Running the run loop is not enough and was the bug: mouse events
+            on a status item are delivered into the application's own event
+            queue, and only `nextEventMatchingMask_` takes them out of it.
+            `NSRunLoop.runUntilDate_` services timers and input sources and
+            leaves that queue untouched, so every click sat in it unread
+            while the icon looked perfectly healthy.
+
+            This is what `NSApplication.run` does; it is written out here
+            because the sorter owns the loop and only lends the tray a
+            quarter of a second at a time.
+            """
             until = NSDate.dateWithTimeIntervalSinceNow_(max(0.001, seconds))
-            NSRunLoop.currentRunLoop().runUntilDate_(until)
+            now = NSDate.date()
+            deadline = until
+            while True:
+                event = self.application \
+                    .nextEventMatchingMask_untilDate_inMode_dequeue_(
+                        NSAnyEventMask, deadline, NSDefaultRunLoopMode, True)
+                if event is None:
+                    return
+                self.application.sendEvent_(event)
+                # Anything already queued behind it goes now rather than
+                # waiting another quarter second.
+                deadline = now
 
         def close(self):
             self.status_bar.removeStatusItem_(self.status_item)
