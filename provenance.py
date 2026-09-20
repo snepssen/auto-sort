@@ -24,6 +24,8 @@ import plistlib
 import re
 import sys
 
+import hosts
+
 from evidence import CERTAIN, STRONG, LIKELY, WEAK
 
 IS_MACOS = sys.platform == "darwin"
@@ -325,10 +327,14 @@ def read(path, out):
             out.add("wherefroms", "referrer", urls[1], STRONG)
         host = _HOST.match(urls[0])
         if host:
-            hostname = host.group(1).lower()
-            if hostname.startswith("www."):
-                hostname = hostname[4:]
+            hostname = hosts.strip_decoration(host.group(1))
             out.add("wherefroms", "from_host", hostname, STRONG)
+            # The service, reduced from the hostname rather than looked up.
+            # This is the fact worth grouping by: it is exact, it costs
+            # nothing, and it works for a site nobody has ever seen before.
+            service = hosts.source(host.group(1))
+            if service:
+                out.add("wherefroms", "source", service, STRONG)
         origin = origin or "download"
     if agent:
         out.add("quarantine", "from_app", agent, STRONG)

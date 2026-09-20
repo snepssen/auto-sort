@@ -447,7 +447,7 @@ _SETTINGS_KEYS = {
 }
 _WATCH_KEYS = {"folders", "ignore", "depth"}
 _RULE_KEYS = {
-    "when", "into", "as", "mode", "stop", "min_confidence",
+    "when", "into", "as", "extract", "mode", "stop", "min_confidence",
     "newer_than", "older_than", "only_on",
 }
 _TEMPLATE = re.compile(r"\{([^{}]+)\}")
@@ -502,6 +502,8 @@ class Rule(object):
             raise RuleError("rule %r: %s" % (name, error))
         self.into = values.get("into")
         self.rename = values.get("as")
+        self.extract_from, self.extract = _parse_extract(
+            values.get("extract"), name)
         self.mode = _choice(values.get("mode", "move"),
                             ("move", "copy", "leave"),
                             "rule %r mode" % name)
@@ -526,6 +528,14 @@ class Rule(object):
         _check_template(self.rename, "rule %r as" % name)
         self.template_facts = _template_fields(self.into) \
             | _template_fields(self.rename)
+        # Names the extract produces are filled in per file, so they are not
+        # facts the record is expected to carry and must not be gated as if
+        # they were. What is gated is the fact they are extracted *from*.
+        self.extracted_names = frozenset(
+            self.extract.groupindex) if self.extract else frozenset()
+        self.template_facts -= self.extracted_names
+        if self.extract_from:
+            self.template_facts.add(self.extract_from)
 
     def evaluate(self, record, source_root=None, platform=PLATFORM):
         facts = record.as_dict() if hasattr(record, "as_dict") else dict(record)
@@ -563,6 +573,23 @@ class Rule(object):
                 "below confidence %.2f: %s"
                 % (self.min_confidence, ", ".join(weak)), trace)
 
+        if self.extract is not None:
+            subject = facts.get(self.extract_from)
+            if subject is None:
+                return Evaluation(self, False,
+                                  "extract needs missing fact %r"
+                                  % self.extract_from, trace)
+            found = self.extract.search(str(subject))
+            if found is None:
+                return Evaluation(self, False,
+                                  "extract did not match %s=%r"
+                                  % (self.extract_from, str(subject)[:60]),
+                                  trace)
+            facts = dict(facts)
+            for key, value in found.groupdict().items():
+                if value:
+                    facts[key] = value
+
         if self.mode == "leave":
             return Evaluation(self, True, "matched; leave in place", trace)
 
@@ -591,6 +618,58 @@ class Rule(object):
 
         return Evaluation(self, True, "matched", trace,
                           os.path.join(directory, filename))
+
+
+# Facts an extract may not produce, because they decide what a file is
+# called and where it lives. A pattern capturing `(?P<name>...)` reads as
+# innocent and renames every file it touches to the captured text, losing the
+# extension with it -- found exactly that way, on a real folder, by an
+# extract whose group happened to be called `name`.
+PROTECTED_EXTRACT_NAMES = frozenset((
+    "name", "stem", "ext", "path", "dir", "size", "kind", "format",
+    "modified", "added", "age", "bundle", "members", "is_dir",
+))
+
+
+def _parse_extract(text, rule_name):
+    """`extract = stem re ^\\d+\\.(?P<artist>[a-z-]+)_`
+
+    One fact, the word `re`, and a pattern with named groups. The groups
+    become tokens the destination can use, and a file the pattern does not
+    match makes the rule decline rather than fail -- the same way a missing
+    fact does. A convention that covers most of a folder can therefore be
+    written without having to describe its exceptions.
+
+    This is what lets a *learnt* naming convention be written down. `propose`
+    discovers that a folder is full of names shaped a particular way and that
+    one field inside them repeats; what it emits is a rule of exactly this
+    form. So the thing the survey worked out is visible, editable, and no
+    different in kind from something somebody wrote by hand.
+    """
+    if not text:
+        return None, None
+    match = re.match(r"^\s*(?P<fact>[A-Za-z_][A-Za-z0-9_.]*)\s+"
+                     r"(?:re|matches)\s+(?P<pattern>.+?)\s*$", text)
+    if not match:
+        raise RuleError("rule %r extract must read 'FACT re PATTERN', "
+                        "not %r" % (rule_name, text))
+    try:
+        compiled = re.compile(match.group("pattern"))
+    except re.error as error:
+        raise RuleError("rule %r extract pattern: %s" % (rule_name, error))
+    if not compiled.groupindex:
+        raise RuleError("rule %r extract pattern has no named groups, so it "
+                        "produces nothing: %s"
+                        % (rule_name, match.group("pattern")))
+    clashes = PROTECTED_EXTRACT_NAMES.intersection(compiled.groupindex)
+    if clashes:
+        raise RuleError(
+            "rule %r extract captures %s, which would overwrite the file's "
+            "own %s and rename every file it matches. Choose another name "
+            "for the group."
+            % (rule_name, ", ".join(sorted(clashes)),
+               "identity" if len(clashes) > 1 else sorted(clashes)[0]))
+    return match.group("fact"), compiled
 
 
 # The one reason that means "this rule was simply not about this file", and

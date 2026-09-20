@@ -39,6 +39,7 @@ import os
 import bundles
 import identify
 import paths
+import shapes
 
 # Stop tracking a fact once it has this many distinct values. Past this point
 # it is an identifier rather than a category, and counting the rest costs
@@ -47,7 +48,7 @@ MAX_DISTINCT = 4000
 
 # A facet has to reach all three of these to become a rule.
 MIN_COVERAGE = 0.02          # of all items surveyed
-MIN_GROUP_MEDIAN = 2         # files in the middle-sized folder it would make
+MIN_CONCENTRATION = 0.4      # share of files landing in a shared folder
 MAX_GROUPS = 600             # folders one facet may create
 
 
@@ -106,11 +107,12 @@ FACETS = (
           when="kind = document and paperwork is set",
           note="documents whose name says what they are",
           group_by="paperwork", min_confidence=0.4),
-    Facet("host", ("from_host",),
-          "{root}/From/{from_host}", 80,
-          when="from_host is set",
-          note="by the site it was downloaded from",
-          group_by="from_host"),
+    Facet("source", ("source",),
+          "{root}/From/{source}", 25,
+          when="source is set",
+          note="by the service it was downloaded from, which the operating "
+               "system recorded at the time",
+          group_by="source"),
     Facet("duration", ("duration_class",),
           "{root}/Video/{duration_class}", 90,
           when="kind = video and duration is set",
@@ -137,6 +139,10 @@ class Survey(object):
         self.opaque_unplaceable = 0
         self.unreadable = 0
         self.sites = collections.Counter()
+        self.stems = []                  # for convention induction
+        self.stem_sources = {}
+        self.conventions = []
+        self.convention_depth = None
 
     def observe(self, record, members=1):
         self.items += 1
@@ -152,6 +158,12 @@ class Survey(object):
                 self.opaque_unplaceable += 1
         if record.value("site"):
             self.sites[record.value("site")] += 1
+        stem = record.value("stem")
+        if stem and record.value("kind") in ("image", "video", "audio"):
+            self.stems.append(stem)
+            source = record.value("source")
+            if source:
+                self.stem_sources[stem] = source
         for name in record.names():
             if name in _NOT_A_CATEGORY:
                 continue
@@ -206,7 +218,27 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
             on_progress(found.items)
         if limit and found.items >= limit:
             break
+    found.conventions, found.convention_depth = shapes.learn_best(found.stems)
     return found
+
+
+def convention_source(found, convention):
+    """The one service a convention's files came from, if there is just one.
+
+    A pattern learnt from a folder is a statement about those files, not
+    about every file in the world shaped like them. When every file that
+    taught it came from one place the rule can say so, and then it cannot
+    misfire on something similar-looking from somewhere else.
+    """
+    sources = collections.Counter()
+    for stem in convention.examples_all:
+        source = found.stem_sources.get(stem)
+        if source:
+            sources[source] += 1
+    if not sources:
+        return None
+    winner, count = sources.most_common(1)[0]
+    return winner if count >= 0.9 * convention.count else None
 
 
 class Proposal(object):
@@ -244,6 +276,9 @@ def assess(found):
         groups = len(counter)
         median = _median(list(counter.values()))
 
+        import shapes
+        share = shapes.concentration(counter.values())
+
         reason = None
         if groups == 0:
             reason = "nothing in this folder has %s" % facet.group_by
@@ -252,9 +287,9 @@ def assess(found):
                       % (coverage * 100, ", ".join(facet.needs)))
         elif groups > MAX_GROUPS:
             reason = "would make %d folders" % groups
-        elif median < MIN_GROUP_MEDIAN and facet.key != "format":
-            reason = ("the middle folder would hold %g file%s"
-                      % (median, "" if median == 1 else "s"))
+        elif share < MIN_CONCENTRATION and facet.key != "format":
+            reason = ("%.0f%% of them would be alone in a folder"
+                      % ((1 - share) * 100))
         results.append(Proposal(facet, covered, groups, median, reason))
     return results
 
@@ -309,6 +344,31 @@ def render(found, proposals, root_token=None):
     if not accepted:
         lines += ["; Nothing in this folder grouped well enough to propose a",
                   "; rule for. See the report for what was considered.", ""]
+
+    for index, convention in enumerate(found.conventions, 1):
+        source = convention_source(found, convention)
+        values = convention.fields[convention.category][2]
+        lines.append("; A naming convention these files share, learnt from")
+        lines.append("; them rather than configured: %d files, %d distinct"
+                     % (convention.count, convention.groups))
+        lines.append("; values in one field, %.0f%% of them sharing a folder."
+                     % (convention.concentration * 100))
+        lines.append(";   values: %s" % ", ".join(
+            name for name, _count in values.most_common(6)))
+        lines.append("; Nothing here knows what those values mean. If you can")
+        lines.append("; see it, rename the capture and the folder follows.")
+        name = "%s names" % source if source else "name pattern %d" % index
+        lines.append("[rule: %s]" % name)
+        if source:
+            # Every file that taught this pattern came from one service, so
+            # the rule says so and cannot misfire on a lookalike.
+            lines.append("when    = source = %s" % source)
+        else:
+            lines.append("when    = kind in image, video, audio")
+        lines.append("extract = stem re %s" % convention.pattern("group"))
+        lines.append("into    = %s/%s/{group}"
+                     % (root_token, source or "By name"))
+        lines.append("")
 
     for proposal in accepted:
         facet = proposal.facet

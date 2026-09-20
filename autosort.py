@@ -494,6 +494,19 @@ def propose(root=".", tier=identify.TIER_HEADER, depth=3, out=None,
         for site, count in found.sites.most_common(8):
             print("    %-16s %7s" % (site, "{:,}".format(count)))
 
+    if found.conventions:
+        print()
+        print("  Naming conventions learnt from the filenames")
+        for convention in found.conventions:
+            source = propose_module.convention_source(found, convention)
+            print("    %-24s %4d files -> %3d folders, %.0f%% shared%s"
+                  % (convention.describe()[:24], convention.count,
+                     convention.groups, convention.concentration * 100,
+                     "   (all from %s)" % source if source else ""))
+            values = convention.fields[convention.category][2]
+            print("      %s" % ", ".join(
+                name for name, _count in values.most_common(5)))
+
     print()
     print("  Structure this folder suggests")
     if not accepted:

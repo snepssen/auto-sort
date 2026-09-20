@@ -192,36 +192,69 @@ Destinations default to a subfolder of the folder being surveyed, so every
 move stays on one volume — a rename rather than a copy, a hash and a delete.
 That matters most on the external drive somebody is tidying.
 
-### Where the filenames come from
+### Where a file came from, and what its name means
 
-Most of a download folder was named by software that followed a convention,
-and the convention carries the facts:
+Neither of these needs a table of websites in it, which matters because that
+table can never be finished — there is always another site, and filling it in
+means somebody going and downloading junk from each one first.
 
-| Written by | Yields |
-| --- | --- |
-| FurAffinity `1770665382.artist_title.png` | site, **uploader**, post id, title, post date |
-| DeviantArt `Title_by_Artist_d9abcdef.png` | site, **uploader**, post id, title |
-| Booru tag lists `__artist_tag_tag__<md5>.jpg` | site, uploader, tags |
-| Pixiv `98765432_p0.jpg` | site, post id, page |
-| e621, Tumblr, Patreon, Newgrounds, Inkbunny | site, post id, sometimes uploader |
-| Twitter/X `GzVwz2cXEAIcI4s.jpeg` | site, post id — and nothing else |
-| A bare checksum `9212888c…027.webm` | a hash, and **nothing else at all** |
+**The source is already recorded.** Every mainstream browser writes the
+download URL into the file's metadata: `kMDItemWhereFroms` on macOS,
+`Zone.Identifier` on Windows, `user.xdg.origin.url` on Linux. auto-sort reads
+it, strips the delivery-network decoration off the hostname and keeps the
+registrable domain's first label. On a real Downloads folder that yielded
+`furaffinity`, `e621`, `bsky`, `twimg`, `fbcdn`, `pinterest`, `wikimedia` and
+`suno` — **none of which is named anywhere in the code**. A site nobody has
+heard of groups correctly on its first file.
 
-The uploader is what makes structure emergent: nobody configures a folder per
-artist, it is simply a fact like a camera model, and a rule filing by
-`{uploader}` builds whatever folders the corpus needs.
+**The naming convention is learnt by counting.** A convention is, by
+definition, a thing that repeats, which makes it discoverable:
 
-**Nothing here touches the network.** Every one of these sites has a tag page
-that would say far more, and reaching for it means accounts, credentials, rate
-limits, and a tool that stops working offline. What is on the disk is what
-gets used.
+> In a filename written by software, a field that repeats across many files is
+> a category, and a field that is different in every file is an identifier.
 
-A checksum name is deliberately not guessed at. Boorus name files that way,
-and so do browser caches, download managers and git — so the hash is recorded,
-the file is marked `opaque`, and no site is claimed. Those files are the
-honest boundary of cheap processing, and the report says how many there are.
-Sorting them further would need something that looks at the picture, which is
-the [deferred Tier 3 seam](DESIGN.md#what-a-file-is) and not built.
+Given forty-three files shaped `<digits>.<word>_<rest>`, the digits are all
+different and the words repeat, so `propose` writes:
+
+```ini
+; A naming convention these files share, learnt from them rather than
+; configured: 43 files, 21 distinct values in one field, 70% of them
+; sharing a folder.
+;   values: multyashka-sweet, terrathewizard, kinniro, keihound, ...
+[rule: furaffinity names]
+when    = source = furaffinity
+extract = stem re ^\d{10}\.(?P<group>[a-z0-9-]+)_.*
+into    = ~/Downloads/Sorted/furaffinity/{group}
+```
+
+Nothing in that was configured, and nothing in the code knows what
+FurAffinity is. The depth to look at is self-selecting: these names shatter
+into three unusable clusters when four fields are examined and resolve into
+one clean convention at two, so every plausible depth is tried and the one
+explaining the most files wins.
+
+Two guards keep it honest. A convention must contain a **machine identifier**
+— a long run of digits, or a checksum — because software that names files puts
+one in to guarantee uniqueness and people do not; without that test the
+strongest "convention" in a real folder was somebody's own song titles, and
+the tool offered to file their music by its first word. And a field must
+**concentrate**: at least 40% of files landing somewhere with company. Median
+is the wrong measure here — forty-three pictures by twenty-one artists has a
+median of one and is a real structure, while a thousand files with a thousand
+values has the same median and is not.
+
+`sites.py` still recognises a handful of conventions directly — FurAffinity,
+DeviantArt, booru tag lists, Pixiv, Twitter — but it is now a convenience for
+files that were *not* downloaded by a browser (AirDrop, a USB stick, a
+message) rather than the mechanism. The mechanism is the two above.
+
+A bare checksum name is deliberately not guessed at. Boorus name files that
+way, and so do browser caches, download managers and git — so the hash is
+recorded, the file is marked `opaque`, and no site is claimed. Those files are
+the honest boundary of cheap processing, counted separately in the report from
+the ones that at least name their source. Sorting them further needs something
+that looks at the picture, which is the [deferred Tier 3
+seam](DESIGN.md#what-a-file-is) and not built.
 
 ## Starting from nothing
 

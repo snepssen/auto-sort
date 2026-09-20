@@ -134,7 +134,7 @@ class Proposals(unittest.TestCase):
         _found, results = self.assess()
         proposal = results["site-uploader"]
         self.assertFalse(proposal.accepted)
-        self.assertIn("middle folder", proposal.reason)
+        self.assertIn("alone in a folder", proposal.reason)
 
     def test_a_fact_almost_nothing_has_is_not_a_structure(self):
         self.make("IMG_4021.jpg", fixtures.jpeg)

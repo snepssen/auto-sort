@@ -75,6 +75,31 @@ NTFS alternate data stream holds the referrer. Both are free to read, and
 `from_host = bandcamp.com` is a better basis for a decision than any amount of
 audio analysis. Read them at Tier 0, and preserve them when moving.
 
+## Conventions are learnt, not tabulated
+
+A table of per-site filename patterns is the obvious way to read a download
+folder and the wrong one. It cannot be finished, it goes stale, and extending
+it means visiting each new site to collect samples. Two mechanisms replace it,
+and neither contains the name of a website.
+
+The **source** is not inferred at all. The operating system recorded the
+download URL at the time, exactly, and reducing a hostname to a service is a
+property of the domain name system rather than of any site: strip the delivery
+decoration, take the registrable domain, keep its first label.
+
+The **convention** is counted rather than described, on the observation that a
+field repeating across many files is a category while a field unique to each
+file is an identifier. What comes out is a regular expression with a named
+group, written into the rules file as an ordinary `extract`, so a learnt
+convention is visible, editable and indistinguishable from a typed one. A tool
+that silently learned a filing scheme nobody could read would be a tool nobody
+should run.
+
+`extract` capture names are checked against the facts that decide a file's
+identity. A pattern capturing `(?P<name>…)` reads as innocent and renames
+every file it matches to the captured text, losing the extension with it —
+which is exactly what it did, on a real folder, before the check existed.
+
 ## Structure is derived, not configured
 
 The rules file says where things go, and writing one by hand means deciding in
