@@ -657,6 +657,14 @@ def load(filename=None):
         with open(filename, "r", encoding="utf-8") as handle:
             source_text = handle.read()
         parser.read_string(source_text, source=filename)
+    except FileNotFoundError:
+        # The likeliest first experience anybody has of this tool, so it gets
+        # a sentence rather than an errno. A sorter that greets somebody with
+        # a missing-file error and no next step is a sorter they delete.
+        raise RuleError(
+            "no rules file at %s\n"
+            "Run `auto-sort init` to write a starter one, or pass --rules FILE."
+            % filename)
     except OSError as error:
         raise RuleError("cannot read %s: %s" % (filename, error))
     except configparser.Error as error:

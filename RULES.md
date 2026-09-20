@@ -225,7 +225,7 @@ Relative destinations resolve against the item's `source_root`, so
 | --- | --- | --- |
 | `mode` | `move` | `move`, `copy`, `leave` |
 | `stop` | `yes` | `no` continues matching, for a rule that only tags |
-| `min_confidence` | from `[settings]` | Floor for this rule |
+| `min_confidence` | from `[settings]` | Floor for this rule. Applies to every fact the `when` consulted **and** every fact the destination fills in, so a rule filing by `{happened}` needs `happened` to clear it. |
 | `newer_than` / `older_than` | — | `older_than = 180d` for an archive rule |
 | `only_on` | all | `macos`, `windows`, `linux` |
 

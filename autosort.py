@@ -438,10 +438,58 @@ def scan(root, tier=identify.TIER_ALL, depth=3, show=0, as_json=False):
     return 0
 
 
+def init(destination=None):
+    """Write a starter rules file, and never over one that already exists.
+
+    The starter is a real file in the repository rather than a string in the
+    code, so that it is reviewed, tested against fixtures like everything
+    else, and can be read before it is installed.
+    """
+    target = os.path.abspath(destination) if destination \
+        else paths.rules_file()
+    example = paths.example_rules_file()
+    if os.path.exists(target):
+        print("There is already a rules file at %s" % target)
+        print("Nothing was changed. Check it with: auto-sort check-rules")
+        return 1
+    if not os.path.exists(example):
+        print("The starter rules file is missing from this checkout: %s"
+              % example, file=sys.stderr)
+        return 1
+    try:
+        with open(example, "r", encoding="utf-8") as source:
+            body = source.read()
+        paths.ensure(os.path.dirname(target))
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(body)
+    except OSError as error:
+        print("Could not write %s: %s" % (target, error), file=sys.stderr)
+        return 1
+
+    try:
+        rule_set = rules.load(target)
+        summary = "%d rules, watching %d folder%s" % (
+            len(rule_set.rules), len(rule_set.watch.folders),
+            "" if len(rule_set.watch.folders) == 1 else "s")
+    except rules.RuleError as error:
+        print("Wrote %s, but it does not parse: %s" % (target, error),
+              file=sys.stderr)
+        return 1
+
+    print("Wrote %s" % target)
+    print("  %s, and dry run is on." % summary)
+    print()
+    print("Read it, then:")
+    print("  auto-sort sort ~/Downloads     see what it would do")
+    print("  auto-sort explain FILE         ask why one file goes where it does")
+    return 0
+
+
 USAGE = """auto-sort %s
 
   auto-sort explain PATH        every fact about one file, and where it came from
   auto-sort scan FOLDER         what is in a folder, grouped into items
+  auto-sort init                write a starter rules file if there is not one
   auto-sort check-rules [FILE]  validate a rules file without changing anything
   auto-sort sort [FOLDER]       plan a sort; dry-run unless configuration says otherwise
   auto-sort undo [RUN|last]     restore a completed move run
@@ -540,6 +588,8 @@ def main(argv=None):
     if command == "scan":
         return scan(targets[0] if targets else ".", tier, depth, show,
                     as_json)
+    if command == "init":
+        return init(targets[0] if targets else None)
     if command == "check-rules":
         if len(targets) > 1:
             print("check-rules takes at most one file", file=sys.stderr)

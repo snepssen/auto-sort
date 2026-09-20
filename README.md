@@ -151,6 +151,23 @@ and is never descended into. Whatever the rules eventually decide, the whole
 item moves — which is the difference between a sorted folder and a folder full
 of 3D models that open grey.
 
+## Starting from nothing
+
+```sh
+auto-sort init          # writes a starter rules file and tells you where
+auto-sort sort ~/Downloads
+```
+
+`init` copies [rules.example.ini](rules.example.ini) to the platform's
+configuration folder and refuses to touch one that is already there. The
+starter arrives with dry run **on**, and even once that is off the first run
+against a new folder is forced to a preview you have to look at before a
+second run will move anything.
+
+Every rule in that file is tested against a built fixture, because a rules
+file that parses and then silently does nothing is the worst way this tool can
+be wrong -- it looks like it worked.
+
 ## Requirements
 
 Python 3.8 or newer. Nothing else — no pip install, no external programs, no

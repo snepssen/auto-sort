@@ -74,6 +74,12 @@ def rules_file(explicit=None):
     return os.path.join(config_dir(), "rules.ini")
 
 
+def example_rules_file():
+    """The starter rules shipped beside the code."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "rules.example.ini")
+
+
 def ledger_file():
     return os.path.join(state_dir(), "state.db")
 
