@@ -193,13 +193,19 @@ class Names(unittest.TestCase):
     def test_music_does_not_invent_a_title(self):
         self.assertNotIn("song_title", self.facts("Untitled.png", "image"))
 
-    def test_paperwork_keywords(self):
-        for filename, label in (("bank statement march.pdf", "statement"),
-                                ("Invoice 4021.pdf", "invoice"),
-                                ("CV Tam 2026.docx", "cv"),
-                                ("Boarding Pass - LHR.pdf", "ticket")):
-            self.assertEqual(self.facts(filename, "document")
-                             .get("paperwork"), label, filename)
+    def test_no_document_is_classified_from_a_word_list(self):
+        """There is no table of document types, on purpose.
+
+        There was one: sixteen kinds in six languages. It could only ever
+        sort post written in those six, and it labelled a lone invoice into
+        a folder of one. Categories come from counting words that recur
+        across a folder now -- see `shapes.learn_terms` -- which needs no
+        vocabulary and cannot make either mistake.
+        """
+        for filename in ("bank statement march.pdf", "Invoice 4021.pdf",
+                         "CV Tam 2026.docx", "Boarding Pass - LHR.pdf"):
+            self.assertNotIn("paperwork", self.facts(filename, "document"),
+                             filename)
 
     def test_installer_survives_underscores(self):
         # \b does not fire between 'p' and '_', so `setup_x64` matched nothing

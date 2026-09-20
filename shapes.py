@@ -284,6 +284,21 @@ def _is_category(kind, values, total):
 _WORD = re.compile(r"[^\W\d_]{%d,}" % MIN_CATEGORY_LENGTH, re.UNICODE)
 
 
+def _best_spelling(counter):
+    """The spelling to name a folder with, out of the ones people wrote.
+
+    Commonest wins. On a tie -- RECHNUNG once, Rechnung once, rechnung once,
+    which is ordinary across twenty years of a filing habit -- the
+    capitalised form wins, because it is the one somebody would have typed
+    had they been naming the folder themselves.
+    """
+    return sorted(counter.items(),
+                  key=lambda pair: (-pair[1],
+                                    not pair[0].istitle(),
+                                    pair[0].isupper(),
+                                    pair[0]))[0][0]
+
+
 def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
                 max_share=MAX_CATEGORY_RATIO, cap=40):
     """Words that enough documents lead with to be a category they chose.
@@ -303,25 +318,46 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     what those documents call themselves, in whatever language they were
     written, including ones nobody involved here can read.
 
-    Returns `[(word, documents)]`, commonest first, or `[]` when there is no
-    structure worth the name.
+    Returns `[(word, documents)]` ordered by how early the word usually
+    appears, or `[]` when there is no structure worth the name. Earliest
+    first, rather than commonest first, because a document announces what it
+    is before it says where it came from: across a pile of German bills
+    `Muenchen` is the commoner word and `Rechnung` is the one at the front,
+    and the folders anybody wants are the second kind. Nothing here knows
+    which is which -- only where they sat.
     """
     total = len(headings)
     if total < min_occurrences:
         return []
     frequency = collections.Counter()
+    spellings = collections.defaultdict(collections.Counter)
+    positions = collections.defaultdict(list)
     for heading in headings:
-        for word in set(_WORD.findall(heading or "")):
-            frequency[word] += 1
+        # Counted case-insensitively -- RECHNUNG in a letterhead and
+        # Rechnung in a filename are one word -- but the spelling people
+        # actually use most is the one that names the folder.
+        seen = {}
+        for index, word in enumerate(_WORD.findall(heading or "")):
+            seen.setdefault(word.lower(), index)
+            spellings[word.lower()][word] += 1
+        for key, index in seen.items():
+            frequency[key] += 1
+            positions[key].append(index)
 
     ceiling = max(min_occurrences, total * max_share)
-    terms = [(word, count) for word, count in frequency.items()
+    terms = [(_best_spelling(spellings[key]), count)
+             for key, count in frequency.items()
              if min_occurrences <= count <= ceiling]
     if len(terms) < MIN_CATEGORY_VALUES:
         # One word repeating is a letterhead; two is not yet a shape. Three
         # distinct answers is the smallest thing that sorts anything.
         return []
-    terms.sort(key=lambda pair: (-pair[1], pair[0].lower()))
+    def rank(pair):
+        key = pair[0].lower()
+        where = positions[key]
+        return (sum(where) / float(len(where)), -pair[1], key)
+
+    terms.sort(key=rank)
     return terms[:cap]
 
 

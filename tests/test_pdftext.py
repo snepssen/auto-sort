@@ -237,3 +237,30 @@ class Induction(unittest.TestCase):
         """Everything in one folder sorts exactly as well as nothing."""
         same = ["Rechnung %d Stadtwerke" % n for n in range(9)]
         self.assertEqual(shapes.learn_terms(same), [])
+
+    def test_spelling_is_not_three_folders(self):
+        """Twenty years of typing habits give one word three spellings."""
+        mixed = ["Rechnung Stadtwerke", "rechnung telekom", "RECHNUNG allianz",
+                 "Steuerbescheid 2009", "steuerbescheid 2010",
+                 "Steuerbescheid 2011", "Mietvertrag Wohnung",
+                 "mietvertrag garage", "Mietvertrag Keller"]
+        words = [word for word, _count in shapes.learn_terms(mixed)]
+        self.assertEqual(sorted(words),
+                         ["Mietvertrag", "Rechnung", "Steuerbescheid"])
+
+    def test_the_kind_of_document_comes_before_the_sender(self):
+        """Ordered by where a word sits, so a type beats who sent it.
+
+        `Finanzamt` heads as many documents as `Steuerbescheid` does. The
+        one at the front of the line is the one that names the folder, and
+        nothing here knows which of them is a kind and which a sender.
+        """
+        letters = ["Steuerbescheid 2011 Finanzamt Muenchen",
+                   "Steuerbescheid 2012 Finanzamt Muenchen",
+                   "Steuerbescheid 2013 Finanzamt Muenchen",
+                   "Rechnung 4471 Stadtwerke Muenchen",
+                   "Rechnung 5120 Stadtwerke Muenchen",
+                   "Rechnung 6033 Stadtwerke Muenchen"]
+        words = [word for word, _count in shapes.learn_terms(letters)]
+        self.assertLess(words.index("Steuerbescheid"), words.index("Finanzamt"))
+        self.assertLess(words.index("Rechnung"), words.index("Stadtwerke"))

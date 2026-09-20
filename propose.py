@@ -122,10 +122,6 @@ FACETS = (
           when="artist is set and album is set",
           note="tagged music", group_by="artist", kind="audio",
           rename="{track:02} {song_title}.{ext}"),
-    Facet("paperwork", ("paperwork",), "{paperwork}", 70,
-          when="paperwork is set",
-          note="documents whose name says what they are",
-          group_by="paperwork", kind="document", min_confidence=0.4),
     Facet("duration", ("duration_class",), "{duration_class}", 90,
           when="duration is set",
           note="video, split by length", group_by="duration_class",
@@ -154,6 +150,8 @@ class Survey(object):
         self.convention_depth = None
         self.headings = []               # the same, for what documents say
         self.heading_terms = []
+        self.document_stems = []         # and for what they were named
+        self.stem_terms = []
         self.kind_by_fact = collections.defaultdict(collections.Counter)
 
     def observe(self, record, members=1):
@@ -174,6 +172,8 @@ class Survey(object):
         if heading:
             self.headings.append(heading)
         stem = record.value("stem")
+        if stem and record.value("kind") in ("document", "archive"):
+            self.document_stems.append(stem)
         if stem and record.value("kind") in ("image", "video", "audio"):
             self.stems.append(stem)
             source = record.value("source")
@@ -255,6 +255,7 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
     # letterhead -- Rechnung, Factura, Invoice, Szamla -- and no table here
     # has to have heard of it.
     found.heading_terms = shapes.learn_terms(found.headings)
+    found.stem_terms = shapes.learn_terms(found.document_stems)
     return found
 
 
@@ -487,34 +488,37 @@ def render(found, proposals):
                              source or "By name", "{group}")))
             lines.append("")
 
-    if found.heading_terms:
-        words = [word for word, _count in found.heading_terms]
-        lines.append("; What these documents call themselves, taken from the")
-        lines.append("; documents. There is no list of document types in this")
-        lines.append("; program and no language it prefers: a word heading %d"
+    for terms, fact, title, unit in (
+            (found.heading_terms, "heading",
+             "what the page calls itself", "documents say it"),
+            (found.stem_terms, "stem",
+             "what these files are called", "files are named it")):
+        if not terms:
+            continue
+        lines.append("; %s -- learnt from your files, not from a list."
+                     % (title[0].upper() + title[1:]))
+        lines.append("; There is no table of document types in this program")
+        lines.append("; and no language it prefers. A word turning up in %d"
                      % shapes.MIN_OCCURRENCES)
-        lines.append("; or more of your files is a category they chose, and a")
-        lines.append("; word heading nearly all of them is your letterhead,")
-        lines.append("; which divides nothing and is dropped for that reason.")
+        lines.append("; or more of them is a category they chose; a word in")
+        lines.append("; nearly all of them is your own letterhead -- a name,")
+        lines.append("; a town, a bank -- which describes the pile instead of")
+        lines.append("; dividing it, and is left out.")
         lines.append(";")
-        lines.append("; The earliest of these words on a page is the one that")
-        lines.append("; wins, which is why a type usually beats a town. Some")
-        lines.append("; of these will be places or senders rather than kinds")
-        lines.append("; of document. Delete the ones you do not want; the")
-        lines.append("; folders follow the list.")
-        for word, count in found.heading_terms[:12]:
-            lines.append(";   %-28s %d documents" % (word, count))
-        if len(found.heading_terms) > 12:
-            lines.append(";   ... and %d more"
-                         % (len(found.heading_terms) - 12))
-        lines.append("[rule: what the page calls itself]")
-        lines.append("when    = heading is set")
-        lines.append("extract = heading re (?P<group>%s)"
-                     % "|".join(re.escape(word) for word in words))
-        lines.append("into    = %s"
-                     % userdirs.short(os.path.join(
-                         destination_root(found, "document"), "{group}")))
+        lines.append("; One rule each, in the order the words usually appear,")
+        lines.append("; so a kind of document comes before the sender under")
+        lines.append("; it. First match wins. Delete any line you disagree")
+        lines.append("; with and its folder goes with it; rename the folder")
+        lines.append("; and the files follow.")
         lines.append("")
+        for word, count in terms:
+            lines.append("[rule: %s: %s]" % (title, word))
+            lines.append("when = %s contains %s" % (fact, word))
+            lines.append("into = %s"
+                         % userdirs.short(os.path.join(
+                             destination_root(found, "document"), word)))
+            lines.append("; %d %s" % (count, unit))
+            lines.append("")
 
     for proposal in accepted:
         facet = proposal.facet
@@ -615,7 +619,7 @@ def _rule_name(facet, found):
         return "art by uploader" + (" (%s)" % sites if sites else "")
     return {"source": "by service", "camera": "photographs",
             "screenshot": "screenshots", "series": "episodes",
-            "music": "tagged music", "paperwork": "paperwork by name",
+            "music": "tagged music",
             "scan-page": "scanned paperwork",
             "scan-print": "scanned photographs",
             "duration": "video by length"}.get(facet.key, facet.key)

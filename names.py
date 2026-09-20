@@ -618,78 +618,26 @@ def detect_sample(ctx, out):
 
 
 # ---------------------------------------------------------------------------
-# Paperwork
+# Paperwork: deliberately absent
 # ---------------------------------------------------------------------------
-
-_PAPERWORK = (
-    ("invoice", r"\b(invoice|rechnung|facture|factura|fattura|faktura)\b"),
-    ("receipt", r"\b(receipt|kvitto|kvittering|quittung|recibo|ricevuta)\b"),
-    ("statement", r"\b(statement|bank[ _-]?statement|kontoauszug|"
-                  r"releve|extracto)\b"),
-    ("payslip", r"\b(payslip|pay[ _-]?stub|paystub|salary|wage[ _-]?slip|"
-                r"lohnabrechnung|p60|p45)\b"),
-    ("tax", r"\b(tax|hmrc|irs|vat|moms|self[ _-]?assessment|1099|w-?2|"
-            r"steuer|p11d)\b"),
-    ("contract", r"\b(contract|agreement|nda|terms|tenancy|lease|"
-                 r"vertrag|contrat)\b"),
-    ("insurance", r"\b(insurance|policy|claim|versicherung|assurance)\b"),
-    ("order", r"\b(order|purchase[ _-]?order|po[-_ ]?\d{4,}|bestellung)\b"),
-    ("quote", r"\b(quote|quotation|estimate|offerte|angebot|devis)\b"),
-    ("ticket", r"\b(ticket|boarding[ _-]?pass|itinerary|booking|"
-               r"reservation|e-?ticket|flugticket)\b"),
-    ("certificate", r"\b(certificate|certification|diploma|warranty|"
-                    r"guarantee|zertifikat)\b"),
-    ("cv", r"\b(cv|resume|curriculum[ _-]?vitae|cover[ _-]?letter|"
-           r"lebenslauf)\b"),
-    ("report", r"\b(report|minutes|agenda|proposal|summary|bericht)\b"),
-    ("manual", r"\b(manual|handbook|instructions|user[ _-]?guide|"
-               r"datasheet|spec[ _-]?sheet|bedienungsanleitung)\b"),
-    ("licence", r"\b(licen[cs]e|licencia|lizenz|serial|activation)\b"),
-    ("medical", r"\b(prescription|referral|discharge|test[ _-]?results|"
-                r"vaccination|rezept)\b"),
-)
-_PAPERWORK = tuple((label, re.compile(pattern, re.I))
-                   for label, pattern in _PAPERWORK)
-_REFERENCE = re.compile(r"\b((?:inv|po|ref|no|nr|#)[-_ ]?\d{3,12})\b", re.I)
-
-
-def paperwork_in(text, by_count=False):
-    """`(label, reference)` for what this text reads like, or `(None, None)`.
-
-    A filename is read first-match-wins, because it holds one or two words
-    and the table is ordered from the specific to the general. A page of
-    prose is read by weight instead: the word that recurs is what the
-    document is about, where a single mention of `agreement` in a covering
-    letter is not.
-    """
-    if not text:
-        return None, None
-    best, score = None, 0
-    for label, pattern in _PAPERWORK:
-        hits = len(pattern.findall(text)) if by_count else \
-            (1 if pattern.search(text) else 0)
-        if not hits:
-            continue
-        if not by_count:
-            best = label
-            break
-        if hits > score:
-            best, score = label, hits
-    if best is None:
-        return None, None
-    reference = _REFERENCE.search(text)
-    return best, (reference.group(1).upper().replace(" ", "")
-                  if reference else None)
-
-
-def detect_paperwork(ctx, out):
-    label, reference = paperwork_in(ctx.plain)
-    if label:
-        out.add("paperwork", "paperwork", label, WEAK)
-        out.label("paperwork", label, WEAK)
-        if reference:
-            out.add("paperwork", "reference", reference, WEAK)
-
+#
+# There used to be a table here. Sixteen kinds of document, each a regular
+# expression of the words for it in six languages, and a filename matching
+# one of them got that label. It worked, for those six languages, on the
+# files whose names happened to say what they were.
+#
+# It is gone, and what replaced it is counting. A word appearing in three or
+# more filenames in a folder, and not in most of them, is a category those
+# files chose; see `shapes.learn_terms`. That finds `Rechnung` without being
+# told about German, `szamla` without being told about Hungarian, and a
+# landlord's surname without anybody having a category for landlords. A
+# table could never have held any of those, and the pile this tool exists
+# for is exactly the pile nobody described in advance.
+#
+# The table also had a subtler fault. It labelled a single file. One invoice
+# in a folder became a folder called `invoice` holding one thing, which is a
+# deeper pile rather than a sorted one. Counting cannot make that mistake:
+# three files, or no folder.
 
 _SCANNER = (
     (re.compile(r"^scan[_ -]?\d*", re.I), None),
@@ -905,7 +853,6 @@ _DETECTORS = (
     ("subtitle", detect_subtitle_tags, ("subtitle",)),
     ("sample", detect_sample, ("audio",)),
     ("software", detect_software, ("app", "disk-image", "archive")),
-    ("paperwork", detect_paperwork, ("document", "image", "archive")),
     ("music", detect_music, ("audio",)),
     ("dates", detect_dates, _ANY),
     ("sequence", detect_sequence, ("image", "video", "model3d")),

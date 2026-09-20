@@ -30,7 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import autosort                                          # noqa: E402
 import bundles                                           # noqa: E402
-import fixtures                                          # noqa: E402
+import fixtures
+import names                                          # noqa: E402
 import identify                                          # noqa: E402
 import paths                                             # noqa: E402
 import rules                                             # noqa: E402
@@ -155,13 +156,22 @@ class StarterRules(unittest.TestCase):
         self.assertClaimedBy(self.build("Scan 2026-09-19.pdf", fixtures.pdf),
                              "scanned paperwork")
 
-    def test_paperwork_by_keyword_needs_its_own_lower_floor(self):
-        # `paperwork` is read out of the filename and is weak evidence. This
-        # rule only fires because it lowers min_confidence for itself.
-        self.assertClaimedBy(
-            self.build("Invoice 4021.pdf", fixtures.pdf,
-                       producer="Microsoft Word"),
-            "paperwork by name")
+    def test_the_example_asks_for_no_fact_that_nothing_sets(self):
+        """A shipped example referencing a dead fact is a broken example.
+
+        The paperwork rule was exactly that when its word list was removed:
+        it stayed behind asking for `paperwork is set`, could never match,
+        and sent every document to the catch-all without saying why. A rule
+        that cannot fire is worse than no rule, because the file it was
+        meant to place still moves -- just somewhere else, quietly.
+        """
+        dead = {"paperwork"}
+        for rule in self.rule_set.rules:
+            asked = rule.condition.facts_used() | rule.template_facts
+            self.assertFalse(
+                asked & dead,
+                "rule %r asks for %s, which nothing produces any more"
+                % (rule.name, ", ".join(sorted(asked & dead))))
 
     def test_ordinary_document(self):
         self.assertClaimedBy(self.build("notes.docx", fixtures.docx),
