@@ -77,11 +77,15 @@ class Item(object):
 
     __slots__ = ("primary", "members", "is_dir", "reason", "sequence")
 
-    def __init__(self, primary, members=None, is_dir=False, reason="",
+    def __init__(self, primary, members=None, is_dir=None, reason="",
                  sequence=0):
         self.primary = primary
         self.members = members or [primary]
-        self.is_dir = is_dir
+        # `None` means "look". An item built from a bare path -- which is
+        # what `explain` and any caller outside the scanner does -- would
+        # otherwise claim a directory is a file, and then nothing that
+        # depends on knowing it is a directory ever runs.
+        self.is_dir = os.path.isdir(primary) if is_dir is None else is_dir
         self.reason = reason
         self.sequence = sequence
 

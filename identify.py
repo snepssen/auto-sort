@@ -22,6 +22,7 @@ import stat as stat_module
 
 import bundles
 import evidence
+import folders
 import kinds
 import names as names_module
 import provenance
@@ -133,10 +134,25 @@ def _stat(item, record):
     if item.is_dir and not claim:
         record.set("kind", "app" if item.primary.endswith(".app")
                    else "folder", "path", CERTAIN)
+    if item.is_dir and bundles.is_package(item.primary):
+        # A package is one document the system presents as a file; surveying
+        # its insides would describe an application's resources rather than
+        # the thing itself.
+        record.set("is_package", True, "path", CERTAIN)
 
 
 def _bytes(path, record, tier):
     if record.value("is_dir"):
+        # A directory is read too, just not byte by byte: what it holds is
+        # what decides where it belongs. Without this a folder is routed on
+        # the single fact that it is a folder, which is how a video project
+        # and a hundred and sixty-six pieces of artwork both ended up filed
+        # as documents.
+        if not record.value("is_package"):
+            try:
+                folders.read(path, record)
+            except OSError as error:
+                record.note("could not survey folder: %s" % error)
         return
     try:
         peek = signatures.Peek(path)

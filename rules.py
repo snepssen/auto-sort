@@ -67,6 +67,13 @@ _TOKEN = re.compile(r"""
 _KEYWORDS = {"and", "or", "not", "is", "set", "unset", "in", "between",
              "re", "matches", "contains"}
 
+# Words that join or negate an expression, and so can never also be the name
+# of a fact. Every other keyword can: a fact called `contains` is a perfectly
+# reasonable thing to have -- it is what a folder holds -- and the parser
+# knows the difference from position, because a comparison always begins with
+# a fact and the operator always follows one.
+_CONNECTIVES = {"and", "or", "not"}
+
 
 class Token(object):
     __slots__ = ("kind", "text", "at")
@@ -392,7 +399,8 @@ class Parser(object):
 
     def comparison(self):
         name = self.take()
-        if name.kind not in ("word", "value"):
+        if name.kind not in ("word", "value") \
+                and name.kind not in (_KEYWORDS - _CONNECTIVES):
             raise RuleError("expected a fact name, found %r at column %d"
                             % (name.text, name.at + 1))
         fact = name.text
