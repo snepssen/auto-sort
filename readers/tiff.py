@@ -21,6 +21,8 @@ TAGS = {
     0x0100: "pixel_width", 0x0101: "pixel_height",
     0x010E: "description", 0x010F: "make", 0x0110: "model",
     0x0112: "orientation", 0x0131: "software", 0x0132: "modified",
+    0x011A: "x_resolution", 0x011B: "y_resolution",
+    0x0128: "resolution_unit",
     0x013B: "artist", 0x8298: "copyright",
     0x829A: "exposure_time", 0x829D: "aperture",
     0x8827: "iso", 0x8833: "iso", 0x9003: "taken", 0x9004: "digitised",

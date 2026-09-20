@@ -66,7 +66,7 @@ class Facet(object):
 
     def __init__(self, key, needs, base, precedence, when=None, note="",
                  group_by=None, rename=None, min_confidence=None,
-                 kind=None, per_kind=False):
+                 kind=None, per_kind=False, as_kind=None, holding=False):
         self.key = key
         self.needs = tuple(needs)
         self.base = base
@@ -78,6 +78,12 @@ class Facet(object):
         self.min_confidence = min_confidence
         self.kind = kind            # a single kind this only applies to
         self.per_kind = per_kind    # one rule per kind that actually occurs
+        # Which system folder to file into, when that is not the one the
+        # kind implies. A scanned page is an image by every byte in it and
+        # a document by every other measure, and it is the second that
+        # decides where somebody expects to find it.
+        self.as_kind = as_kind
+        self.holding = holding      # may be promoted out later by `regroup`
 
 
 FACETS = (
@@ -97,6 +103,16 @@ FACETS = (
     Facet("screenshot", ("capture",), "Screenshots/{added:%Y-%m}", 40,
           when="capture = screenshot",
           note="screenshots", group_by="capture", kind="image"),
+    Facet("scan-page", ("scan_of",), "Scans/{happened:%Y}", 42,
+          when="capture = scan and scan_of = page",
+          note="scanned paperwork, which is a document whatever it was "
+               "stored as",
+          group_by="scan_of", kind="image", as_kind="document",
+          holding=True),
+    Facet("scan-print", ("scan_of",), "Scans/{happened:%Y}", 44,
+          when="capture = scan and scan_of = print",
+          note="scanned photographs, which belong with the photographs",
+          group_by="scan_of", kind="image"),
     Facet("series", ("title", "season"), "Series/{title}/Season {season}", 50,
           when="episode is set",
           note="episodes, by series", group_by="title", kind="video"),
@@ -354,7 +370,7 @@ def catch_all_root(found, kind):
 
 def destination(found, facet, kind):
     """A facet's folder for one kind, written the way a person reads it."""
-    base = destination_root(found, kind)
+    base = destination_root(found, facet.as_kind or kind)
     return userdirs.short(os.path.join(base, facet.base) if facet.base
                           else base)
 
@@ -481,6 +497,8 @@ def render(found, proposals):
                 lines.append("as   = %s" % facet.rename)
             if facet.min_confidence is not None:
                 lines.append("min_confidence = %g" % facet.min_confidence)
+            if facet.holding:
+                lines.append("holding = yes")
             lines.append("")
 
     lines += [
@@ -554,6 +572,8 @@ def _rule_name(facet, found):
     return {"source": "by service", "camera": "photographs",
             "screenshot": "screenshots", "series": "episodes",
             "music": "tagged music", "paperwork": "paperwork by name",
+            "scan-page": "scanned paperwork",
+            "scan-print": "scanned photographs",
             "duration": "video by length"}.get(facet.key, facet.key)
 
 

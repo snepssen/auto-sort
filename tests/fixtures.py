@@ -31,32 +31,52 @@ def _chunk(name, payload):
 
 
 def jpeg(path, width=4032, height=3024, make="Canon", model="Canon EOS R6",
-         taken="2026:09:19 14:03:22"):
-    """A JPEG whose APP1 holds a real little-endian TIFF directory."""
-    entries = []
-    extra = io.BytesIO()
-    extra.seek(0)
-    tail = bytearray()
+         taken="2026:09:19 14:03:22", software=None, dpi=None,
+         resolution_unit=2, extra_tags=None):
+    """A JPEG whose APP1 holds a real little-endian TIFF directory.
 
-    def add(tag, kind, value):
+    Offsets are computed from the entry count rather than assumed, so callers
+    may add tags without the out-of-line values landing in the wrong place.
+    """
+    wanted = []
+
+    def want(tag, kind, value):
+        if value is not None:
+            wanted.append((tag, kind, value))
+
+    want(0x010F, 2, make)
+    want(0x0110, 2, model)
+    want(0x0112, 3, 1)
+    want(0x011A, 5, dpi)
+    want(0x011B, 5, dpi)
+    want(0x0128, 3, resolution_unit if dpi is not None else None)
+    want(0x0131, 2, software)
+    want(0x9003, 2, taken)
+    for tag, kind, value in (extra_tags or ()):
+        want(tag, kind, value)
+
+    # Values longer than four bytes live past the directory, so the directory
+    # has to be measured before any of them can be placed.
+    values_at = 8 + 2 + 12 * len(wanted) + 4
+    entries = []
+    tail = bytearray()
+    for tag, kind, value in wanted:
         if kind == 2:
             raw = value.encode("ascii") + b"\x00"
             count = len(raw)
-            if count <= 4:
-                payload = raw.ljust(4, b"\x00")
-            else:
-                offset = 8 + 2 + 12 * 4 + 4 + len(tail)
-                tail.extend(raw)
-                payload = struct.pack("<I", offset)
-        else:
+        elif kind == 5:
+            pair = value if isinstance(value, tuple) else (int(value * 100), 100)
+            raw = struct.pack("<II", *pair)
             count = 1
-            payload = struct.pack("<I", value)
+        else:
+            raw, count = struct.pack("<I", value), 1
+        if len(raw) <= 4:
+            payload = raw.ljust(4, b"\x00")
+        else:
+            payload = struct.pack("<I", values_at + len(tail))
+            tail.extend(raw)
         entries.append(struct.pack("<HHI", tag, kind, count) + payload)
 
-    add(0x010F, 2, make)
-    add(0x0110, 2, model)
-    add(0x0112, 3, 1)
-    add(0x9003, 2, taken)
     directory = struct.pack("<H", len(entries)) + b"".join(entries) \
         + struct.pack("<I", 0)
     tiff = b"II*\x00" + struct.pack("<I", 8) + directory + bytes(tail)

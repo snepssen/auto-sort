@@ -17,7 +17,7 @@ import re
 import struct
 
 from evidence import CERTAIN, STRONG, LIKELY, WEAK
-from . import tiff
+from . import scans, tiff
 
 # Displays people actually own, plus their retina doubles. A photograph that
 # happens to land on one of these is possible; a photograph that lands on one
@@ -272,7 +272,12 @@ def read(peek, fmt, record):
         record.set("megapixels", round(width * height / 1e6, 1), source,
                    CERTAIN)
 
-    for key, fact in (("make", "camera_make"), ("model", "camera"),
+    # Decided before the device is named, because what the device *is*
+    # changes which fact it belongs under.
+    scan = scans.detect(found, width, height, record)
+    device = "scanner" if scan else "camera"
+
+    for key, fact in (("make", device + "_make"), ("model", device),
                       ("lens", "lens"), ("software", "software"),
                       ("gps", "gps"), ("artist", "author"),
                       ("description", "description"),
@@ -287,7 +292,7 @@ def read(peek, fmt, record):
         # Canon writes "Canon" in both fields; Apple writes "Apple"/"iPhone 15".
         combined = model if model.lower().startswith(make.lower()) \
             else "%s %s" % (make, model)
-        record.set("camera", combined, "exif", STRONG)
+        record.set(device, combined, "exif", STRONG)
 
     for key, fact in (("taken", "taken"), ("digitised", "digitised"),
                       ("modified", "content_modified")):
@@ -304,7 +309,7 @@ def read(peek, fmt, record):
         record.set("format", "raw", "exif", CERTAIN)
 
     # The screenshot test, which is free and right almost always.
-    if width and height and not found.get("make"):
+    if width and height and not found.get("make") and not scan:
         if (width, height) in _SCREEN_SIZES:
             record.set("capture", "screenshot", "dimensions", LIKELY)
             record.note("no camera tags and %dx%d is a display size"
