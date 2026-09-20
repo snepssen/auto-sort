@@ -24,9 +24,12 @@ import ledger as ledger_module
 import logpage
 import paths
 import propose as propose_module
+import duplicates as duplicates_module
 import regroup as regroup_module
 import rules
 import sorter
+import trash
+import userdirs
 
 VERSION = "0.4.0"
 
@@ -666,6 +669,157 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
     return 0
 
 
+def _rule_folders(rule_set):
+    """(intake, holding) folder prefixes, taken from the rules themselves.
+
+    Not guessed from names. A folder is holding because a rule that placed
+    files there said `holding = yes`, and intake because it is watched. The
+    literal part of a destination is everything before the first `{`.
+    """
+    intake = [os.path.abspath(os.path.expanduser(folder))
+              for folder in (rule_set.watch.folders or ())]
+    holding = []
+    for rule in rule_set.rules:
+        if not rule.holding or not rule.into:
+            continue
+        head, placeholder, _rest = rule.into.partition("{")
+        # `dirname` only when a placeholder cut a path component in half:
+        # `~/Music/Unfiled/{format}` keeps its folder, but a destination with
+        # no placeholder at all is already a folder and taking its parent
+        # marks far too much. That mistake made every file under
+        # `~/Documents/Sorted` look like it was sitting in a holding pen.
+        if placeholder and not head.endswith(os.sep):
+            head = os.path.dirname(head)
+        head = head.rstrip(os.sep)
+        if head:
+            holding.append(os.path.abspath(os.path.expanduser(head)))
+    return intake, sorted(set(holding))
+
+
+def duplicate_scan(folders=None, rule_path=None, state=None,
+                   apply_changes=False, as_json=False):
+    """Find files that are byte for byte the same and clear the spare copies.
+
+    The ledger's own duplicate check answers "have I filed this before",
+    which is right for a file arriving in the funnel and useless for a disk
+    that already holds the same recording twice. It knows only what
+    auto-sort moved; a copy somebody filed by hand is invisible to it. This
+    reads the disk instead.
+
+    Where a copy sits decides which one is real. A funnel is somewhere files
+    pass through and a holding folder is somewhere auto-sort put what it
+    could not place -- a copy in either of those loses to a copy in a folder
+    a person chose. Two copies in two chosen folders are somebody's filing
+    and are reported, not touched.
+
+    The spare copy goes to the operating system's bin, which is not deleting
+    it: it is still there, the person already knows how to open it, and they
+    empty it on their own schedule. The move is in the ledger too, so
+    `auto-sort undo` brings it straight back.
+    """
+    try:
+        rule_set = rules.load(rule_path)
+    except rules.RuleError as error:
+        print("Rules error: %s" % error, file=sys.stderr)
+        return 1
+
+    intake, holding = _rule_folders(rule_set)
+    if not folders:
+        folders = sorted(set(intake) | set(
+            userdirs.home_for(kind) for kind in
+            ("image", "video", "audio", "document")))
+    folders = [os.path.abspath(os.path.expanduser(folder))
+               for folder in folders if os.path.isdir(
+                   os.path.expanduser(folder))]
+    if not folders:
+        print("Nothing to scan.", file=sys.stderr)
+        return 1
+
+    groups = duplicates_module.scan(folders, intake=intake, holding=holding)
+    spare = [(group, path) for group in groups for path in group.losers]
+    reclaimable = sum(group.size for group, _path in spare)
+
+    if as_json:
+        print(json.dumps({
+            "scanned": [userdirs.short(folder) for folder in folders],
+            "groups": [{
+                "size": group.size,
+                "keep": group.keeper,
+                "spare": group.losers,
+                "undecided": group.undecided,
+            } for group in groups],
+            "reclaimable": reclaimable,
+            "applied": bool(apply_changes),
+        }, indent=2, default=str))
+        return 0
+
+    print()
+    print("  Looked in: %s" % ", ".join(userdirs.short(f) for f in folders))
+    if not groups:
+        print("  No duplicates. Nothing here is stored twice.")
+        print()
+        return 0
+
+    for group in groups:
+        print()
+        print("  %s, %d copies" % (_size(group.size), len(group.paths)))
+        print("    keep   %s" % userdirs.short(group.keeper))
+        for path in group.losers:
+            print("    spare  %s" % userdirs.short(path))
+        for path in group.undecided:
+            print("    also   %s" % userdirs.short(path))
+            print("           left alone: no better place than the other")
+
+    print()
+    if not spare:
+        print("  Every copy is in a folder somebody chose, so none of them")
+        print("  is spare. Reported and left alone.")
+        print()
+        return 0
+
+    print("  %d spare cop%s, %s reclaimable."
+          % (len(spare), "y" if len(spare) == 1 else "ies",
+             _size(reclaimable)))
+    if not apply_changes:
+        print("  Nothing has moved. Run again with --apply to put the spare")
+        print("  copies in the bin, where undo can still reach them.")
+        print()
+        return 0
+
+    moved, failed = 0, 0
+    with ledger_module.Ledger(state) as journal:
+        run_id = journal.start_run("duplicates", source_root=folders[0],
+                                   rules_hash=rule_set.source_hash,
+                                   dry_run=False)
+        for number, (group, path) in enumerate(spare, 1):
+            move_id = journal.add_move(
+                run_id, number, 1, "trash", "[duplicate]", path, "",
+                group.size, group.digest, status="planned",
+                facts={"duplicate_of": group.keeper})
+            try:
+                where = trash.send(path)
+            except (trash.TrashError, OSError) as error:
+                journal.update_move(move_id, "failed", error=str(error))
+                print("  ! could not bin %s: %s" % (userdirs.short(path), error))
+                failed += 1
+                continue
+            journal.update_move(move_id, "done", restored_to=None)
+            journal.connection.execute(
+                "UPDATE moves SET destination = ? WHERE id = ?",
+                (where, move_id))
+            journal.connection.commit()
+            moved += 1
+        journal.finish_run(run_id, "done",
+                           "%d binned, %d failed" % (moved, failed))
+
+    print("  %d spare cop%s in the bin. `auto-sort undo` puts them back."
+          % (moved, "y" if moved == 1 else "ies"))
+    if failed:
+        print("  %d could not be moved and are untouched." % failed)
+    print()
+    return 0
+
+
 def corrections(root=None, state=None, out=None, as_json=False):
     """Notice what was moved after auto-sort placed it, and what that implies.
 
@@ -730,7 +884,7 @@ def corrections(root=None, state=None, out=None, as_json=False):
             for preference in preferences:
                 print("    %s = %s  ->  %s"
                       % (preference.fact, preference.value,
-                         propose_module._short(preference.folder)))
+                         propose_module.userdirs.short(preference.folder)))
                 print("      %d file%s, %.0f%% of them"
                       % (preference.support,
                          "" if preference.support == 1 else "s",
@@ -886,7 +1040,7 @@ def propose(root=".", tier=identify.TIER_HEADER, depth=3, out=None,
         print()
         print("  Wrote %s" % out)
         print("    auto-sort sort %s --rules %s"
-              % (propose_module._short(found.root), out))
+              % (propose_module.userdirs.short(found.root), out))
     else:
         print()
         print("  (pass --out FILE to write these as a rules file)")
@@ -951,6 +1105,7 @@ USAGE = """auto-sort %s
   auto-sort propose [FOLDER]    survey a folder and derive the rules it needs
   auto-sort corrections [FOLDER] what you moved afterwards, and what it implies
   auto-sort regroup [FOLDER]    re-file what was filed before the pattern showed
+  auto-sort duplicates [FOLDER] find files stored twice; --apply bins the spares
   auto-sort check-rules [FILE]  validate a rules file without changing anything
   auto-sort sort [FOLDER]       plan a sort; dry-run unless configuration says otherwise
   auto-sort undo [RUN|last]     restore a completed move run
@@ -1064,6 +1219,9 @@ def main(argv=None):
     if command == "regroup":
         return regroup(targets[0] if targets else None, rule_path,
                        state_file, dry_run is False, dry_run, as_json)
+    if command == "duplicates":
+        return duplicate_scan(targets or None, rule_path, state_file,
+                              dry_run is False, as_json)
     if command == "corrections":
         return corrections(targets[0] if targets else None, state_file,
                            out_file, as_json)

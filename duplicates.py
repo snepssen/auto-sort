@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import collections
 import os
+import stat
 
+import bundles
 import mover
 
 
@@ -115,3 +117,136 @@ def annotate(record, index, path, size=None):
         record.set("duplicate_of", other, "ledger", CERTAIN)
         record.note("identical to a file already filed at %s" % other)
     return other
+
+
+# ---------------------------------------------------------------------------
+# Finding copies that are already filed, which the ledger cannot see
+# ---------------------------------------------------------------------------
+#
+# The index above answers "have I filed this before", which is the right
+# question for a file arriving in a funnel and the wrong one for a disk that
+# already has the same recording in two folders. It can only know what
+# auto-sort itself moved: a copy somebody filed by hand is invisible to it,
+# and on a real machine that is most of them -- three of the four duplicate
+# pairs found on the first disk this ran against were invisible for exactly
+# that reason.
+#
+# So this reads what is on disk instead of what the ledger remembers. Same
+# economy as above: sizes come free from walking, and only a size collision
+# is worth opening a file for.
+
+# Sorting priority. The lower number loses. Where a copy sits says what it
+# is: a funnel is somewhere files pass through, a holding folder is somewhere
+# auto-sort put something it could not place, and anywhere else is somewhere
+# a person chose. The one in the place somebody chose is the real file.
+INTAKE = 0        # a watched folder: Downloads, the funnel
+HOLDING = 1       # Unfiled, Unsorted: auto-sort's own "not yet" drawer
+KEPT = 2          # anywhere else, which means somebody put it there
+
+MIN_SIZE = 4096   # below this, identical files are usually stubs and icons
+
+
+class Group(object):
+    """Files that are byte for byte the same, and what to do about them."""
+
+    def __init__(self, digest, size, paths, places):
+        self.digest = digest
+        self.size = size
+        # Best place first, so `keeper` is simply the first one.
+        self.paths = sorted(paths, key=lambda path: (-places[path], path))
+        self.places = places
+
+    @property
+    def keeper(self):
+        return self.paths[0]
+
+    @property
+    def losers(self):
+        """Copies in a lesser place than the keeper. Possibly none."""
+        best = self.places[self.keeper]
+        return [path for path in self.paths[1:] if self.places[path] < best]
+
+    @property
+    def undecided(self):
+        """Copies in a place as good as the keeper's.
+
+        Two deliberate copies in two deliberate folders are somebody's
+        filing, not a mistake to correct. They are reported and left alone.
+        """
+        best = self.places[self.keeper]
+        return [path for path in self.paths[1:] if self.places[path] >= best]
+
+    def wasted(self):
+        return self.size * len(self.losers)
+
+
+def place_of(path, intake=(), holding=()):
+    """What kind of folder this copy is sitting in."""
+    path = os.path.abspath(path)
+    for prefix in holding:
+        if path.startswith(os.path.join(os.path.abspath(prefix), "")):
+            return HOLDING
+    for prefix in intake:
+        if path.startswith(os.path.join(os.path.abspath(prefix), "")):
+            return INTAKE
+    return KEPT
+
+
+def scan(folders, intake=(), holding=(), min_size=MIN_SIZE, limit=200000,
+         on_progress=None):
+    """Groups of byte-identical files under `folders`.
+
+    Holding is tested before intake on purpose: auto-sort's holding folders
+    are normally *inside* a watched tree, and the more specific answer is
+    the useful one.
+    """
+    by_size = collections.defaultdict(list)
+    seen = 0
+    for folder in folders:
+        for directory, subdirectories, filenames in os.walk(folder):
+            # A package is one thing wearing a folder's clothes. Walking
+            # into a Photos library finds hundreds of identical thumbnails
+            # that the library is entitled to keep, buries the real answer,
+            # and reads somebody's photographs to do it. The same test the
+            # rest of the project uses, so there is one list of these.
+            subdirectories[:] = [
+                name for name in subdirectories
+                if not name.startswith(".")
+                and not bundles.is_package(os.path.join(directory, name))]
+            for filename in filenames:
+                if filename.startswith("."):
+                    continue
+                path = os.path.join(directory, filename)
+                try:
+                    status = os.lstat(path)
+                except OSError:
+                    continue
+                if not stat.S_ISREG(status.st_mode):
+                    continue        # symlinks are not copies of anything
+                if status.st_size < min_size:
+                    continue
+                by_size[status.st_size].append(path)
+                seen += 1
+                if on_progress and seen % 2000 == 0:
+                    on_progress(seen)
+                if seen >= limit:
+                    break
+
+    groups = []
+    for size, paths in by_size.items():
+        if len(paths) < 2:
+            continue            # a size nothing else shares cannot be a copy
+        by_digest = collections.defaultdict(list)
+        for path in paths:
+            try:
+                by_digest[mover.hash_path(path)].append(path)
+            except OSError:
+                continue
+        for digest, same in by_digest.items():
+            if len(same) < 2:
+                continue
+            places = dict((path, place_of(path, intake, holding))
+                          for path in same)
+            groups.append(Group(digest, size, same, places))
+    groups.sort(key=lambda group: -group.wasted())
+    return groups
