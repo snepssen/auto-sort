@@ -407,11 +407,44 @@ Every rule in that file is tested against a built fixture, because a rules
 file that parses and then silently does nothing is the worst way this tool can
 be wrong -- it looks like it worked.
 
+## Starting it without learning a command line
+
+Double-click **Start auto-sort.command** on macOS, `start.sh` on Linux, or
+`start.bat` on Windows. With no arguments the launcher runs `auto-sort start`,
+which writes a rules file if there is not one, says what it is about to watch,
+points out that dry run is on, and then runs — leaving an icon in the menu bar
+and a log page to click through to.
+
+Nothing about that path requires knowing what Python is.
+
 ## Requirements
 
-Python 3.8 or newer. Nothing else — no pip install, no external programs, no
-models. `ffprobe` and `exiftool` will be used if they happen to be there, and
-their absence costs facts rather than function.
+**Python 3.8 or newer, and nothing else.** That is not an aesthetic
+preference. Reading headers, learning naming conventions, deciding, moving
+files and remembering every one of those decisions in the ledger are done with
+`struct`, `re`, `os` and `sqlite3`, which every Python already has. Once it is
+installed it runs by itself and improves by itself, without turning into a
+development environment somebody has to maintain.
+
+Three optional extras genuinely add something, and the launcher offers them on
+first run — described by what they let the tool do, never by package name
+first:
+
+| | What it adds | Without it |
+| --- | --- | --- |
+| `ffprobe` | durations and frame sizes for containers the built-in parsers decline | those facts are absent, and rules needing them decline |
+| `exiftool` | metadata from uncommon cameras and RAW formats | the same, for a smaller set of files |
+| PyObjC | the menu bar icon on a Mac, so there is something to click | the log page still works; there is just nothing to click |
+
+Declining all three still leaves a working sorter. `bootstrap.py` never runs
+`sudo` — on a system whose package manager needs root it prints the command
+for you to run — never installs without being asked, never prompts when there
+is nobody to answer, and never blocks the sorter when something fails.
+
+PyObjC is the one Python package, and only because there is no way to put an
+icon in a Mac's menu bar without Cocoa and Apple stopped shipping it with the
+system Python. It installs with `--user` outside a virtual environment, so it
+never writes into a system Python's site-packages.
 
 For a copied checkout, use `./start.sh` on macOS/Linux, double-click
 `Start auto-sort.command` on macOS, or use `start.bat` on Windows. These

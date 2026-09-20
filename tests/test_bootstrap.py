@@ -26,11 +26,55 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(bootstrap.main(["--check"]), 0)
 
     def test_optional_check_distinguishes_a_missing_capability(self):
-        with mock.patch.object(programs, "missing", return_value=[]):
+        with mock.patch.object(programs, "missing", return_value=[]), \
+                mock.patch.object(programs, "missing_modules",
+                                  return_value=[]):
             self.assertEqual(bootstrap.main(["--optional-check"]), 0)
         with mock.patch.object(programs, "missing",
-                               return_value=[programs.PROGRAMS["ffprobe"]]):
+                               return_value=[programs.PROGRAMS["ffprobe"]]), \
+                mock.patch.object(programs, "missing_modules",
+                                  return_value=[]):
             self.assertEqual(bootstrap.main(["--optional-check"]), 1)
+
+    def test_a_missing_python_package_also_counts_as_something_to_offer(self):
+        # Otherwise a Mac with no PyObjC is never asked, and the icon simply
+        # never appears.
+        with mock.patch.object(programs, "missing", return_value=[]), \
+                mock.patch.object(
+                    programs, "missing_modules",
+                    return_value=[programs.MODULES["pyobjc"]]):
+            self.assertEqual(bootstrap.main(["--optional-check"]), 1)
+
+    def test_nothing_in_the_registry_is_required(self):
+        # The whole point: sorting, learning and the ledger run on the
+        # standard library, so every entry here is a capability upgrade.
+        for module in programs.MODULES.values():
+            self.assertFalse(module.required)
+
+    def test_a_python_package_is_installed_into_this_interpreter(self):
+        command = programs.module_command(programs.MODULES["pyobjc"])
+        self.assertEqual(command[0], sys.executable)
+        self.assertEqual(command[1:4], ["-m", "pip", "install"])
+        self.assertIn("pyobjc-framework-Cocoa", command)
+
+    def test_installing_never_needs_root(self):
+        command = programs.module_command(programs.MODULES["pyobjc"])
+        self.assertNotIn("sudo", command)
+        if not programs.in_virtualenv():
+            self.assertIn("--user", command,
+                          "outside a virtual environment this would write "
+                          "into a system Python's site-packages")
+
+    def test_the_offer_never_prompts_when_nobody_can_answer(self):
+        # A launcher started by the system has no stdin. An input() there
+        # hangs forever and takes the sorter down with it.
+        with mock.patch.object(programs, "missing", return_value=[]), \
+                mock.patch.object(
+                    programs, "missing_modules",
+                    return_value=[programs.MODULES["pyobjc"]]), \
+                mock.patch.object(bootstrap, "install_modules") as install:
+            self.assertTrue(bootstrap.offer(quiet=True))
+        install.assert_not_called()
 
     def test_package_commands_are_data_driven(self):
         ffprobe = programs.PROGRAMS["ffprobe"]

@@ -19,4 +19,9 @@ fi
 if ! "$PYTHON" bootstrap.py --optional-check >/dev/null 2>&1; then
   "$PYTHON" bootstrap.py || true
 fi
+# No arguments means somebody double-clicked it rather than typed it, so do
+# the useful thing instead of printing a usage message at them.
+if [ "$#" -eq 0 ]; then
+  set -- start
+fi
 exec "$PYTHON" autosort.py "$@"

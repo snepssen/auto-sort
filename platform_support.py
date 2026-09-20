@@ -118,3 +118,87 @@ def version(key):
 
 def missing():
     return [program for key, program in PROGRAMS.items() if not find(key)]
+
+
+# ---------------------------------------------------------------------------
+# Python packages, which are a different question from external programs
+# ---------------------------------------------------------------------------
+
+class Module(object):
+    """An importable package that unlocks something, and never a requirement.
+
+    auto-sort is standard library only, and that is not an aesthetic
+    preference: everything it does to earn its name -- read headers, learn
+    conventions, decide, move, remember in the ledger -- works on a bare
+    Python with nothing installed. `sqlite3`, `struct`, `re` and `os` are the
+    whole toolkit, and they are already there.
+
+    There is exactly one thing a bare Python cannot do, which is put an icon
+    in a Mac's menu bar. Cocoa is not reachable without PyObjC, and Apple
+    stopped shipping it with the system Python, so the choice is to offer the
+    install or to leave Mac users with no visible presence at all. Offering it
+    is the smaller compromise, and declining still leaves a working sorter
+    with its log page.
+    """
+
+    def __init__(self, key, module, purpose, package, platforms=()):
+        self.key = key
+        self.module = module
+        self.purpose = purpose
+        self.package = package
+        self.platforms = tuple(platforms)
+        self.required = False
+
+    def applies_here(self):
+        if not self.platforms:
+            return True
+        if os.name == "nt":
+            return "windows" in self.platforms
+        if sys.platform == "darwin":
+            return "macos" in self.platforms
+        return "linux" in self.platforms
+
+    def present(self):
+        try:
+            import importlib.util
+            return importlib.util.find_spec(self.module) is not None
+        except (ImportError, ValueError, AttributeError):
+            return False
+
+
+MODULES = {
+    "pyobjc": Module(
+        "pyobjc", "AppKit",
+        "the menu bar icon, so there is something to click",
+        "pyobjc-framework-Cocoa", platforms=("macos",)),
+}
+
+
+def in_virtualenv():
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+
+
+def module_command(module):
+    """The pip invocation for this interpreter, without ever needing root.
+
+    `--user` outside a virtual environment, because a tool that installs into
+    a system Python's site-packages is a tool that breaks the system Python.
+    """
+    command = [sys.executable, "-m", "pip", "install"]
+    if not in_virtualenv():
+        command.append("--user")
+    command.append(module.package)
+    return command
+
+
+def missing_modules():
+    return [module for module in MODULES.values()
+            if module.applies_here() and not module.present()]
+
+
+def pip_available():
+    try:
+        import importlib.util
+        return importlib.util.find_spec("pip") is not None
+    except (ImportError, ValueError, AttributeError):
+        return False

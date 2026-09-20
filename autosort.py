@@ -441,6 +441,42 @@ def scan(root, tier=identify.TIER_ALL, depth=3, show=0, as_json=False):
     return 0
 
 
+def start(rule_path=None, state=None, port=None, once=False):
+    """What double-clicking the launcher does: set up if needed, then run.
+
+    Somebody who has just downloaded this should not have to learn a command
+    line to use it, and should not be shown a usage message for their
+    trouble. So: write a starter rules file if there is not one, say where it
+    is and what it will do, and then start watching. Everything after that is
+    the icon and the log page.
+    """
+    target = paths.rules_file(rule_path)
+    fresh = not os.path.exists(target)
+    if fresh:
+        print()
+        print("  First run. Writing a rules file you can edit later:")
+        if init(target) != 0:
+            return 1
+
+    try:
+        rule_set = rules.load(target)
+    except rules.RuleError as error:
+        print("Rules error: %s" % error, file=sys.stderr)
+        return 1
+
+    print()
+    print("  Watching")
+    for folder in rule_set.watch.folders:
+        print("    %s" % propose_module.userdirs.short(folder))
+    if rule_set.settings.dry_run:
+        print()
+        print("  Dry run is on, so nothing will actually move. When you are")
+        print("  happy with what the log shows, set dry_run = no in")
+        print("  %s" % propose_module.userdirs.short(target))
+    print()
+    return watch(target, state, None, port, once)
+
+
 def regroup(root=None, rule_path=None, state=None, apply_changes=False,
             dry_run=None, as_json=False):
     """Move already-filed files into structure that has since become visible.
@@ -805,6 +841,7 @@ def init(destination=None):
 
 USAGE = """auto-sort %s
 
+  auto-sort start               set up if needed, then run in the background
   auto-sort explain PATH        every fact about one file, and where it came from
   auto-sort scan FOLDER         what is in a folder, grouped into items
   auto-sort init                write a starter rules file if there is not one
@@ -917,6 +954,8 @@ def main(argv=None):
     if command == "scan":
         return scan(targets[0] if targets else ".", tier, depth, show,
                     as_json)
+    if command == "start":
+        return start(rule_path, state_file, port, once)
     if command == "regroup":
         return regroup(targets[0] if targets else None, rule_path,
                        state_file, dry_run is False, dry_run, as_json)
