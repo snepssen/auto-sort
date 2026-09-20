@@ -108,6 +108,10 @@ class PollingDaemon(object):
         self.journal.recover_processing_queue()
         self.token = secrets.token_urlsafe(24)
         self.journal.set_state("web_token", self.token)
+        # Recorded so a restart can tell a new process from the old one
+        # answering. "Something is listening" is not the same question as
+        # "the thing I asked to be replaced has been".
+        self.journal.set_state("daemon_pid", str(os.getpid()))
         self.web = logpage.LogPage(self.journal, self.lock.port, self.token)
         self.rule_set = None
         self._rule_identity = None
@@ -510,7 +514,16 @@ class PollingDaemon(object):
             if remaining <= 0:
                 return
             status_item.pump(min(0.25, remaining))
-            self.lock.wait(min(0.25, remaining), self.web.handle_connection)
+            command = self.lock.wait(min(0.25, remaining),
+                                     self.web.handle_connection)
+            if command in ("quit", "stop"):
+                # Asked to stand down. Under a service manager something
+                # will start a replacement; on its own this is a clean stop.
+                # Either way the loop has to actually end, which until now
+                # only the tray's Quit could make it do -- so a command-line
+                # restart had no way to reach a running daemon at all.
+                self.output("Asked to stop.")
+                self._quit_requested = True
         self._sort_requested = False
 
     def _tray_open_log(self):
@@ -626,6 +639,43 @@ def _queue_rules_hash(plan_fingerprint, dry_run):
     digest.update(plan_fingerprint.encode("ascii"))
     digest.update(b"\0dry" if dry_run else b"\0apply")
     return digest.hexdigest()
+
+
+def running_port(state_file=None):
+    """The port a daemon is answering on, or None if none is.
+
+    Asked by connecting rather than by reading a recorded number: the ledger
+    remembers the port of the last daemon to run, which says nothing about
+    whether one is running now.
+    """
+    try:
+        with ledger_module.Ledger(state_file) as journal:
+            port = int(journal.get_state("daemon_port", DEFAULT_PORT))
+    except (OSError, TypeError, ValueError):
+        return None
+    try:
+        connection = socket.create_connection(("127.0.0.1", port), timeout=1)
+    except OSError:
+        return None
+    try:
+        connection.sendall(b"ping\n")
+        connection.recv(16)
+    except OSError:
+        return None
+    finally:
+        connection.close()
+    return port
+
+
+def running_pid(state_file=None):
+    """The pid of the daemon currently answering, or None."""
+    if running_port(state_file) is None:
+        return None
+    try:
+        with ledger_module.Ledger(state_file) as journal:
+            return int(journal.get_state("daemon_pid", "") or 0) or None
+    except (OSError, TypeError, ValueError):
+        return None
 
 
 def wake(state_file=None, command="wake"):

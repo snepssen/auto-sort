@@ -44,6 +44,35 @@ def command(rules_file):
     return [executable, script, "watch", "--rules", os.path.abspath(rules_file)]
 
 
+def restart(runner=subprocess.run):
+    """Ask the platform to stop and start the login item again.
+
+    Only macOS has a service manager behind the login item: launchd owns the
+    process and `kickstart -k` replaces it. An XDG autostart entry and a
+    Startup-folder shortcut are instructions for the next login and nothing
+    is managing the process in between, so there is nothing to ask -- the
+    caller falls back to stopping the daemon and starting another itself.
+
+    Returns (restarted, reason).
+    """
+    state = status()
+    if not state["installed"]:
+        return False, "no login item is installed"
+    if state["platform"] != "macos":
+        return False, ("%s starts auto-sort at login but does not manage it "
+                       "afterwards" % state["platform"])
+    result = runner(["launchctl", "kickstart", "-k",
+                     "gui/%d/%s" % (os.getuid(), LABEL)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    check=False)
+    if result.returncode:
+        detail = (result.stderr or result.stdout or b"")
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", "replace")
+        return False, detail.strip() or "launchctl exited %d" % result.returncode
+    return True, ""
+
+
 def target():
     platform = platform_name()
     if platform == "macos":

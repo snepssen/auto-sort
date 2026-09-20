@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 import bundles
 import corrections as corrections_module
@@ -442,6 +443,106 @@ def scan(root, tier=identify.TIER_ALL, depth=3, show=0, as_json=False):
     return 0
 
 
+def restart(rule_path=None, state=None, port=None, wait_seconds=20):
+    """Stop the running daemon and start it again on the current code.
+
+    The daemon reloads its rules whenever the file changes, but it cannot
+    reload itself: a change to auto-sort's own code only takes effect in a
+    new process. That was the one step left needing a person, and it needed
+    one at exactly the moment it was least obvious -- right after a change,
+    when everything looks fine and the old code is still running.
+
+    Where a service manager owns the process it is asked to do the swap,
+    because it will put the replacement back under the same supervision. Only
+    macOS has one here: an XDG autostart entry and a Startup shortcut say
+    what to run at login and manage nothing afterwards, so there the daemon
+    is stopped and a detached replacement started directly.
+    """
+    before = daemon_module.running_pid(state)
+    was_running = daemon_module.running_port(state) is not None
+
+    # The service manager owns the daemon it installed, which is the one
+    # running with the default state file. Naming a different state file or
+    # port means a different daemon, and kickstarting the managed one would
+    # restart something the caller did not ask about -- while a check for
+    # "is anything listening" happily reported success.
+    managed = state is None and port is None
+    restarted, reason = autostart.restart() if managed \
+        else (False, "a specific daemon was named")
+    if restarted:
+        if _wait_for_new_daemon(state, before, wait_seconds):
+            print("Restarted. %s" % _daemon_line(state))
+            return 0
+        print("Asked launchd to restart it, but it has not come back yet.",
+              file=sys.stderr)
+        return 1
+
+    if not was_running:
+        print("auto-sort is not running (%s)." % reason)
+        print("Start it with: auto-sort start")
+        return 1
+
+    if not daemon_module.wake(state, "quit"):
+        print("Could not reach the running daemon.", file=sys.stderr)
+        return 1
+    if not _wait_for_stop(state, wait_seconds):
+        print("The daemon did not stop within %ds." % wait_seconds,
+              file=sys.stderr)
+        return 1
+
+    command = [sys.executable, os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "autosort.py"), "watch"]
+    if rule_path:
+        command += ["--rules", rule_path]
+    if state:
+        command += ["--state", state]
+    if port:
+        command += ["--port", str(port)]
+    try:
+        # Detached, so it outlives this command rather than dying with it.
+        import subprocess
+        subprocess.Popen(command, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as error:
+        print("Could not start a replacement: %s" % error, file=sys.stderr)
+        return 1
+    if _wait_for_new_daemon(state, before, wait_seconds):
+        print("Restarted. %s" % _daemon_line(state))
+        return 0
+    print("Started a replacement, but it has not answered yet.",
+          file=sys.stderr)
+    return 1
+
+
+def _wait_for_stop(state, seconds):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if daemon_module.running_port(state) is None:
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _wait_for_new_daemon(state, before, seconds):
+    """Wait for a daemon that is not the one we asked to go away.
+
+    Checking only that something answers passes the moment the old process
+    replies, which it does right up until it exits.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        now = daemon_module.running_pid(state)
+        if now is not None and now != before:
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _daemon_line(state):
+    port = daemon_module.running_port(state)
+    return "Running on 127.0.0.1:%s." % port if port else "Not running."
+
+
 def start(rule_path=None, state=None, port=None, once=False):
     """What double-clicking the launcher does: set up if needed, then run.
 
@@ -843,6 +944,7 @@ def init(destination=None):
 USAGE = """auto-sort %s
 
   auto-sort start               set up if needed, then run in the background
+  auto-sort restart             stop it and start it again on the current code
   auto-sort explain PATH        every fact about one file, and where it came from
   auto-sort scan FOLDER         what is in a folder, grouped into items
   auto-sort init                write a starter rules file if there is not one
@@ -955,6 +1057,8 @@ def main(argv=None):
     if command == "scan":
         return scan(targets[0] if targets else ".", tier, depth, show,
                     as_json)
+    if command == "restart":
+        return restart(rule_path, state_file, port)
     if command == "start":
         return start(rule_path, state_file, port, once)
     if command == "regroup":

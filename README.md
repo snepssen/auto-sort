@@ -193,6 +193,29 @@ every file onto the internal disk — a copy, a hash and a delete each, instead
 of a rename — which is the opposite of what tidying a drive means. The test is
 simply whether the folder is on the home volume.
 
+## Keeping it running
+
+```sh
+auto-sort restart          # stop it and start it again on the current code
+auto-sort status           # is it running, is it paused, what is queued
+auto-sort pause / resume
+```
+
+The daemon re-reads its rules whenever the file changes, but it cannot reload
+*itself* — a change to auto-sort's own code only takes effect in a new
+process, and it is needed at exactly the moment it is least obvious: right
+after a change, when everything looks fine and the old code is still running.
+
+Where a service manager owns the process, `restart` asks it to do the swap so
+the replacement stays supervised. macOS is the only platform here that has
+one; an XDG autostart entry and a Startup-folder shortcut say what to run at
+login and manage nothing afterwards, so there the daemon is asked to stand
+down and a detached replacement is started directly.
+
+Either way it waits for a process with a **different pid** before reporting
+success. Checking that something answers passes the moment the old process
+replies, which it does right up until it exits.
+
 ## Structure that builds itself
 
 A folder does not need to be told what shape it should be. `propose` surveys
