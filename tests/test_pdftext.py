@@ -22,7 +22,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixtures                                          # noqa: E402
 import identify                                          # noqa: E402
 import signatures                                        # noqa: E402
+import propose                                           # noqa: E402
+import rules                                             # noqa: E402
 import shapes                                            # noqa: E402
+import sorter                                            # noqa: E402
 from readers import pdftext                              # noqa: E402
 
 INVOICE = ("RECHNUNG Nr 4471\n"
@@ -264,3 +267,56 @@ class Induction(unittest.TestCase):
         words = [word for word, _count in shapes.learn_terms(letters)]
         self.assertLess(words.index("Steuerbescheid"), words.index("Finanzamt"))
         self.assertLess(words.index("Rechnung"), words.index("Stadtwerke"))
+
+
+class WordsInsideWords(unittest.TestCase):
+    """A learnt word that lives inside another learnt word.
+
+    German compounds make this ordinary rather than exotic: learn `Vertrag`
+    and `Mietvertrag` from the same folder and a plain substring match hands
+    every tenancy agreement to the shorter rule.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-inside-")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def sorted_into(self, names):
+        for name in names:
+            fixtures.pdf(os.path.join(self.dir, name + ".pdf"),
+                         producer="HP ScanJet Pro firmware", image_only=True)
+        found = propose.survey(self.dir)
+        text = propose.render(found, propose.assess(found)).replace(
+            "settle_seconds = 3", "settle_seconds = 0")
+        path = os.path.join(self.dir, "r.ini")
+        with open(path, "w") as handle:
+            handle.write(text)
+        plan = sorter.build_plan(self.dir, rules.load(path))
+        return {os.path.basename(item.members[0].source):
+                os.path.basename(os.path.dirname(
+                    item.members[0].destination))
+                for item in plan.items}
+
+    # Three distinct categories, because two is not yet a structure and
+    # nothing would be learnt at all.
+    PILE = ["Mietvertrag Wohnung", "Mietvertrag Garage", "mietvertrag Keller",
+            "Vertrag 2011", "Kauf Vertrag Auto", "Vertrag Telekom",
+            "Rechnung Stadtwerke", "rechnung telekom", "RECHNUNG allianz"]
+
+    def test_the_longer_word_keeps_its_own_files(self):
+        placed = self.sorted_into(self.PILE)
+        self.assertEqual(placed["Mietvertrag Wohnung.pdf"], "Mietvertrag")
+        self.assertEqual(placed["mietvertrag Keller.pdf"], "Mietvertrag")
+
+    def test_the_shorter_word_still_gets_its_own(self):
+        """Including the one with nothing in front of it to match a space."""
+        placed = self.sorted_into(self.PILE)
+        self.assertEqual(placed["Vertrag 2011.pdf"], "Vertrag")
+        self.assertEqual(placed["Kauf Vertrag Auto.pdf"], "Vertrag")
+
+    def test_two_categories_are_not_yet_a_structure(self):
+        """The reason the pile above has three kinds in it and not two."""
+        placed = self.sorted_into(self.PILE[:6])
+        self.assertNotIn("Mietvertrag", set(placed.values()))

@@ -511,9 +511,25 @@ def render(found, proposals):
         lines.append("; with and its folder goes with it; rename the folder")
         lines.append("; and the files follow.")
         lines.append("")
+        folded = [word.lower() for word, _count in terms]
         for word, count in terms:
+            inside = [other for other, low in zip(
+                [w for w, _c in terms], folded)
+                if low != word.lower() and word.lower() in low]
             lines.append("[rule: %s: %s]" % (title, word))
-            lines.append("when = %s contains %s" % (fact, word))
+            if inside:
+                # A learnt word that also lives inside a longer learnt word
+                # has to be asked for as a word of its own, or it takes the
+                # longer one's files: `contains Vertrag` claims every
+                # Mietvertrag. A leading space says "a word of its own", and
+                # the second half of the condition is for a name that starts
+                # with it, where there is no space in front to find.
+                lines.append('when = %s contains " %s" or %s ~ %s*'
+                             % (fact, word, fact, word))
+                lines.append("; on its own only -- %s also sits inside %s"
+                             % (word, ", ".join(inside[:3])))
+            else:
+                lines.append("when = %s contains %s" % (fact, word))
             lines.append("into = %s"
                          % userdirs.short(os.path.join(
                              destination_root(found, "document"), word)))
