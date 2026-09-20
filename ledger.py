@@ -18,7 +18,7 @@ import time
 import paths
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def now():
@@ -153,6 +153,27 @@ class Ledger(object):
 
                     PRAGMA user_version = 4;
                 """)
+            version = 4
+        if version == 4:
+            with self.connection:
+                self.connection.executescript("""
+                    CREATE TABLE IF NOT EXISTS corrections (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        move_id INTEGER NOT NULL REFERENCES moves(id),
+                        rule_name TEXT,
+                        placed_at TEXT NOT NULL,
+                        found_at TEXT,
+                        outcome TEXT NOT NULL,
+                        facts_json TEXT,
+                        noticed_at TEXT NOT NULL,
+                        UNIQUE(move_id)
+                    );
+
+                    CREATE INDEX IF NOT EXISTS corrections_outcome
+                        ON corrections(outcome, found_at);
+
+                    PRAGMA user_version = 5;
+                """)
 
     def record_directories(self, run_id, directories):
         """Remember the folders a run had to create, so undo can remove them.
@@ -186,6 +207,49 @@ class Ledger(object):
                 "UPDATE directories SET removed_at = ? "
                 "WHERE run_id = ? AND path = ?",
                 [(now(), run_id, directory) for directory in directories])
+
+    def placed_moves(self, source_root=None, limit=20000):
+        """Completed moves that have not been undone, newest first.
+
+        These are the placements this tool is answerable for: if one of them
+        is no longer where it was put, somebody disagreed.
+        """
+        sql = ("SELECT m.*, r.source_root FROM moves m "
+               "JOIN runs r ON r.id = m.run_id "
+               "WHERE m.status IN ('done', 'copied') "
+               "AND m.undone_at IS NULL AND r.action = 'sort'")
+        parameters = []
+        if source_root:
+            sql += " AND r.source_root = ?"
+            parameters.append(source_root)
+        sql += " ORDER BY m.id DESC LIMIT ?"
+        parameters.append(limit)
+        return self.connection.execute(sql, parameters).fetchall()
+
+    def record_correction(self, move_id, rule_name, placed_at, found_at,
+                          outcome, facts_json=None):
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO corrections(move_id, rule_name, "
+                "placed_at, found_at, outcome, facts_json, noticed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (move_id, rule_name, placed_at, found_at, outcome,
+                 facts_json, now()))
+
+    def corrections(self, outcome="moved", limit=5000):
+        sql = "SELECT * FROM corrections"
+        parameters = []
+        if outcome:
+            sql += " WHERE outcome = ?"
+            parameters.append(outcome)
+        sql += " ORDER BY id DESC LIMIT ?"
+        parameters.append(limit)
+        return self.connection.execute(sql, parameters).fetchall()
+
+    def forget_correction(self, move_id):
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM corrections WHERE move_id = ?", (move_id,))
 
     def start_run(self, action, source_root=None, rules_hash=None, dry_run=True):
         with self.connection:

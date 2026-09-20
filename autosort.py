@@ -14,6 +14,7 @@ import os
 import sys
 
 import bundles
+import corrections as corrections_module
 import autostart
 import daemon as daemon_module
 import evidence
@@ -439,6 +440,100 @@ def scan(root, tier=identify.TIER_ALL, depth=3, show=0, as_json=False):
     return 0
 
 
+def corrections(root=None, state=None, out=None, as_json=False):
+    """Notice what was moved after auto-sort placed it, and what that implies.
+
+    The most valuable signal the tool has, and the cheapest: it is simply the
+    difference between the ledger and the disk. Nothing is applied -- what
+    comes out is a candidate rule with its count, for somebody to accept or
+    throw away.
+    """
+    roots = [os.path.abspath(root)] if root else []
+    with ledger_module.Ledger(state) as journal:
+        found = corrections_module.detect(journal, roots,
+                                          os.path.abspath(root) if root
+                                          else None)
+        rows = journal.corrections("moved")
+        among = corrections_module.population(
+            journal, os.path.abspath(root) if root else None)
+        preferences = corrections_module.induce(rows, among)
+        overridden = corrections_module.overridden_rules(rows)
+
+        if as_json:
+            print(json.dumps({
+                "checked": len(found),
+                "moved": sum(1 for _r, outcome, _p in found
+                             if outcome == "moved"),
+                "missing": sum(1 for _r, outcome, _p in found
+                               if outcome == "missing"),
+                "preferences": [{"fact": p.fact, "value": p.value,
+                                 "folder": p.folder, "support": p.support,
+                                 "precision": round(p.precision, 3)}
+                                for p in preferences],
+                "overridden": [{"rule": name, "times": count}
+                               for name, count in overridden],
+            }, indent=2, default=str))
+            return 0
+
+        moved = [item for item in found if item[1] == "moved"]
+        missing = [item for item in found if item[1] == "missing"]
+        print()
+        if not rows and not found:
+            print("  Nothing has been moved since auto-sort placed it.")
+            print("  (corrections are how it learns what you actually want)")
+            print()
+            return 0
+        if found:
+            print("  Since the last check: %d placement%s changed"
+                  % (len(found), "" if len(found) == 1 else "s"))
+            print("    %d found somewhere else, %d gone"
+                  % (len(moved), len(missing)))
+        print("  %d correction%s recorded in total"
+              % (len(rows), "" if len(rows) == 1 else "s"))
+
+        if overridden:
+            print()
+            print("  Rules you overrode")
+            for name, count in overridden[:10]:
+                print("    %-34s %d time%s" % (name[:34], count,
+                                               "" if count == 1 else "s"))
+
+        print()
+        if preferences:
+            print("  What that suggests")
+            for preference in preferences:
+                print("    %s = %s  ->  %s"
+                      % (preference.fact, preference.value,
+                         propose_module._short(preference.folder)))
+                print("      %d file%s, %.0f%% of them"
+                      % (preference.support,
+                         "" if preference.support == 1 else "s",
+                         preference.precision * 100))
+        else:
+            print("  Not enough agreement yet to suggest a rule.")
+            print("  %d more consistent correction%s would do it."
+                  % (corrections_module.MIN_SUPPORT,
+                     "s" if corrections_module.MIN_SUPPORT != 1 else ""))
+
+        if out and preferences:
+            try:
+                with open(out, "w", encoding="utf-8") as handle:
+                    handle.write("; Rules learnt from files you moved after\n"
+                                 "; auto-sort placed them. Nothing here has\n"
+                                 "; been applied.\n\n")
+                    for preference in preferences:
+                        handle.write(preference.rule() + "\n\n")
+            except OSError as error:
+                print("Could not write %s: %s" % (out, error), file=sys.stderr)
+                return 1
+            print()
+            print("  Wrote %s -- read it, then paste what you agree with"
+                  % out)
+            print("  into your rules file.")
+        print()
+    return 0
+
+
 def propose(root=".", tier=identify.TIER_HEADER, depth=3, out=None,
             limit=None, as_json=False):
     """Survey a folder and write the rules it turns out to need.
@@ -606,6 +701,7 @@ USAGE = """auto-sort %s
   auto-sort scan FOLDER         what is in a folder, grouped into items
   auto-sort init                write a starter rules file if there is not one
   auto-sort propose [FOLDER]    survey a folder and derive the rules it needs
+  auto-sort corrections [FOLDER] what you moved afterwards, and what it implies
   auto-sort check-rules [FILE]  validate a rules file without changing anything
   auto-sort sort [FOLDER]       plan a sort; dry-run unless configuration says otherwise
   auto-sort undo [RUN|last]     restore a completed move run
@@ -712,6 +808,9 @@ def main(argv=None):
     if command == "scan":
         return scan(targets[0] if targets else ".", tier, depth, show,
                     as_json)
+    if command == "corrections":
+        return corrections(targets[0] if targets else None, state_file,
+                           out_file, as_json)
     if command == "propose":
         return propose(targets[0] if targets else ".", tier, depth,
                        out_file, limit, as_json)

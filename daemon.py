@@ -25,6 +25,7 @@ import ledger as ledger_module
 import mover
 import logpage
 import rules
+import corrections as corrections_module
 import sorter
 import tray
 
@@ -127,6 +128,46 @@ class PollingDaemon(object):
                         % (len(loaded.rules), loaded.source))
         return self.rule_set
 
+    # How often to look for files that were moved after being sorted. Rare
+    # on purpose: the check is nearly free when nothing has moved -- one stat
+    # per recorded placement -- and expensive when something has, because
+    # finding where it went means indexing the tree. Somebody tidying up for
+    # an hour should cost one index build, not seven hundred.
+    CORRECTION_INTERVAL = 1800
+
+    def _check_corrections(self, rule_set, now_value):
+        """Notice disagreement, record it, and say so. Never act on it.
+
+        The daemon is the right place to watch for this because corrections
+        happen long after a sort, in Finder, when nobody is running anything.
+        What it must not do is adjust: a placement that changes because of
+        something inferred from a folder is the behaviour that makes a
+        background process impossible to trust.
+        """
+        last = self.journal.get_state("corrections_checked_at")
+        try:
+            last_value = float(last or 0)
+        except (TypeError, ValueError):
+            last_value = 0.0
+        if now_value - last_value < self.CORRECTION_INTERVAL:
+            return
+        self.journal.set_state("corrections_checked_at", repr(now_value))
+        roots = [os.path.abspath(folder)
+                 for folder in rule_set.watch.folders
+                 if _root_available(os.path.abspath(folder))]
+        if not roots:
+            return
+        try:
+            found = corrections_module.detect(self.journal, roots)
+        except (OSError, ValueError) as error:
+            self.output("Could not check for corrections: %s" % error)
+            return
+        moved = [item for item in found if item[1] == "moved"]
+        if moved:
+            self.output("%d file%s moved after sorting. Run "
+                        "`auto-sort corrections` to see what it suggests."
+                        % (len(moved), "" if len(moved) == 1 else "s"))
+
     def cycle(self, now_value=None):
         now_value = time.time() if now_value is None else float(now_value)
         rule_set = self._reload_rules()
@@ -162,6 +203,8 @@ class PollingDaemon(object):
                 requested_dry, now_value))
             if self.journal.paused():
                 break
+        if not self.journal.paused():
+            self._check_corrections(rule_set, now_value)
         return results
 
     def _observe_root(self, root, rule_set, fingerprint, now_value):

@@ -256,6 +256,51 @@ the ones that at least name their source. Sorting them further needs something
 that looks at the picture, which is the [deferred Tier 3
 seam](DESIGN.md#what-a-file-is) and not built.
 
+## Learning from what you moved back
+
+The strongest signal available, and it costs nothing to collect: the ledger
+says where every file was put, and the disk says where it is now. Any
+difference is somebody disagreeing, and they said what they wanted by putting
+the file somewhere else.
+
+```sh
+auto-sort corrections ~/Downloads
+```
+
+```
+  Since the last check: 6 placements changed
+    6 found somewhere else, 0 gone
+
+  Rules you overrode
+    all images                         6 times
+
+  What that suggests
+    looks_like = furaffinity  ->  ~/Downloads/Art
+      6 files, 100% of them
+```
+
+Two outputs, and the first needs no inference at all: **a rule overridden six
+times is wrong**, and saying so is often worth more than guessing at a
+replacement for it. The second is the guess, and it is a candidate rule with
+its count attached, written to a file for you to read — `--out` writes it,
+nothing applies it. A placement that silently changed because of something
+inferred from a folder is the behaviour that makes a background process
+impossible to trust.
+
+The daemon checks for this on its own, every half hour. The check is nearly
+free when nothing has moved — one `stat` per recorded placement — and only
+indexes the tree when something actually has, so tidying up for an hour costs
+one index build rather than seven hundred.
+
+**What stops it over-claiming** is measuring against everything placed rather
+than against the corrections alone. The first working version announced
+confidently that `alpha = True` predicted a folder: every file moved out of
+`Images` happened to be a PNG with an alpha channel — and so did every
+screenshot left exactly where it was put. A fact shared by the files you moved
+*and* the files you did not move predicts nothing. With that fixed, the same
+folder correctly yields no rule at all, just the note that one rule was
+overridden five times.
+
 ## Starting from nothing
 
 ```sh

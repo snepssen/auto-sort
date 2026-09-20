@@ -75,6 +75,32 @@ NTFS alternate data stream holds the referrer. Both are free to read, and
 `from_host = bandcamp.com` is a better basis for a decision than any amount of
 audio analysis. Read them at Tier 0, and preserve them when moving.
 
+## Disagreement is the best evidence there is
+
+Everything else in this design reads files. A correction reads the person.
+
+The ledger already records every placement, so noticing one that no longer
+holds is the difference between a database and a `stat` call. When a file is
+not where it was put, it was moved, and where it was moved to is a statement
+about what its owner wanted that no amount of header parsing could produce.
+
+Three constraints keep it honest:
+
+**It proposes; it never adjusts.** A correction becomes a candidate rule with
+its count, shown to somebody who accepts or discards it. Silently changing
+future placements because of an inference drawn from a folder is how a
+background process becomes untrustworthy, and one tidy-up afternoon would
+teach the wrong lesson permanently.
+
+**Precision is measured against everything placed**, not against the
+corrections alone. A fact common to the files somebody moved is worthless if
+it is equally common among the files they left alone, and only the wider
+population shows that.
+
+**Which rules get overridden needs no inference and is often the better
+half.** A rule corrected eleven times is wrong, and reporting that beats
+guessing at a replacement.
+
 ## Conventions are learnt, not tabulated
 
 A table of per-site filename patterns is the obvious way to read a download
