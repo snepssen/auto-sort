@@ -142,16 +142,51 @@ def _deviantart(stem, ext):
     }
 
 
+def _meta_cdn(stem, ext):
+    """`10665432_10152345678_1234567890_n` -- Facebook and Instagram.
+
+    Three long runs of digits and a single-letter size suffix. It must be
+    matched before Inkbunny, whose shape is `<id>_<username>_<title>` and
+    which will otherwise read the second run of digits as an artist's name:
+    on a family machine that files hundreds of pictures from Facebook groups
+    into an artwork folder, which is where this test came from.
+
+    Facebook and Instagram share Meta's naming and cannot be told apart from
+    the filename, so the site is only a guess -- and the download URL, when
+    there is one, already says which exactly. What is certain is that the
+    name carries no artist, no title and no date.
+    """
+    if not re.match(r"^\d{6,}_\d{6,}_\d{6,}_[a-z]{1,2}$", stem):
+        return None
+    middle = stem.split("_")[1]
+    return {
+        "site": ("facebook", WEAK),
+        "post_id": (middle, LIKELY),
+        "opaque": (True, CERTAIN),
+    }
+
+
 def _inkbunny(stem, ext):
-    match = re.match(r"^(?P<id>\d{6,8})_(?P<uploader>[A-Za-z0-9._-]{2,30})"
+    """`<id>_<username>_<title>`.
+
+    The username must contain a letter. Without that test every Facebook
+    filename in the world matched, because a run of digits is a perfectly
+    good `[A-Za-z0-9]` string -- and the underscore was in the username's
+    own character class as well, so it swallowed the first word of the title
+    too.
+    """
+    match = re.match(r"^(?P<id>\d{6,8})_(?P<uploader>[A-Za-z0-9.~-]{2,30})"
                      r"_(?P<title>.+)$", stem)
     if not match:
+        return None
+    uploader = match.group("uploader")
+    if not any(character.isalpha() for character in uploader):
         return None
     # Distinguished from FurAffinity only by the id being too short to be a
     # unix timestamp, so it is claimed more cautiously.
     return {
         "site": ("inkbunny", LIKELY),
-        "uploader": (match.group("uploader").lower(), LIKELY),
+        "uploader": (uploader.lower(), LIKELY),
         "post_id": (match.group("id"), LIKELY),
         "post_title": (match.group("title").replace("_", " ").strip(), WEAK),
     }
@@ -239,6 +274,7 @@ DETECTORS = (
     ("pixiv", _pixiv),
     ("tumblr", _tumblr),
     ("patreon", _patreon),
+    ("meta-cdn", _meta_cdn),
     ("inkbunny", _inkbunny),
     ("hash", _hash_named),
     ("twitter", _twitter),

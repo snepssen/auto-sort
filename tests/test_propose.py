@@ -25,6 +25,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import evidence                                          # noqa: E402
 import fixtures                                          # noqa: E402
 import identify                                          # noqa: E402
 import names                                             # noqa: E402
@@ -83,6 +84,42 @@ class SiteConventions(unittest.TestCase):
             "__artistname_canine_male__a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6.jpg")
         self.assertEqual(found["uploader"], "artistname")
         self.assertIn("canine", found["tags"])
+
+    def test_facebook_names_are_not_read_as_artwork(self):
+        # Three runs of digits and a size suffix. Inkbunny's shape is
+        # `<id>_<username>_<title>`, and a run of digits is a perfectly good
+        # username as far as a character class is concerned -- so every
+        # picture saved from a Facebook group was being filed as art by an
+        # artist called `10152345678`.
+        for filename in ("10665432_10152345678_1234567890_n.jpg",
+                         "816030292_1067966789280912_8256989481301433111_n.jpeg",
+                         "123456_789012_345678_o.jpg"):
+            name, found = self.read(filename)
+            self.assertEqual(name, "meta-cdn", filename)
+            self.assertTrue(found["opaque"])
+            self.assertNotIn("uploader", found,
+                             "there is no artist in a Facebook filename")
+
+    def test_the_site_behind_a_meta_name_is_only_a_guess(self):
+        # Facebook and Instagram share the naming and the filename cannot
+        # tell them apart; the download URL can, and does.
+        import sites as sites_module
+        _name, raw = sites_module.read(
+            "10665432_10152345678_1234567890_n", "jpg", "image")
+        self.assertEqual(raw["site"][1], evidence.WEAK)
+        self.assertEqual(raw["opaque"][1], evidence.CERTAIN)
+
+    def test_inkbunny_still_works_and_stops_at_the_username(self):
+        name, found = self.read("1234567_artistname_my_picture.png")
+        self.assertEqual(name, "inkbunny")
+        self.assertEqual(found["uploader"], "artistname")
+        # The underscore is the delimiter, so it cannot also be part of the
+        # username -- it used to be, and ate the first word of the title.
+        self.assertEqual(found["post_title"], "my picture")
+
+    def test_an_all_digit_username_is_not_a_username(self):
+        self.assertNotEqual(self.read("1234567_9876543_title.png")[0],
+                            "inkbunny")
 
     def test_documents_are_not_site_downloads(self):
         self.assertIsNone(self.read("1770665382.flaich_report.pdf",
