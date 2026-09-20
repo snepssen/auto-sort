@@ -653,17 +653,42 @@ _PAPERWORK = tuple((label, re.compile(pattern, re.I))
 _REFERENCE = re.compile(r"\b((?:inv|po|ref|no|nr|#)[-_ ]?\d{3,12})\b", re.I)
 
 
-def detect_paperwork(ctx, out):
-    stem, ext, lower = ctx.plain, ctx.ext, ctx.lower
+def paperwork_in(text, by_count=False):
+    """`(label, reference)` for what this text reads like, or `(None, None)`.
+
+    A filename is read first-match-wins, because it holds one or two words
+    and the table is ordered from the specific to the general. A page of
+    prose is read by weight instead: the word that recurs is what the
+    document is about, where a single mention of `agreement` in a covering
+    letter is not.
+    """
+    if not text:
+        return None, None
+    best, score = None, 0
     for label, pattern in _PAPERWORK:
-        if pattern.search(stem):
-            out.add("paperwork", "paperwork", label, WEAK)
-            out.label("paperwork", label, WEAK)
-            reference = _REFERENCE.search(stem)
-            if reference:
-                out.add("paperwork", "reference",
-                        reference.group(1).upper().replace(" ", ""), WEAK)
-            return
+        hits = len(pattern.findall(text)) if by_count else \
+            (1 if pattern.search(text) else 0)
+        if not hits:
+            continue
+        if not by_count:
+            best = label
+            break
+        if hits > score:
+            best, score = label, hits
+    if best is None:
+        return None, None
+    reference = _REFERENCE.search(text)
+    return best, (reference.group(1).upper().replace(" ", "")
+                  if reference else None)
+
+
+def detect_paperwork(ctx, out):
+    label, reference = paperwork_in(ctx.plain)
+    if label:
+        out.add("paperwork", "paperwork", label, WEAK)
+        out.label("paperwork", label, WEAK)
+        if reference:
+            out.add("paperwork", "reference", reference, WEAK)
 
 
 _SCANNER = (

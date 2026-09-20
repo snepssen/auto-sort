@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import os
 import struct
+import zlib
 import zipfile
 
 
@@ -139,12 +140,70 @@ def docx(path, title="Quarterly Report", author="A Person", pages=12):
     return _write(path, buffer.getvalue())
 
 
-def pdf(path, producer="HP ScanJet Pro firmware", pages=3):
-    body = ("%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-            "2 0 obj<</Type/Pages/Count %d/Kids[]>>endobj\n"
-            "trailer<</Info<</Producer(%s)/Title(Scanned document)>>>>\n"
-            "%%%%EOF\n" % (pages, producer)).encode("latin-1")
-    return _write(path, body)
+def pdf(path, producer="HP ScanJet Pro firmware", pages=3, text=None,
+        subset_font=False, image_only=False):
+    """A PDF, optionally with a real compressed content stream.
+
+    `text` is drawn with one string per line inside a BT/ET block, which is
+    what any writer produces. `subset_font` puts those characters behind a
+    ToUnicode table with the codes shifted, which is what every modern
+    writer produces and what makes a PDF unreadable without the table.
+    `image_only` gives the file a picture and no text at all, which is a
+    scanned page.
+    """
+    objects = []
+    body = "%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" \
+           "2 0 obj<</Type/Pages/Count %d/Kids[]>>endobj\n" % pages
+    out = body.encode("latin-1")
+
+    if text is not None:
+        shift = 3 if subset_font else 0
+        lines = []
+        for line in text.splitlines():
+            if subset_font:
+                codes = "".join("%04X" % (ord(ch) + shift) for ch in line)
+                lines.append("<%s> Tj 0 -14 Td" % codes)
+            else:
+                escaped = line.replace("\\", r"\\").replace("(", r"\(") \
+                              .replace(")", r"\)")
+                lines.append("(%s) Tj 0 -14 Td" % escaped)
+        stream = ("BT /F1 12 Tf 72 720 Td " + " ".join(lines) + " ET") \
+            .encode("latin-1")
+        packed = zlib.compress(stream)
+        out += b"4 0 obj<</Length %d/Filter/FlateDecode>>stream\n" \
+               % len(packed)
+        out += packed + b"\nendstream endobj\n"
+        if subset_font:
+            pairs = sorted({ch for ch in text if ch not in "\r\n"})
+            entries = "".join("<%04X> <%04X>\n" % (ord(ch) + shift, ord(ch))
+                              for ch in pairs)
+            cmap = ("/CIDInit /ProcSet findresource begin\n"
+                    "1 begincodespacerange\n<0000> <FFFF>\n"
+                    "endcodespacerange\n%d beginbfchar\n%s endbfchar\n"
+                    "end\n" % (len(pairs), entries)).encode("latin-1")
+            packed_cmap = zlib.compress(cmap)
+            out += b"6 0 obj<</Length %d/Filter/FlateDecode>>stream\n" \
+                   % len(packed_cmap)
+            out += packed_cmap + b"\nendstream endobj\n"
+            out += b"5 0 obj<</Type/Font/Subtype/Type0/BaseFont/AAAAAA+Test" \
+                   b"/ToUnicode 6 0 R>>endobj\n"
+        else:
+            out += b"5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica" \
+                   b">>endobj\n"
+        out += b"3 0 obj<</Type/Page/Resources<</Font<</F1 5 0 R>>>>" \
+               b"/Contents 4 0 R>>endobj\n"
+
+    if image_only:
+        picture = zlib.compress(b"\x00" * 512)
+        out += b"7 0 obj<</Type/XObject/Subtype/Image/Width 2480" \
+               b"/Height 3508/Filter/FlateDecode/Length %d>>stream\n" \
+               % len(picture)
+        out += picture + b"\nendstream endobj\n"
+
+    out += ("trailer<</Info<</Producer(%s)/Title(Scanned document)>>>>\n"
+            "%%%%EOF\n" % producer).encode("latin-1")
+    del objects
+    return _write(path, out)
 
 
 def mp4(path, width=1920, height=1080, seconds=42.0, audio_tracks=1):

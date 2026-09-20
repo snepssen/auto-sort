@@ -17,7 +17,11 @@ from __future__ import annotations
 import re
 import zipfile
 
+import names as names_module
 from evidence import CERTAIN, STRONG, LIKELY, WEAK
+from . import pdftext
+
+LETTERHEAD = 500                # characters of the top of the page to classify
 
 _PDF_INFO = re.compile(
     rb"/(Producer|Creator|Title|Author|Subject|Keywords|CreationDate|"
@@ -219,14 +223,67 @@ def read(peek, fmt, record):
     if made_by.strip():
         if _SCANNER_PRODUCERS.search(made_by):
             record.set("capture", "scan", "producer", STRONG)
+            record.set("scan_of", "page", "producer", STRONG)
             record.note("producer %r is scanning software"
                         % made_by.strip()[:60])
         elif _BROWSER_PRODUCERS.search(made_by):
             record.set("capture", "printed-web-page", "producer", LIKELY)
         elif _OFFICE_PRODUCERS.search(made_by):
             record.set("capture", "authored", "producer", LIKELY)
+    if fmt == "pdf" and not found.get("encrypted"):
+        _read_the_page(peek, record)
     record.reader_ran("document:" + fmt, "%d fields" % len(found))
     return True
+
+
+def _read_the_page(peek, record):
+    """What the document says, for the ones whose name says nothing.
+
+    `scan0001.pdf`, `Document1.pdf`, `20090314.pdf`: the files a decade of
+    bank portals and scanner drivers produced, which somebody is obliged to
+    keep and which no filename rule will ever place. The words are the only
+    evidence there is, and a page that says `Rechnung` four times is an
+    invoice whatever it is called.
+
+    Only the letterhead is classified, and that is the whole trick. A
+    document announces what it is at the top -- `RECHNUNG`, `Steuerbescheid`,
+    `Invoice No. 4471` -- and mentions all sorts of other things further
+    down. Read whole, a CV that lists two certifications is filed as a
+    certificate and a covering letter that mentions a booking is filed as a
+    ticket; both were observed on real files before this window existed. Read
+    from the top, neither says anything at all, which is correct: their
+    filenames already know, and a reader that stays quiet leaves the better
+    evidence in place instead of overruling it.
+
+    Six hundred characters was where false labels began on a real corpus, so
+    the window sits at five hundred.
+    """
+    try:
+        text, image_only = pdftext.extract(peek)
+    except (OSError, ValueError, MemoryError, re.error):
+        return
+    if image_only:
+        # A PDF is a page whatever is printed on it, which is what lets the
+        # same holding rule cover a scanned JPEG and a scanned PDF.
+        record.set("scan_of", "page", "pdf-text", STRONG)
+        # Not "no keywords found": there was nothing to find. A page that
+        # was photographed rather than typed needs eyes or OCR, and saying
+        # so is what lets it be held rather than guessed at.
+        record.set("text_layer", False, "pdf-text", CERTAIN)
+        record.set("needs_ocr", True, "pdf-text", STRONG)
+        record.note("no text layer: this page is an image of a page")
+        return
+    if not text:
+        return
+    record.set("text_layer", True, "pdf-text", CERTAIN)
+    record.set("words_read", len(text.split()), "pdf-text", CERTAIN)
+    label, reference = names_module.paperwork_in(text[:LETTERHEAD],
+                                                 by_count=True)
+    if label:
+        record.set("paperwork", label, "pdf-text", LIKELY)
+        record.note("the page reads like %s" % label)
+    if reference:
+        record.set("reference", reference, "pdf-text", LIKELY)
 
 
 def _stamp(value):

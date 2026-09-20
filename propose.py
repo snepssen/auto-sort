@@ -106,8 +106,9 @@ FACETS = (
     Facet("scan-page", ("scan_of",), "Scans/{happened:%Y}", 42,
           when="capture = scan and scan_of = page",
           note="scanned paperwork, which is a document whatever it was "
-               "stored as",
-          group_by="scan_of", kind="image", as_kind="document",
+               "stored as -- a JPEG off a flatbed and a PDF off a "
+               "multifunction are the same pile",
+          group_by="scan_of", per_kind=True, as_kind="document",
           holding=True),
     Facet("scan-print", ("scan_of",), "Scans/{happened:%Y}", 44,
           when="capture = scan and scan_of = print",
@@ -219,6 +220,7 @@ _NOT_A_CATEGORY = {
     "from_url", "referrer", "name_date", "name_time", "downloaded",
     "duration", "width", "height", "aspect", "megapixels", "bitrate",
     "samplerate", "iso", "focal_length", "aperture", "serial", "checksum",
+    "words_read", "scan_dpi", "text_layer", "needs_ocr", "reference",
     "release_year", "year", "track", "disc", "episode", "pages", "words",
     "lines", "bpm", "posted_epoch", "tags", "keywords", "version",
 }
