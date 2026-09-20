@@ -185,6 +185,40 @@ def name_information(stem):
     return useful / float(len(tokens))
 
 
+_folder_scores = {}
+
+
+def folder_information(folder):
+    """The median name score of a folder's files, remembered once.
+
+    Per folder rather than per file on purpose. A folder of a hundred and
+    thirty-eight UUIDs with one `sneppy.png` among them is a folder named by
+    a machine, and the one readable name in it is an accident rather than a
+    scheme worth keeping. Asking about the folder gets that right; asking
+    about each name in isolation keeps the accident and bins the scheme.
+    """
+    if folder in _folder_scores:
+        return _folder_scores[folder]
+    try:
+        names = [name for name in os.listdir(folder)
+                 if not name.startswith(".")
+                 and os.path.isfile(os.path.join(folder, name))]
+    except OSError:
+        names = []
+    if not names:
+        _folder_scores[folder] = 1.0
+        return 1.0
+    scores = sorted(name_information(os.path.splitext(name)[0])
+                    for name in names)
+    middle = scores[len(scores) // 2]
+    _folder_scores[folder] = middle
+    return middle
+
+
+def forget_folders():
+    _folder_scores.clear()
+
+
 class Group(object):
     """Files that are byte for byte the same, and what to do about them."""
 
@@ -213,19 +247,40 @@ class Group(object):
         reported and left whole.
         """
         best = self.places[self.keeper]
-        if self.keeper_is_nameless:
+        if self.keeper_is_nameless and not self.rename_to:
             return []
         return [path for path in self.paths[1:] if self.places[path] < best]
 
     @property
     def keeper_is_nameless(self):
-        keeper = name_information(os.path.splitext(
-            os.path.basename(self.keeper))[0])
-        if keeper >= READABLE:
+        """Would binning the others leave a file nobody can find again?
+
+        Judged by the company the name keeps. A readable name sitting alone
+        in a folder of machine noise does not make that folder readable.
+        """
+        if folder_information(os.path.dirname(self.keeper)) >= READABLE:
             return False
-        return any(name_information(os.path.splitext(
-            os.path.basename(path))[0]) >= READABLE
-            for path in self.paths[1:])
+        return any(folder_information(os.path.dirname(path)) >= READABLE
+                   for path in self.paths[1:])
+
+    @property
+    def rename_to(self):
+        """The name the keeper should take before the spares are binned.
+
+        When the keeper sits in a folder named by a machine and a spare sits
+        in one named by a person, the file belongs where the keeper is and
+        the name belongs to the spare. Moving the name across is what makes
+        binning the spare lossless -- otherwise the disk is tidier and the
+        folder is unreadable, which is a worse trade than keeping both.
+        """
+        if not self.keeper_is_nameless:
+            return None
+        keeper_extension = os.path.splitext(self.keeper)[1]
+        for path in self.paths[1:]:
+            if folder_information(os.path.dirname(path)) >= READABLE:
+                stem = os.path.splitext(os.path.basename(path))[0]
+                return stem + keeper_extension
+        return None
 
     @property
     def undecided(self):
@@ -235,7 +290,7 @@ class Group(object):
         filing, not a mistake to correct. They are reported and left alone.
         """
         best = self.places[self.keeper]
-        if self.keeper_is_nameless:
+        if self.keeper_is_nameless and not self.rename_to:
             return list(self.paths[1:])
         return [path for path in self.paths[1:] if self.places[path] >= best]
 

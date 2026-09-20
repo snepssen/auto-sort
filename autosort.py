@@ -760,10 +760,16 @@ def duplicate_scan(folders=None, rule_path=None, state=None,
         print()
         return 0
 
+    renames = [(group, group.rename_to) for group in groups
+               if group.losers and group.rename_to]
     for group in groups:
         print()
         print("  %s, %d copies" % (_size(group.size), len(group.paths)))
         print("    keep   %s" % userdirs.short(group.keeper))
+        if group.losers and group.rename_to:
+            print("    rename to %s" % group.rename_to)
+            print("           its folder is named by a machine; this name")
+            print("           comes from the copy being binned")
         for path in group.losers:
             print("    spare  %s" % userdirs.short(path))
         for path in group.undecided:
@@ -780,17 +786,38 @@ def duplicate_scan(folders=None, rule_path=None, state=None,
     print("  %d spare cop%s, %s reclaimable."
           % (len(spare), "y" if len(spare) == 1 else "ies",
              _size(reclaimable)))
+    if renames:
+        print("  %d file%s will take the name of the copy being binned, so"
+              % (len(renames), "" if len(renames) == 1 else "s"))
+        print("  that nothing readable is lost with it.")
     if not apply_changes:
         print("  Nothing has moved. Run again with --apply to put the spare")
         print("  copies in the bin, where undo can still reach them.")
         print()
         return 0
 
-    moved, failed = 0, 0
+    moved, failed, renamed = 0, 0, 0
     with ledger_module.Ledger(state) as journal:
         run_id = journal.start_run("duplicates", source_root=folders[0],
                                    rules_hash=rule_set.source_hash,
                                    dry_run=False)
+        for group, new_name in renames:
+            target = os.path.join(os.path.dirname(group.keeper), new_name)
+            if os.path.exists(target) or target == group.keeper:
+                continue
+            rename_id = journal.add_move(
+                run_id, 0, 1, "rename", "[duplicate]", group.keeper, target,
+                group.size, group.digest, status="planned")
+            try:
+                os.rename(group.keeper, target)
+            except OSError as error:
+                journal.update_move(rename_id, "failed", error=str(error))
+                print("  ! could not rename %s: %s"
+                      % (userdirs.short(group.keeper), error))
+                continue
+            journal.update_move(rename_id, "done")
+            renamed += 1
+
         for number, (group, path) in enumerate(spare, 1):
             move_id = journal.add_move(
                 run_id, number, 1, "trash", "[duplicate]", path, "",
@@ -812,6 +839,9 @@ def duplicate_scan(folders=None, rule_path=None, state=None,
         journal.finish_run(run_id, "done",
                            "%d binned, %d failed" % (moved, failed))
 
+    if renamed:
+        print("  %d file%s renamed to the name that was about to be binned."
+              % (renamed, "" if renamed == 1 else "s"))
     print("  %d spare cop%s in the bin. `auto-sort undo` puts them back."
           % (moved, "y" if moved == 1 else "ies"))
     if failed:

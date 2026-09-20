@@ -165,9 +165,6 @@ class ANameIsWorthMoreThanTheDiskSpace(unittest.TestCase):
         for folder in (self.holding, self.chosen):
             os.makedirs(folder)
 
-    def tearDown(self):
-        shutil.rmtree(self.dir, ignore_errors=True)
-
     def write(self, folder, name, body):
         path = os.path.join(folder, name)
         with open(path, "wb") as handle:
@@ -175,6 +172,7 @@ class ANameIsWorthMoreThanTheDiskSpace(unittest.TestCase):
         return path
 
     def scan(self):
+        duplicates.forget_folders()
         return duplicates.scan([self.dir], intake=[],
                                holding=[self.holding], min_size=1)
 
@@ -183,18 +181,35 @@ class ANameIsWorthMoreThanTheDiskSpace(unittest.TestCase):
             "exec-63512093-74d5-4282-a7fc-159ff1ce12ea"), 0.25)
         self.assertEqual(duplicates.name_information("B04 - Oli"), 1.0)
 
-    def test_the_only_readable_name_is_not_binned(self):
+    def test_the_only_readable_name_is_not_thrown_away(self):
         """Observed on a real disk: it would have kept 138 UUIDs.
 
-        The copy that survives is the one somebody has to find again.
+        The copy that survives is the one somebody has to find again, so
+        the name crosses over before the other copy is binned.
+        """
+        body = b"png" * 3000
+        keeper = self.write(
+            self.chosen, "exec-63512093-74d5-4282-a7fc-159ff1ce12ea.png", body)
+        self.write(self.holding, "B04 - Oli.png", body)
+        group = self.scan()[0]
+        self.assertEqual(group.keeper, keeper)
+        self.assertEqual(group.rename_to, "B04 - Oli.png")
+
+    def test_with_no_readable_name_anywhere_the_ordinary_rule_applies(self):
+        """Nothing to rescue, so nothing is held back.
+
+        The guard exists to save a name, not to protect hex from being
+        binned. Two UUIDs are two UUIDs and the spare is still spare.
         """
         body = b"png" * 3000
         self.write(self.chosen,
                    "exec-63512093-74d5-4282-a7fc-159ff1ce12ea.png", body)
-        self.write(self.holding, "B04 - Oli.png", body)
+        spare = self.write(self.holding,
+                           "exec-a1b2c3d4-9f8e-4746-a120-f168529ad20e.png",
+                           body)
         group = self.scan()[0]
-        self.assertEqual(group.losers, [])
-        self.assertEqual(len(group.undecided), 1)
+        self.assertIsNone(group.rename_to)
+        self.assertEqual(group.losers, [spare])
 
     def test_a_readable_keeper_still_wins_normally(self):
         body = b"png" * 3000
@@ -203,3 +218,37 @@ class ANameIsWorthMoreThanTheDiskSpace(unittest.TestCase):
         group = self.scan()[0]
         self.assertEqual(group.keeper, keep)
         self.assertEqual(group.losers, [spare])
+
+    def test_the_name_moves_to_where_the_file_belongs(self):
+        """A machine-named folder takes the readable name and keeps it.
+
+        Leaving both copies would be safe and useless: the folder stays
+        unreadable and the disk stays full. Moving the name across makes
+        binning the spare lossless, which is the only version worth doing.
+        """
+        for number in range(6):
+            self.write(self.chosen, "exec-%08x-74d5-4282-a7fc-159ff1ce12ea.png"
+                       % number, b"other%d" % number)
+            self.write(self.holding, "B0%d - Track.png" % number,
+                       b"other%d" % number)
+        body = b"png" * 3000
+        keeper = self.write(
+            self.chosen, "exec-63512093-74d5-4282-a7fc-159ff1ce12ea.png", body)
+        spare = self.write(self.holding, "B04 - Oli.png", body)
+        duplicates.forget_folders()
+        group = [g for g in self.scan() if g.keeper == keeper][0]
+        self.assertEqual(group.rename_to, "B04 - Oli.png")
+        self.assertEqual(group.losers, [spare])
+
+    def test_one_readable_name_does_not_redeem_a_folder_of_hex(self):
+        """`sneppy.png` among a hundred UUIDs is an accident, not a scheme."""
+        for number in range(8):
+            self.write(self.chosen, "exec-%08x-74d5-4282-a7fc-159ff1ce12ea.png"
+                       % number, b"filler%d" % number)
+        duplicates.forget_folders()
+        self.assertLess(duplicates.folder_information(self.chosen),
+                        duplicates.READABLE)
+
+    def tearDown(self):
+        duplicates.forget_folders()
+        shutil.rmtree(self.dir, ignore_errors=True)
