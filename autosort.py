@@ -607,10 +607,30 @@ def propose(root=".", tier=identify.TIER_HEADER, depth=3, out=None,
     if not accepted:
         print("    nothing grouped well enough to propose")
     for proposal in sorted(accepted, key=lambda p: p.facet.precedence):
-        print("    %-18s %6s items -> %4d folder%s, median %g each"
+        print("    %-18s %6s items -> %4d folder%s, %2.0f%% sharing one"
               % (proposal.key, "{:,}".format(proposal.covered),
                  proposal.groups, " " if proposal.groups == 1 else "s",
-                 proposal.median))
+                 proposal.share * 100))
+    print()
+    if propose_module.is_funnel(found.root):
+        print("  Where this folder empties to")
+    else:
+        print("  Where this folder sorts to (in place: not the home volume)")
+    destinations = {}
+    for kind, count in found.kinds.most_common():
+        if not kind:
+            continue
+        target = propose_module.userdirs.short(
+            propose_module.catch_all_root(found, kind))
+        destinations.setdefault(target, []).append((kind, count))
+    for target, kinds in sorted(destinations.items(),
+                                key=lambda pair: -sum(c for _k, c in
+                                                      pair[1])):
+        summary = ", ".join("%s %s" % (kind, "{:,}".format(count))
+                            for kind, count in kinds[:4])
+        print("    %-28s %s" % (target, summary))
+    print("    (anything a rule above did not claim; nothing stays behind)")
+
     rejected = [p for p in proposals if not p.accepted]
     if rejected:
         print()

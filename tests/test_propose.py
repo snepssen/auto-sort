@@ -184,21 +184,55 @@ class Proposals(unittest.TestCase):
         self.assertTrue(rule_set.settings.dry_run,
                         "a proposal must never arrive with dry run off")
 
-    def test_destinations_stay_on_the_volume_they_were_found_on(self):
+    def test_a_funnel_files_into_the_system_folders(self):
+        import userdirs
         for index in range(4):
             self.make("plain%02d.png" % index)
         found, _results = self.assess()
+        found.root = userdirs.path("downloads")   # pretend it is the funnel
         body = propose.render(found, propose.assess(found))
-        root = propose.default_root(found.root)
-        self.assertIn(root, body)
-        self.assertTrue(root.startswith(propose._short(found.root)),
-                        "a proposal must sort within the folder it surveyed, "
-                        "so that every move is a rename rather than a copy")
+        self.assertIn(userdirs.short(userdirs.path("pictures")), body)
 
-    def test_an_empty_folder_proposes_nothing_and_says_so(self):
+    def test_another_volume_is_sorted_in_place(self):
+        # Filing a USB stick into ~/Pictures would copy every file onto the
+        # internal disk instead of renaming it where it lies.
+        import userdirs
+        for index in range(4):
+            self.make("plain%02d.png" % index)
+        found, _results = self.assess()
+        original = propose.same_volume_as_home
+        propose.same_volume_as_home = lambda _target: False
+        try:
+            body = propose.render(found, propose.assess(found))
+        finally:
+            propose.same_volume_as_home = original
+        self.assertIn(os.path.join(found.root, "Sorted"), body)
+        self.assertNotIn(userdirs.short(userdirs.path("pictures")) + "/",
+                         body)
+        self.assertIn("every file onto the internal disk", body)
+
+    def test_every_kind_present_gets_somewhere_to_go(self):
+        # The funnel property: nothing may be left behind, or the folder
+        # simply refills.
+        self.make("a.png")
+        self.make("b.jpg", fixtures.jpeg)
+        self.make("c.mp3", fixtures.mp3)
+        self.make("d.pdf", fixtures.pdf)
         found, _results = self.assess()
         body = propose.render(found, propose.assess(found))
-        self.assertIn("Nothing in this folder grouped", body)
+        for kind in found.kinds:
+            self.assertIn("[rule: remaining %s]" % kind, body,
+                          "%s has nowhere to go" % kind)
+        self.assertIn("[rule: anything left]", body)
+
+    def test_an_empty_folder_still_writes_a_usable_file(self):
+        found, _results = self.assess()
+        body = propose.render(found, propose.assess(found))
+        self.assertIn("[rule: anything left]", body)
+        target = os.path.join(self.directory, "empty.ini")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        self.assertTrue(rules.load(target).rules)
 
     def test_the_survey_stops_counting_runaway_facts(self):
         original = propose.MAX_DISTINCT

@@ -151,6 +151,48 @@ and is never descended into. Whatever the rules eventually decide, the whole
 item moves — which is the difference between a sorted folder and a folder full
 of 3D models that open grey.
 
+## Downloads is a funnel
+
+Almost everything bad on a computer arrives through the Downloads folder, and
+it is not a place anybody keeps things — it is where files land on their way
+somewhere else. So auto-sort treats it as one: **everything leaves, and
+nothing is kept back.** A sorter that files the half it recognises and leaves
+the rest behind has not emptied anything; the folder refills and the tool
+looks like it worked.
+
+That means every kind present gets a destination, and the generated rules end
+with catch-alls. Anything nothing could say more about still leaves, into a
+dated holding folder — because an undated holding folder just becomes the
+Downloads folder again.
+
+**It files into the folders the system already made.** Pictures, Movies, Music
+and Documents sit empty on most machines while everything piles up in
+Downloads. A second set of media folders beside them would be one more mess
+with a tidier name. Those folders are found properly per platform, not
+assumed: `~/.config/user-dirs.dirs` on Linux, so a relocated or localised
+`Bilder` is honoured; the Shell Folders registry on Windows, so Documents
+moved to another drive still works; and fixed English paths on macOS, where
+`~/Movies` is correct even when Finder displays something else.
+
+Run against a real Downloads folder of 701 items, 688 were planned and the
+only 13 left were `.DS_Store` files:
+
+```
+  Where this folder empties to
+    ~/Pictures/Unfiled           image 314
+    ~/Documents/Archives         archive 156
+    ~/Documents/Unfiled          document 127
+    ~/Movies/Unfiled             video 60
+    ~/Music/Unfiled              audio 19
+    (anything a rule above did not claim; nothing stays behind)
+```
+
+**An external drive is not a funnel**, and is sorted in place under a `Sorted`
+folder on the drive itself. Filing a USB stick into `~/Pictures` would copy
+every file onto the internal disk — a copy, a hash and a delete each, instead
+of a rename — which is the opposite of what tidying a drive means. The test is
+simply whether the folder is on the home volume.
+
 ## Structure that builds itself
 
 A folder does not need to be told what shape it should be. `propose` surveys

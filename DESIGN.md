@@ -75,6 +75,36 @@ NTFS alternate data stream holds the referrer. Both are free to read, and
 `from_host = bandcamp.com` is a better basis for a decision than any amount of
 audio analysis. Read them at Tier 0, and preserve them when moving.
 
+## A funnel has to empty
+
+Downloads is not a location, it is a transit area, and almost everything
+unwanted on a computer arrived through it. The design consequence is sharper
+than it sounds: **an unmatched file is a failure, not a safe outcome.**
+
+That contradicts the rule stated earlier — that leaving a file alone beats
+filing it wrongly — and the contradiction is resolved by where it goes rather
+than by whether it moves. A file nothing could say much about still leaves the
+funnel, into a dated holding folder under the system folder for its kind. It
+is obviously provisional, it is findable, it is in the ledger, and `undo`
+takes it back. What it is not is another item in a folder nobody will ever
+open again.
+
+So generated rule sets end with catch-alls covering every kind present, plus a
+final rule matching anything at all. A proposal that files the recognisable
+half looks like progress and delivers none.
+
+Destinations are the folders the operating system already provides, which on
+most machines are empty while Downloads holds everything. Inventing a parallel
+tree beside them would be a second mess with a tidier name. They are resolved
+per platform rather than assumed, because a relocated or localised Pictures
+folder is common and writing to the wrong one creates exactly the duplicate
+this avoids.
+
+**The exception is volume.** A folder that is not on the home volume is sorted
+in place instead. Filing an external drive into the home folders turns every
+move from a rename into a copy, a verification and a delete, and moves data
+the person deliberately keeps elsewhere onto their internal disk.
+
 ## Disagreement is the best evidence there is
 
 Everything else in this design reads files. A correction reads the person.
