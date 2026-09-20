@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import collections
 import os
+import re
 
 import bundles
 import identify
@@ -151,6 +152,8 @@ class Survey(object):
         self.stem_sources = {}
         self.conventions = []
         self.convention_depth = None
+        self.headings = []               # the same, for what documents say
+        self.heading_terms = []
         self.kind_by_fact = collections.defaultdict(collections.Counter)
 
     def observe(self, record, members=1):
@@ -167,6 +170,9 @@ class Survey(object):
                 self.opaque_unplaceable += 1
         if record.value("site"):
             self.sites[record.value("site")] += 1
+        heading = record.value("heading")
+        if heading:
+            self.headings.append(heading)
         stem = record.value("stem")
         if stem and record.value("kind") in ("image", "video", "audio"):
             self.stems.append(stem)
@@ -197,7 +203,8 @@ class Survey(object):
             return []
         total = sum(counts.values())
         return [kind for kind, count in counts.most_common()
-                if count >= max(2, total * floor)]
+                if count >= max(shapes.MIN_OCCURRENCES,
+                                total * floor)]
 
     def coverage(self, fact):
         counter = self.values.get(fact)
@@ -221,6 +228,7 @@ _NOT_A_CATEGORY = {
     "duration", "width", "height", "aspect", "megapixels", "bitrate",
     "samplerate", "iso", "focal_length", "aperture", "serial", "checksum",
     "words_read", "scan_dpi", "text_layer", "needs_ocr", "reference",
+    "heading",
     "release_year", "year", "track", "disc", "episode", "pages", "words",
     "lines", "bpm", "posted_epoch", "tags", "keywords", "version",
 }
@@ -242,6 +250,11 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
         if limit and found.items >= limit:
             break
     found.conventions, found.convention_depth = shapes.learn_best(found.stems)
+    # The same induction, over what the documents call themselves rather than
+    # what they are named. A pile of bills teaches the word on its own
+    # letterhead -- Rechnung, Factura, Invoice, Szamla -- and no table here
+    # has to have heard of it.
+    found.heading_terms = shapes.learn_terms(found.headings)
     return found
 
 
@@ -473,6 +486,35 @@ def render(found, proposals):
                              destination_root(found, kind),
                              source or "By name", "{group}")))
             lines.append("")
+
+    if found.heading_terms:
+        words = [word for word, _count in found.heading_terms]
+        lines.append("; What these documents call themselves, taken from the")
+        lines.append("; documents. There is no list of document types in this")
+        lines.append("; program and no language it prefers: a word heading %d"
+                     % shapes.MIN_OCCURRENCES)
+        lines.append("; or more of your files is a category they chose, and a")
+        lines.append("; word heading nearly all of them is your letterhead,")
+        lines.append("; which divides nothing and is dropped for that reason.")
+        lines.append(";")
+        lines.append("; The earliest of these words on a page is the one that")
+        lines.append("; wins, which is why a type usually beats a town. Some")
+        lines.append("; of these will be places or senders rather than kinds")
+        lines.append("; of document. Delete the ones you do not want; the")
+        lines.append("; folders follow the list.")
+        for word, count in found.heading_terms[:12]:
+            lines.append(";   %-28s %d documents" % (word, count))
+        if len(found.heading_terms) > 12:
+            lines.append(";   ... and %d more"
+                         % (len(found.heading_terms) - 12))
+        lines.append("[rule: what the page calls itself]")
+        lines.append("when    = heading is set")
+        lines.append("extract = heading re (?P<group>%s)"
+                     % "|".join(re.escape(word) for word in words))
+        lines.append("into    = %s"
+                     % userdirs.short(os.path.join(
+                         destination_root(found, "document"), "{group}")))
+        lines.append("")
 
     for proposal in accepted:
         facet = proposal.facet

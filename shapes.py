@@ -37,15 +37,23 @@ import re
 # title with a varying number of words in it, which never clusters.
 FIELDS = 3
 
+# How many times something has to happen before it is a pattern rather than
+# a coincidence. Two is an accident -- any two files share something -- and
+# waiting for six means a household with one of each kind of bill never gets
+# a folder for any of them. Three is the smallest number that can show a
+# trend, and it is used for every "how often" question in the project so
+# that one answer governs all of them.
+MIN_OCCURRENCES = 3
+
 # A convention needs this many files before it is one rather than a
 # coincidence.
-MIN_SUPPORT = 6
+MIN_SUPPORT = MIN_OCCURRENCES
 
 # A field is a category when its values repeat this much: distinct values
 # over occurrences, so 1.0 is "different every time" and 0.1 is "ten files
 # each".
 MAX_CATEGORY_RATIO = 0.6
-MIN_CONCENTRATION = 0.4         # of files, in values shared by 2 or more
+MIN_CONCENTRATION = 0.4         # of files, in values shared by MIN_OCCURRENCES
 MIN_CATEGORY_VALUES = 3
 MIN_CATEGORY_LENGTH = 3
 MIN_CATEGORY_LETTERS = 0.5      # of the characters, on average
@@ -122,7 +130,7 @@ def concentration(counts):
     The right test for "is this worth a folder", and better than either the
     mean or the median. Forty-three pictures by twenty-one artists has a
     median of one, which sounds like failure -- and yet thirty of those files
-    sit in folders holding two or more, which is a real structure that will
+    sit in folders holding three or more, which is a real structure that will
     only firm up as more arrive. The pathological case this has to reject is
     a thousand files with a thousand distinct values, and that scores zero
     here while scoring exactly the same median as the good case.
@@ -130,7 +138,8 @@ def concentration(counts):
     total = sum(counts)
     if not total:
         return 0.0
-    return sum(count for count in counts if count >= 2) / float(total)
+    return sum(count for count in counts
+               if count >= MIN_OCCURRENCES) / float(total)
 
 
 class Convention(object):
@@ -270,6 +279,50 @@ def _is_category(kind, values, total):
                   for value in sampled)
     total_characters = sum(len(value) for value in sampled) or 1
     return letters / float(total_characters) >= MIN_CATEGORY_LETTERS
+
+
+_WORD = re.compile(r"[^\W\d_]{%d,}" % MIN_CATEGORY_LENGTH, re.UNICODE)
+
+
+def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
+                max_share=MAX_CATEGORY_RATIO, cap=40):
+    """Words that enough documents lead with to be a category they chose.
+
+    This is deliberately not `learn`. That one groups files by the shape of
+    their name and then hunts for the field that *varies* within a group,
+    which is right for `1234_artist_title.png` and exactly wrong here: the
+    word this is looking for is the one that stays the same across a pile of
+    bills and differs from the pile of tax letters next to it. Constant
+    within its group is the whole signal.
+
+    Two counts decide it, and no vocabulary does. A word heading at least
+    `min_occurrences` documents has happened often enough to be a pattern
+    rather than a coincidence. A word heading more than `max_share` of them
+    is on the letterhead -- somebody's own name, their town, their bank --
+    and describes the pile rather than dividing it. What survives both is
+    what those documents call themselves, in whatever language they were
+    written, including ones nobody involved here can read.
+
+    Returns `[(word, documents)]`, commonest first, or `[]` when there is no
+    structure worth the name.
+    """
+    total = len(headings)
+    if total < min_occurrences:
+        return []
+    frequency = collections.Counter()
+    for heading in headings:
+        for word in set(_WORD.findall(heading or "")):
+            frequency[word] += 1
+
+    ceiling = max(min_occurrences, total * max_share)
+    terms = [(word, count) for word, count in frequency.items()
+             if min_occurrences <= count <= ceiling]
+    if len(terms) < MIN_CATEGORY_VALUES:
+        # One word repeating is a letterhead; two is not yet a shape. Three
+        # distinct answers is the smallest thing that sorts anything.
+        return []
+    terms.sort(key=lambda pair: (-pair[1], pair[0].lower()))
+    return terms[:cap]
 
 
 def learn_best(stems, min_support=MIN_SUPPORT, depths=(2, 3, 4)):

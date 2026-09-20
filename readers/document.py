@@ -17,11 +17,11 @@ from __future__ import annotations
 import re
 import zipfile
 
-import names as names_module
 from evidence import CERTAIN, STRONG, LIKELY, WEAK
 from . import pdftext
 
-LETTERHEAD = 500                # characters of the top of the page to classify
+LETTERHEAD = 500                # characters of the top of the page to read
+HEADING_WORDS = 6               # of those, how many make up the heading
 
 _PDF_INFO = re.compile(
     rb"/(Producer|Creator|Title|Author|Subject|Keywords|CreationDate|"
@@ -245,18 +245,25 @@ def _read_the_page(peek, record):
     evidence there is, and a page that says `Rechnung` four times is an
     invoice whatever it is called.
 
-    Only the letterhead is classified, and that is the whole trick. A
-    document announces what it is at the top -- `RECHNUNG`, `Steuerbescheid`,
-    `Invoice No. 4471` -- and mentions all sorts of other things further
-    down. Read whole, a CV that lists two certifications is filed as a
-    certificate and a covering letter that mentions a booking is filed as a
-    ticket; both were observed on real files before this window existed. Read
-    from the top, neither says anything at all, which is correct: their
-    filenames already know, and a reader that stays quiet leaves the better
-    evidence in place instead of overruling it.
+    Nothing here decides what the document *is*. It reports what the page
+    calls itself and stops, because a table of document types can only ever
+    know the languages somebody typed into it, and the pile this tool is for
+    is whatever twenty years in one household happened to contain.
 
-    Six hundred characters was where false labels began on a real corpus, so
-    the window sits at five hundred.
+    What replaces the table is counting. A word that heads three separate
+    documents is a category those documents chose for themselves --
+    `Rechnung`, `Invoice`, `Factura`, `Szamla`, a landlord's name, a
+    hospital's -- and one that heads every document is a letterhead, not a
+    category. That distinction is already made, by the same induction that
+    learns naming conventions from filenames, and it needs no vocabulary at
+    all.
+
+    Only the top of the page is offered, and that part matters: a document
+    announces what it is at the top and mentions all sorts of other things
+    further down. Read whole, a CV that lists two certifications looks like
+    a certificate and a covering letter that mentions a booking looks like a
+    ticket -- both observed on real files. False signals began at six
+    hundred characters on that corpus, so the window sits at five hundred.
     """
     try:
         text, image_only = pdftext.extract(peek)
@@ -277,13 +284,9 @@ def _read_the_page(peek, record):
         return
     record.set("text_layer", True, "pdf-text", CERTAIN)
     record.set("words_read", len(text.split()), "pdf-text", CERTAIN)
-    label, reference = names_module.paperwork_in(text[:LETTERHEAD],
-                                                 by_count=True)
-    if label:
-        record.set("paperwork", label, "pdf-text", LIKELY)
-        record.note("the page reads like %s" % label)
-    if reference:
-        record.set("reference", reference, "pdf-text", LIKELY)
+    heading = " ".join(text[:LETTERHEAD].split()[:HEADING_WORDS])
+    if heading:
+        record.set("heading", heading[:80], "pdf-text", STRONG)
 
 
 def _stamp(value):

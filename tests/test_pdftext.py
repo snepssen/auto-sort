@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixtures                                          # noqa: E402
 import identify                                          # noqa: E402
 import signatures                                        # noqa: E402
+import shapes                                            # noqa: E402
 from readers import pdftext                              # noqa: E402
 
 INVOICE = ("RECHNUNG Nr 4471\n"
@@ -131,32 +132,35 @@ class Classification(unittest.TestCase):
         """The whole point: `scan0001.pdf` is not a dead end any more."""
         record = self.identify("scan0001.pdf", producer="Acrobat",
                                text=INVOICE, subset_font=True)
-        self.assertEqual(record.value("paperwork"), "invoice")
         self.assertTrue(record.value("text_layer"))
+        self.assertIn("RECHNUNG", record.value("heading"))
 
-    def test_the_body_of_a_document_does_not_classify_it(self):
-        """A CV listing certifications is a CV, not a certificate.
+    def test_the_reader_does_not_decide_what_the_document_is(self):
+        """No classification happens here, in any language.
 
-        Observed on real files: read whole, every CV in a folder came back
-        as `certificate` and a covering letter as `ticket`.
+        The heading is reported and nothing else. What a word means is
+        settled by counting how many documents share it, which is a question
+        about a folder rather than about a file.
+        """
+        record = self.identify("scan0003.pdf", producer="Acrobat",
+                               text=INVOICE)
+        self.assertIsNone(record.value("paperwork"))
+
+    def test_the_heading_comes_from_the_top_of_the_page(self):
+        """Position is the whole reason this is worth reading at all.
+
+        A document announces what it is at the top and mentions everything
+        else below. Read whole, a CV listing certifications looks like a
+        certificate and a covering letter that mentions a booking looks like
+        a ticket -- both seen on real files.
         """
         record = self.identify(
             "Document1.pdf", producer="Acrobat",
-            text=("Tamas Torok\nIT Support Technician\n" + FILLER
-                  + "Holds a current certificate and a diploma. " * 12))
-        self.assertIsNone(record.value("paperwork"))
-
-    def test_the_letterhead_outranks_the_body(self):
-        """Position beats frequency, which is the whole design.
-
-        The word at the top appears once; the wrong word below it appears
-        twelve times and must still lose.
-        """
-        record = self.identify(
-            "Document2.pdf", producer="Acrobat",
             text=("RECHNUNG Nr 4471\nStadtwerke Muenchen GmbH\n" + FILLER
                   + "Holds a current certificate and a diploma. " * 12))
-        self.assertEqual(record.value("paperwork"), "invoice")
+        heading = record.value("heading")
+        self.assertTrue(heading.startswith("RECHNUNG"))
+        self.assertNotIn("certificate", heading)
 
     def test_a_scanned_page_is_held_rather_than_guessed_at(self):
         record = self.identify("scan0002.pdf",
@@ -171,3 +175,65 @@ class Classification(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Induction(unittest.TestCase):
+    """Categories the documents chose, counted rather than looked up."""
+
+    GERMAN = [
+        "Rechnung Nr 4471 Stadtwerke Muenchen GmbH",
+        "Rechnung Nr 5120 Telekom Deutschland Betrag",
+        "Rechnung Nr 6033 Stadtwerke Muenchen GmbH",
+        "Steuerbescheid 2011 Finanzamt Muenchen Einkommensteuer",
+        "Steuerbescheid 2012 Finanzamt Muenchen Einkommensteuer",
+        "Steuerbescheid 2013 Finanzamt Muenchen Einkommensteuer",
+        "Mietvertrag Wohnung Hausverwaltung Bauer Paragraph",
+        "Mietvertrag Garage Hausverwaltung Bauer Paragraph",
+        "Mietvertrag Wohnung Hausverwaltung Klein Paragraph",
+    ]
+
+    def words(self, headings):
+        return [word for word, _count in shapes.learn_terms(headings)]
+
+    def test_a_language_the_program_has_never_heard_of(self):
+        self.assertIn("Rechnung", self.words(self.GERMAN))
+        self.assertIn("Steuerbescheid", self.words(self.GERMAN))
+
+    def test_and_another_one(self):
+        """Hungarian, which shares no root with any word above."""
+        hungarian = ["Szamla 2011 Elmu Budapest", "Szamla 2012 Elmu Budapest",
+                     "Szamla 2013 Fogaz Budapest",
+                     "Adobevallas 2011 NAV Budapest",
+                     "Adobevallas 2012 NAV Budapest",
+                     "Adobevallas 2013 NAV Budapest",
+                     "Berleti szerzodes Kovacs Budapest",
+                     "Berleti szerzodes Nagy Budapest",
+                     "Berleti szerzodes Toth Budapest"]
+        words = self.words(hungarian)
+        self.assertIn("Szamla", words)
+        self.assertIn("Adobevallas", words)
+
+    def test_twice_is_not_a_pattern(self):
+        """Three occurrences name a pattern; two are a coincidence."""
+        pairs = ["Rechnung eins", "Rechnung zwei",
+                 "Steuerbescheid eins", "Steuerbescheid zwei",
+                 "Mietvertrag eins", "Mietvertrag zwei"]
+        self.assertEqual(shapes.learn_terms(pairs), [])
+
+    def test_a_letterhead_is_not_a_category(self):
+        """A word on every document describes the pile, not a division.
+
+        Nine CVs all headed with the same person's name: there is no
+        structure here and saying so is the correct answer.
+        """
+        cvs = ["Tamas Torok Multilingual Housekeeper Technician",
+               "Tamas Torok Multilingual Service Worker",
+               "Tamas Torok Sales Advisor Candidate",
+               "Tamas Torok IT Support Technician",
+               "Tamas Torok Multilingual Generalist Operations"]
+        self.assertEqual(shapes.learn_terms(cvs), [])
+
+    def test_one_word_repeating_is_not_a_structure(self):
+        """Everything in one folder sorts exactly as well as nothing."""
+        same = ["Rechnung %d Stadtwerke" % n for n in range(9)]
+        self.assertEqual(shapes.learn_terms(same), [])
