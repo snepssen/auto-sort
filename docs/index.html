@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>auto-sort — a Downloads folder that empties itself</title>
+<meta name="description" content="A file sorter that learns a folder's structure from the folder, moves nothing it cannot explain, and can undo everything it did. No dependencies.">
+<style>
+:root{color-scheme:light dark;
+--bg:#f4f4f2;--surface:#fff;--surface-2:#f8f8f6;--ink:#171817;--muted:#676b67;
+--line:#d9dbd7;--line-strong:#aeb2ad;--accent:#a52a23;--good:#236547;--warn:#895f12}
+@media(prefers-color-scheme:dark){:root{
+--bg:#111311;--surface:#181b18;--surface-2:#20231f;--ink:#f1f2ef;--muted:#9da29c;
+--line:#343934;--line-strong:#596059;--accent:#e26358;--good:#70c59c;--warn:#e2ba68}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;line-height:1.65;
+font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:0 20px}
+header{border-bottom:1px solid var(--line);background:var(--ink);color:var(--surface);padding:0}
+header .wrap{display:flex;align-items:center;gap:18px;height:56px}
+.wordmark{font-weight:760;font-size:17px;letter-spacing:-.02em}
+.wordmark span{color:#df665d}
+header nav{margin-left:auto;display:flex;gap:16px;font-size:13px}
+header nav a{color:var(--surface);opacity:.75;text-decoration:none}
+header nav a:hover{opacity:1}
+h1{font-size:34px;line-height:1.2;letter-spacing:-.03em;margin:44px 0 10px}
+h2{font-size:21px;letter-spacing:-.02em;margin:44px 0 10px;padding-top:20px;border-top:1px solid var(--line)}
+h3{font-size:15px;margin:26px 0 6px}
+.lede{font-size:19px;color:var(--muted);margin:0 0 22px}
+p{margin:0 0 14px}
+a{color:var(--accent)}
+code,pre{font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+code{background:var(--surface-2);border:1px solid var(--line);padding:1px 5px;border-radius:3px}
+pre{background:var(--surface);border:1px solid var(--line);padding:14px 16px;overflow:auto;border-radius:3px}
+pre code{background:0;border:0;padding:0}
+.cta{display:flex;gap:10px;flex-wrap:wrap;margin:24px 0 8px}
+.cta a{display:inline-block;padding:9px 16px;border-radius:3px;text-decoration:none;font-weight:650;font-size:14px}
+.cta .primary{background:var(--ink);color:var(--bg)}
+.cta .ghost{border:1px solid var(--line-strong);color:var(--ink)}
+.note{border-left:3px solid var(--accent);padding:2px 0 2px 14px;color:var(--muted);margin:18px 0}
+ul{padding-left:20px;margin:0 0 14px}
+li{margin-bottom:6px}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
+.shot{border:1px solid var(--line);background:var(--surface);border-radius:3px;overflow:hidden;margin:20px 0}
+.shot .bar{display:flex;align-items:center;gap:12px;background:var(--ink);color:var(--surface);padding:9px 12px;font-size:12px}
+.shot .bar .dot{width:7px;height:7px;border-radius:50%;background:#65bf91}
+.shot .bar .right{margin-left:auto;opacity:.7}
+.shot .scroll{overflow-x:auto}
+th{background:var(--surface-2);border-bottom:1px solid var(--line-strong);padding:7px 10px;
+text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);white-space:nowrap}
+td{border-bottom:1px solid var(--line);padding:6px 10px;white-space:nowrap}
+td.n{font-weight:650}
+td.p{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
+.badge{display:inline-block;padding:2px 6px;border:1px solid var(--line-strong);border-radius:2px;
+font-size:10px;font-weight:720;text-transform:uppercase;color:var(--warn)}
+footer{border-top:1px solid var(--line);margin-top:56px;padding:26px 0 48px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+<div class="wordmark">auto<span>-</span>sort</div>
+<nav>
+  <a href="#how">How it decides</a>
+  <a href="#learn">What it learns</a>
+  <a href="#safe">Safety</a>
+  <a href="https://github.com/snepssen/auto-sort">GitHub</a>
+</nav>
+</div></header>
+
+<div class="wrap">
+
+<h1>A Downloads folder that empties itself.</h1>
+<p class="lede">auto-sort works out what each file actually is, learns how a
+folder is organised from the folder itself, and files everything into the
+folders your computer already has. It moves nothing it cannot explain, and it
+can undo all of it.</p>
+
+<div class="cta">
+  <a class="primary" href="https://github.com/snepssen/auto-sort">Get it on GitHub</a>
+  <a class="ghost" href="#start">How to start it</a>
+</div>
+
+<p>Almost everything unwanted on a computer arrived through the Downloads
+folder. It is not somewhere anybody keeps things — it is where files land on
+the way to somewhere else — so auto-sort treats it as a funnel: everything
+leaves, and nothing is kept back. A sorter that files the half it recognises
+and abandons the rest has emptied nothing.</p>
+
+<div class="shot">
+  <div class="bar"><strong>auto<span style="color:#df665d">-</span>sort</strong>
+    <span style="opacity:.6;font-family:ui-monospace,monospace;font-size:10px;letter-spacing:.08em">FILE OPERATIONS LEDGER</span>
+    <span class="right"><span class="dot"></span> Active</span></div>
+  <div class="scroll"><table>
+    <tr><th>Name</th><th>Destination</th><th>Rule</th><th>Status</th></tr>
+    <tr><td class="n">1770665300.nightfall_study.png</td><td class="p">~/Pictures/Art/nightfall</td><td>art by uploader</td><td><span class="badge">dry-run</span></td></tr>
+    <tr><td class="n">Some.Show.S03E07.1080p.mkv</td><td class="p">~/Movies/Series/Some Show/Season 3</td><td>episodes</td><td><span class="badge">dry-run</span></td></tr>
+    <tr><td class="n">IMG_4102.jpg</td><td class="p">~/Pictures/2026/Canon EOS R6</td><td>photographs</td><td><span class="badge">dry-run</span></td></tr>
+    <tr><td class="n">Screenshot 2026-09-20 at 09.14.png</td><td class="p">~/Pictures/Screenshots/2026-09</td><td>screenshots</td><td><span class="badge">dry-run</span></td></tr>
+    <tr><td class="n">07 Ordinary Days.mp3</td><td class="p">~/Music/Test Artist/Test Album</td><td>tagged music</td><td><span class="badge">dry-run</span></td></tr>
+    <tr><td class="n">Invoice 4021.pdf</td><td class="p">~/Documents/invoice</td><td>paperwork by name</td><td><span class="badge">dry-run</span></td></tr>
+    <tr><td class="n">holiday-clip.mp4</td><td class="p">~/Movies/Clips/2026-09</td><td>phone clips</td><td><span class="badge">dry-run</span></td></tr>
+  </table></div>
+</div>
+<p style="color:var(--muted);font-size:13.5px;margin-top:-6px">The log page, served
+on <code>127.0.0.1</code> and opened by clicking the menu bar icon. Every row
+is a decision you can question — and undo.</p>
+
+<h2 id="how">How it decides</h2>
+<p>Four readers, cheapest first, each allowed to overrule the one before it
+when it has better evidence. No models, no network, no cloud.</p>
+<ul>
+<li><strong>The extension</strong> — 600 of them across 13 kinds. Right most
+of the time, free, and never trusted further than <em>likely</em>.</li>
+<li><strong>The bytes</strong> — 145 magic numbers, plus refiners for the
+containers several kinds share. <code>PK\x03\x04</code> is a zip and also
+every Office document, EPUB, Android package and USDZ model ever made.</li>
+<li><strong>The header</strong> — EXIF, ID3, Vorbis, MP4 atoms, Matroska,
+RIFF, PDF info. Camera and capture date; artist and album; duration and track
+layout; producer and page count.</li>
+<li><strong>The name, and where it came from</strong> — filename conventions,
+and the download URL your operating system already recorded. That last one is
+the sharpest evidence available and almost nothing uses it.</li>
+</ul>
+<p>Every fact carries its source and a confidence. A stronger source overrules
+a weaker one and <em>the disagreement is kept</em>. Agreement raises
+confidence — an artist from an ID3 tag is strong, the same artist also parsed
+from the filename is stronger. A fact that could not be established is absent
+rather than empty, so a missing reader narrows what can match instead of
+making it match wrongly.</p>
+
+<h2 id="learn">It learns the folder, rather than being told</h2>
+<h3>Structure it derives</h3>
+<p><code>auto-sort propose</code> surveys a folder, counts the groupings that
+actually exist, and writes the rules that folder turns out to need — with the
+counts that justified each one written above it. What it <em>refuses</em>
+matters more than what it proposes: a folder per artist was declined on a real
+Downloads folder because twenty-one artists across forty-three files means the
+middle folder holds one picture. That is the same pile with more steps.</p>
+
+<h3>Conventions it works out</h3>
+<p>A naming convention is, by definition, something that repeats — so it can
+be counted rather than tabulated:</p>
+<div class="note">In a filename written by software, a field that repeats
+across many files is a category; a field different in every file is an
+identifier.</div>
+<p>Given forty-three files shaped <code>&lt;digits&gt;.&lt;word&gt;_&lt;rest&gt;</code>,
+the digits are all different and the words repeat, so it writes a rule
+capturing the word. Nothing in the code knows what that site is. There is no
+table of websites anywhere in the project, and nothing ever contacts one.</p>
+
+<h3>What you correct</h3>
+<p>The ledger says where each file was put; the disk says where it is. Any
+difference is you disagreeing, and where you moved it to is the answer.
+<code>auto-sort corrections</code> reports which rules you kept overriding —
+often more useful than any guess — and proposes a rule when enough
+corrections agree. It proposes; it never silently adjusts.</p>
+
+<h3>What it filed too early</h3>
+<p>A folder reveals itself gradually, so the files that arrive first are
+always filed worst. <code>auto-sort regroup</code> goes back for them, moving
+what is sitting in a holding folder into structure that has since become
+visible — without anybody dragging files back into Downloads. Only
+provisional placements are revisited, so it is idempotent and cannot reshuffle
+a disk.</p>
+
+<h2 id="safe">It is careful, and it can be undone</h2>
+<ul>
+<li><strong>Dry run by default</strong>, and the first real run against any
+folder is forced to a preview you have to look at first.</li>
+<li><strong>Everything is in a ledger</strong> — source, destination, size,
+content hash, the rule that fired. <code>auto-sort undo</code> walks it
+backwards, including the empty folders it created.</li>
+<li><strong>Nothing is ever deleted.</strong> Not duplicates, not junk. The
+strongest action available is a move.</li>
+<li><strong>Nothing is overwritten.</strong> Collisions get a suffix.</li>
+<li><strong>Cross-volume moves</strong> copy, verify by hash, then remove —
+never the other order. An external drive is sorted in place rather than
+dragged onto your system disk.</li>
+<li><strong>It never touches the network</strong>, and it is not a cloud
+service. There is nothing to sign up for.</li>
+</ul>
+
+<h2 id="start">Running it</h2>
+<p>Double-click <strong>Start auto-sort.command</strong> on macOS,
+<code>start.sh</code> on Linux, or <code>start.bat</code> on Windows. It
+writes a rules file if there is not one, tells you what it is about to watch,
+points out that dry run is on, and then runs — leaving an icon in the menu bar
+and a log page behind it. None of that requires knowing what Python is.</p>
+<p>From a terminal, if you prefer:</p>
+<pre><code>auto-sort propose ~/Downloads --out my-rules.ini   # what this folder needs
+auto-sort sort ~/Downloads --rules my-rules.ini    # see what it would do
+auto-sort explain FILE                             # why one file goes where
+auto-sort undo last                                # take it all back</code></pre>
+
+<h3>Requirements</h3>
+<p><strong>Python 3.8 or newer, and nothing else</strong> — no pip install, on
+any platform. Reading headers, learning conventions, deciding, moving files
+and remembering all of it are done with <code>struct</code>, <code>re</code>,
+<code>os</code> and <code>sqlite3</code>, which every Python already has. Even
+the menu bar icon has no dependency: it is built on the Objective-C runtime
+through <code>ctypes</code>, the same way the Windows one is built on
+<code>Shell_NotifyIcon</code>.</p>
+<p><code>ffprobe</code> and <code>exiftool</code> are used if they happen to be
+installed, and the launcher offers them. Declining both still leaves a working
+sorter; what is lost is durations for a few container formats and metadata for
+a few unusual cameras.</p>
+
+<h2>What it deliberately does not do</h2>
+<ul>
+<li><strong>Look at content.</strong> No image, audio or video recognition.
+Files named after their own checksum carry nothing to sort by, and the report
+says how many there are rather than pretending otherwise.</li>
+<li><strong>Talk to anything.</strong> No metadata lookups, no accounts, no
+telemetry. A tool with unattended access to a whole disk should not have a
+network habit.</li>
+<li><strong>Rename your film library.</strong> That is Radarr's job and it is
+better at it.</li>
+<li><strong>Delete.</strong> Ever.</li>
+</ul>
+
+<footer><div class="wrap" style="padding:0">
+<p>auto-sort is MIT licensed. <a href="https://github.com/snepssen/auto-sort">Source on GitHub</a> ·
+<a href="https://github.com/snepssen/auto-sort/blob/main/DESIGN.md">Design notes</a> ·
+<a href="https://github.com/snepssen/auto-sort/blob/main/RULES.md">Rules format</a></p>
+</div></footer>
+
+</div>
+</body>
+</html>
