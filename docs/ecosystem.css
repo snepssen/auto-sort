@@ -1,0 +1,551 @@
+/* Shared across the snepssen project pages. Each site keeps its own type and
+   palette; this is the common navigation and discovery layer between them. */
+:root {
+  --eco-gateway: #b69aff;
+  --eco-voice: #ffbc52;
+  --eco-protoke: #71e5d2;
+  --eco-tools: #ff765f;
+  --eco-preflight: #9ae66e;
+  --eco-siphon: #7aa7ff;
+  --eco-autosort: #e79bd8;
+  --eco-current: var(--eco-protoke);
+  --eco-copy: var(--ink, #f3f0e3);
+  --eco-rail-h: 124px;
+  --eco-mark-size: 104px;
+  --eco-drawer-motion: 220ms;
+}
+:root.ecosystem-compact {
+  --eco-rail-h: 52px;
+  --eco-mark-size: 36px;
+}
+
+body[data-project="gateway-forge"] { --eco-current: var(--eco-gateway); }
+body[data-project="voice-forge"] { --eco-current: var(--eco-voice); }
+body[data-project="protoke"] { --eco-current: var(--eco-protoke); }
+body[data-project="tools-core"] {
+  --eco-current: var(--eco-tools);
+  --eco-copy: var(--chalk, #f3f0e3);
+}
+body[data-project="media-preflight"] { --eco-current: var(--eco-preflight); }
+body[data-project="siphon"] { --eco-current: var(--eco-siphon); }
+body[data-project="auto-sort"]{
+  --eco-current: var(--eco-autosort);
+}
+
+/* The five accents above are built for a dark ground and fail badly on a
+   light one — measured against the lightest surface these pages use, the
+   green came to 1.26:1 and the teal to 1.27:1 where body text needs 4.5:1.
+   They were not dim, they were close to invisible.
+   
+   These are the same hues taken down until each clears 4.5:1 on every light
+   surface in the workshop (#EDEBDC, #EFEDE1, #EAEEE7), which is what the
+   individual sites already do for their own palettes — protoke turns its
+   #FFD400 signal into #7A5C00 the same way. Dark mode is untouched: there the
+   originals run from 6.5:1 to 11.4:1 and are exactly right. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --eco-gateway: #723cff;
+    --eco-voice: #955b00;
+    --eco-protoke: #157565;
+    --eco-tools: #cd1d00;
+    --eco-preflight: #387614;
+    --eco-siphon: #1f5fbf;
+  }
+}
+:root[data-theme="light"] {
+  --eco-gateway: #723cff;
+  --eco-voice: #955b00;
+  --eco-protoke: #157565;
+  --eco-tools: #cd1d00;
+  --eco-preflight: #387614;
+  --eco-siphon: #1f5fbf;
+}
+
+/* Wide diagrams and code samples own their scrolling inside their existing
+   wrappers; never let one of them make the whole page wobble sideways. */
+body { overflow-x: clip; }
+
+.ecosystem-page-top {
+  display: block;
+  width: 0;
+  height: 0;
+}
+
+.ecosystem-progress {
+  position: fixed;
+  z-index: 1002;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  pointer-events: none;
+}
+.ecosystem-progress span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--eco-current);
+  box-shadow: 0 0 15px color-mix(in srgb, var(--eco-current) 70%, transparent);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.ecosystem-rail {
+  position: sticky;
+  z-index: 1000;
+  top: 0;
+  min-height: var(--eco-rail-h);
+  border-bottom: 1px solid color-mix(in srgb, currentColor 17%, transparent);
+  background: color-mix(in srgb, var(--ground, #151611) 88%, transparent);
+  color: var(--eco-copy);
+  font: 600 12px/1 system-ui, sans-serif;
+  backdrop-filter: blur(18px) saturate(1.25);
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  isolation: isolate;
+  transition: min-height var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1);
+}
+.ecosystem-rail__inner {
+  position: relative;
+  width: min(1180px, calc(100% - 40px));
+  min-height: var(--eco-rail-h);
+  margin-inline: auto;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  transition: min-height var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1);
+}
+.ecosystem-rail__brand {
+  appearance: none;
+  border: 0;
+  padding: 10px 0;
+  background: transparent;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 18px;
+  color: inherit !important;
+  font: inherit;
+  text-align: left;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.ecosystem-rail__brand:focus-visible {
+  outline: 2px solid var(--eco-current);
+  outline-offset: 5px;
+  border-radius: 4px;
+}
+:root.ecosystem-compact .ecosystem-rail__brand {
+  gap: 12px;
+  padding-block: 8px;
+}
+.ecosystem-rail__identity {
+  --eco-identity-gap: 7px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--eco-identity-gap);
+  font-size: clamp(11px, 1.15vw, 14px);
+}
+.ecosystem-rail__identity-path {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--eco-identity-gap);
+  max-width: 230px;
+  overflow: hidden;
+  opacity: 1;
+  white-space: nowrap;
+  transition:
+    max-width var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1),
+    opacity 130ms ease,
+    margin-right var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1);
+}
+:root.ecosystem-compact .ecosystem-rail__identity-path {
+  max-width: 0;
+  margin-right: calc(-1 * var(--eco-identity-gap));
+  opacity: 0;
+}
+.ecosystem-rail__identity i {
+  color: color-mix(in srgb, currentColor 38%, transparent);
+  font-style: normal;
+}
+.ecosystem-rail__identity strong {
+  color: var(--eco-current);
+  font-weight: 750;
+}
+.ecosystem-rail__chevron {
+  width: 8px;
+  height: 8px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1);
+}
+.ecosystem-rail.is-open .ecosystem-rail__chevron {
+  transform: translateY(2px) rotate(225deg);
+}
+.ecosystem-mark {
+  --eco-mark-reset: #fffdf2;
+  --eco-mark-c0: #060919;
+  --eco-mark-c1: #f1efe7;
+  --eco-mark-c2: #7187ff;
+  --eco-mark-c3: #171a38;
+  --eco-mark-c4: #cfd7ff;
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  width: var(--eco-mark-size);
+  height: var(--eco-mark-size);
+  color: var(--eco-mark-reset);
+  transition:
+    width var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1),
+    height var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1);
+}
+.ecosystem-mark__wire {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.ecosystem-mark__wire {
+  overflow: visible;
+  fill: none;
+}
+.ecosystem-mark__base,
+.ecosystem-mark__pattern-lines {
+  fill: none;
+  stroke: var(--eco-mark-reset);
+  stroke-width: 8;
+}
+.ecosystem-mark__colour {
+  opacity: 0;
+}
+.ecosystem-mark__base {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--eco-mark-reset) 32%, transparent));
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .ecosystem-mark {
+    --eco-mark-reset: #17180f;
+  }
+}
+:root[data-theme="light"] .ecosystem-mark {
+  --eco-mark-reset: #17180f;
+}
+.ecosystem-rail__links {
+  position: absolute;
+  z-index: -1;
+  top: calc(100% - 1px);
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, currentColor 17%, transparent);
+  background: var(--ground, #151611);
+  box-shadow: 0 22px 55px color-mix(in srgb, #000 28%, transparent);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  clip-path: inset(0 0 100% 0);
+  transform: translateY(-10px);
+  transform-origin: top;
+  transition:
+    opacity 150ms ease,
+    transform var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1),
+    clip-path var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1),
+    visibility 0s linear var(--eco-drawer-motion);
+}
+.ecosystem-rail.is-open .ecosystem-rail__links {
+  z-index: 1;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  clip-path: inset(0);
+  transform: none;
+  transition-delay: 0s;
+}
+.ecosystem-rail__links a {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 58px;
+  padding: 14px 16px;
+  border-radius: 3px;
+  color: color-mix(in srgb, currentColor 68%, transparent) !important;
+  text-decoration: none !important;
+  white-space: nowrap;
+  transition: background 140ms ease, color 140ms ease;
+}
+.ecosystem-rail__links a::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--project-accent, var(--eco-current));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--project-accent, var(--eco-current)) 62%, transparent);
+}
+.ecosystem-rail__links a:hover,
+.ecosystem-rail__links a:focus-visible,
+.ecosystem-rail__links a[aria-current="page"] {
+  color: inherit !important;
+  background: color-mix(in srgb, var(--project-accent, var(--eco-current)) 11%, transparent);
+}
+/* Each rail link and each card is given its accent inline, from the same
+   catalogue entry that gives it its name and its address. The list of
+   per-project selectors that used to live here had five of the six projects
+   in it, and the missing one showed the accent of whichever page it was on. */
+
+/* Existing sticky section navigation stays physically attached to the shared
+   rail while its arrival state compacts into navigation. */
+.jump, .site-nav {
+  top: var(--eco-rail-h) !important;
+  transition: top var(--eco-drawer-motion) cubic-bezier(.2,.8,.2,1);
+}
+
+.ecosystem-more {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(56px, 8vw, 96px) 0;
+  border-bottom: 1px solid var(--line, rgba(255,255,255,.14));
+}
+.ecosystem-more::before {
+  content: "";
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  left: max(-260px, calc(50% - 820px));
+  top: -280px;
+  border: 1px solid color-mix(in srgb, var(--eco-current) 22%, transparent);
+  border-radius: 50%;
+  box-shadow: 0 0 100px color-mix(in srgb, var(--eco-current) 7%, transparent);
+  pointer-events: none;
+}
+.ecosystem-more__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, .65fr);
+  align-items: end;
+  gap: 32px;
+  margin-bottom: 30px;
+}
+.ecosystem-kicker {
+  margin: 0 0 12px !important;
+  color: var(--eco-current) !important;
+  font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.ecosystem-more h2 {
+  margin: 0;
+  max-width: 14ch;
+}
+.ecosystem-more__intro {
+  margin: 0 !important;
+  color: var(--muted, #999) !important;
+  font-size: 16px;
+}
+.ecosystem-card {
+  --card-accent: var(--eco-current);
+  --mx: 50%;
+  --my: 50%;
+  position: relative;
+  isolation: isolate;
+  min-height: 310px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  color: var(--eco-copy) !important;
+  background: var(--surface, #1e1f19);
+  text-decoration: none !important;
+}
+.ecosystem-card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(340px circle at var(--mx) var(--my),
+    color-mix(in srgb, var(--card-accent) 20%, transparent), transparent 58%);
+  transition: opacity .22s ease;
+}
+.ecosystem-card:hover::before,
+.ecosystem-card:focus-visible::before { opacity: 1; }
+.ecosystem-card[aria-current="page"] {
+  box-shadow: inset 0 3px 0 var(--card-accent);
+}
+.ecosystem-card__index {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  /* Five cards in a constrained column give each about 170px, and these two
+     labels together need almost exactly that. Without a gap they butt
+     together and wrap inside themselves, which reads as broken rather than
+     as tight. With one they drop to two lines instead, which reads as a
+     stack. */
+  gap: 3px 12px;
+  color: var(--card-accent);
+  font: 700 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .12em;
+}
+/* Neither label may shrink to make room for the other: a flex item shrinks
+   before it wraps, so without this the platform list squeezes itself onto two
+   cramped lines *inside* its own box while still touching the label beside
+   it. Refusing to shrink is what makes the row wrap instead. */
+.ecosystem-card__index span {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+.ecosystem-card__index span:first-child { white-space: nowrap; }
+/* The platform list is the long one — "macOS · Windows · Linux" wants 205px
+   of the 172px a five-column card leaves it, almost all of the excess being
+   tracking. It gets its own, tighter, so the index stays one line per card
+   instead of one card in five looking a different height from its
+   neighbours. */
+.ecosystem-card__index span:last-child {
+  color: var(--muted, #999);
+  text-align: right;
+  letter-spacing: .02em;
+  font-size: 10px;
+}
+.ecosystem-card { container-type: inline-size; }
+/* The contact card, shared so that it stops being re-invented.
+
+   It lives here rather than in each site's style.css for the same reason the
+   ecosystem grid does: a section written out six times drifts six ways, and
+   this one had — different headings, different links, and one page with no
+   contact section at all. The palette is still each site's own, through the
+   same variables with the same fallbacks used above.
+
+   Note this is not `.contact`, which every site already uses for its own row
+   of link buttons elsewhere on the page. */
+.contact-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 1px;
+  margin: 28px 0 0;
+  border: 1px solid var(--line, rgba(255,255,255,.14));
+  background: var(--line, rgba(255,255,255,.14));
+}
+.contact-card a {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 18px 20px;
+  background: var(--surface, #1e1f19);
+  color: var(--eco-copy) !important;
+  text-decoration: none !important;
+  font-weight: 600;
+  font-size: 15px;
+}
+.contact-card a span {
+  color: var(--muted, #999);
+  font-weight: 400;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* An address can be longer than the box it is in; break it rather than
+     letting it push the card wider than the page. */
+  overflow-wrap: anywhere;
+}
+.contact-card a:hover,
+.contact-card a:focus-visible { color: var(--eco-current) !important; }
+.contact-card a:hover span,
+.contact-card a:focus-visible span { color: var(--eco-current); }
+@media (prefers-reduced-motion: no-preference) {
+  .contact-card a { transition: color .16s ease; }
+}
+
+/* Six cards, three across, two rows.
+
+   The column width is chosen to fit the glyph rather than the glyph being
+   squeezed into whatever column is left over. Five across gave each card
+   about 172px, and at 17cqw the type was 17% of that per line — eighteen
+   monospace characters of "[ measure → keep ]" want roughly 1.8 times the
+   card at that size, so it could not fit on one line at any window width and
+   came apart into four. Wrapping was not the bug; the width was.
+
+   auto-fit with a 300px floor gives three columns at full width and steps
+   down to two and then one, so the cards reflow into a new row instead of
+   the type reflowing inside a card. */
+.ecosystem-grid {
+  display: grid;
+  /* min() so a window narrower than one column shrinks the column instead of
+     overflowing the page, which bare minmax(300px, …) does. */
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 1px;
+  border: 1px solid var(--line, rgba(255,255,255,.14));
+  background: var(--line, rgba(255,255,255,.14));
+}
+
+.ecosystem-card__glyph {
+  margin: auto 0 26px;
+  color: var(--card-accent);
+  /* Sized against the card's own width, and set as large as the longest
+     glyph allows on one line. "[ measure → keep ]" is the one that decides
+     it: measured, it runs to about 10 times the font size, so 9cqw leaves
+     roughly 30px of slack in a three-column card and about 23px at the 19px
+     floor, which is where a 320px phone lands. */
+  font: 400 clamp(19px, 9cqw, 32px)/1.1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: -.045em;
+  white-space: nowrap;
+  /* If a window is narrow enough that even one column cannot hold it, shrink
+     rather than break: a glyph split across lines is the thing being fixed. */
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.ecosystem-card h3 {
+  margin: 0 0 10px;
+  color: inherit;
+  font-size: clamp(20px, 2vw, 26px);
+  line-height: 1.05;
+}
+.ecosystem-card p {
+  margin: 0 !important;
+  color: var(--muted, #999) !important;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.ecosystem-card__go {
+  margin-top: 20px;
+  color: var(--card-accent);
+  font: 700 12px/1 system-ui, sans-serif;
+}
+
+.ecosystem-ready [data-eco-reveal] {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1);
+}
+.ecosystem-ready [data-eco-reveal].is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (max-width: 900px) {
+  .ecosystem-more__head { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  :root { --eco-rail-h: 100px; --eco-mark-size: 82px; }
+  .ecosystem-rail__inner { width: calc(100% - 24px); }
+  .ecosystem-rail__brand { max-width: 100%; gap: 12px; }
+  .ecosystem-rail__identity { --eco-identity-gap: 4px; max-width: 210px; font-size: 10px; line-height: 1.5; }
+  .ecosystem-rail__chevron { margin-left: 0; }
+  .ecosystem-rail__links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ecosystem-rail__links a { min-height: 50px; padding: 11px 12px; font-size: 11px; }
+  .ecosystem-card { min-height: 245px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ecosystem-ready [data-eco-reveal] { opacity: 1; transform: none; transition: none; }
+  .ecosystem-card::before,
+  .ecosystem-rail__links,
+  .ecosystem-rail__links a,
+  .ecosystem-rail__chevron,
+  .ecosystem-rail,
+  .ecosystem-rail__inner,
+  .ecosystem-mark,
+  .ecosystem-rail__identity-path,
+  .jump,
+  .site-nav { transition: none; }
+}

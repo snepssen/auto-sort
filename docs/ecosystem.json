@@ -1,0 +1,109 @@
+{
+  "brand": {
+    "label": "snepssen / workshop",
+    "url": "https://snepssen.github.io/tools-core/"
+  },
+  "grid": {
+    "kicker": "The wider workshop",
+    "heading": "Six tools, one local-first practice.",
+    "intro": "Move between guided-meditation authoring, measured speech, lyric video, delivery validation, keeping a Downloads folder empty, and the small field tools that support all of them."
+  },
+  "contact": {
+    "eyebrow": "Get in touch",
+    "heading": "If something looks wrong, say so",
+    "note": "There is no analytics here and no crash reporter, so a failure has no way of reaching me on its own.",
+    "issue_label": "Open an issue",
+    "channels": [
+      {
+        "label": "Telegram",
+        "detail": "@snepssen",
+        "href": "https://t.me/snepssen"
+      },
+      {
+        "label": "Email",
+        "detail": "snepssen@proton.me",
+        "href": "mailto:snepssen@proton.me"
+      }
+    ]
+  },
+  "projects": [
+    {
+      "slug": "gateway-forge",
+      "name": "Gateway Forge",
+      "url": "https://snepssen.github.io/gateway-forge/",
+      "index": "JOURNEYS",
+      "platforms": "macOS · Windows · Linux",
+      "glyph": "F10 ── F27",
+      "blurb": "Assemble guided sessions and keep published maps beside what was actually found.",
+      "repo": "https://github.com/snepssen/gateway-forge",
+      "accent": "--eco-gateway"
+    },
+    {
+      "slug": "voice-forge",
+      "name": "Voice Forge",
+      "url": "https://snepssen.github.io/voice-forge/",
+      "index": "SPEECH",
+      "platforms": "macOS · Windows · Linux",
+      "glyph": "⌁ / həˈləʊ /",
+      "blurb": "A transparent Piper workbench for timing, pronunciation, and honest audio export.",
+      "repo": "https://github.com/snepssen/voice-forge",
+      "accent": "--eco-voice"
+    },
+    {
+      "slug": "protoke",
+      "name": "Protoke",
+      "url": "https://snepssen.github.io/protoke/",
+      "index": "VIDEO",
+      "platforms": "macOS · Windows · Linux",
+      "glyph": "◤ w ◥",
+      "blurb": "Karaoke and narration video with a vector visor face that mouths every word.",
+      "repo": "https://github.com/snepssen/protoke",
+      "accent": "--eco-protoke"
+    },
+    {
+      "slug": "media-preflight",
+      "name": "Media Preflight",
+      "url": "https://snepssen.github.io/media-preflight/",
+      "index": "DELIVERY",
+      "platforms": "macOS · Windows · Linux",
+      "glyph": "✓ ≤ -3 dB",
+      "blurb": "Check a finished file against where it is going, and correct it without touching the original.",
+      "repo": "https://github.com/snepssen/media-preflight",
+      "accent": "--eco-preflight"
+    },
+    {
+      "slug": "siphon",
+      "name": "siphon",
+      "url": "https://snepssen.github.io/siphon/",
+      "index": "INTAKE",
+      "platforms": "macOS · Windows · Linux",
+      "glyph": "webm ⟶ mp3",
+      "blurb": "Fetch from a link or convert what you already have, without re-encoding what it does not have to.",
+      "repo": "https://github.com/snepssen/siphon",
+      "accent": "--eco-siphon"
+    },
+    {
+      "slug": "auto-sort",
+      "name": "auto-sort",
+      "url": "https://snepssen.github.io/auto-sort/",
+      "index": "FILING",
+      "platforms": "macOS · Windows · Linux",
+      "glyph": "↓ Downloads → ∅",
+      "blurb": "Empty the Downloads funnel into structure the folder taught it, and undo any of it.",
+      "repo": "https://github.com/snepssen/auto-sort",
+      "accent": "--eco-autosort"
+    },
+    {
+      "slug": "tools-core",
+      "name": "tools-core",
+      "url": "https://snepssen.github.io/tools-core/",
+      "index": "FIELD TOOLS",
+      "platforms": "Python · shell",
+      "glyph": "[ measure → keep ]",
+      "blurb": "Small utilities for audio inspection, corpus work, authoring, and repeatable checks.",
+      "go": "Open the toolbox →",
+      "repo": "https://github.com/snepssen/tools-core",
+      "accent": "--eco-tools"
+    }
+  ]
+}
