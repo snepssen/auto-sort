@@ -15,17 +15,30 @@ import bootstrap                                           # noqa: E402
 import platform_support as programs                        # noqa: E402
 
 
+_RUNTIME_EXISTED = None
+
+
+def setUpModule():
+    global _RUNTIME_EXISTED
+    _RUNTIME_EXISTED = os.path.exists(programs.runtime_dir())
+
+
 def tearDownModule():
-    """Nothing in this file may touch the real state folder.
+    """Nothing in this file may create the real runtime environment.
 
     Written after a test called `offer(assume_yes=True)` without stubbing the
-    module list, which happily created a forty-megabyte virtual environment
-    in the user's Application Support and pip-installed into it. Checked at
-    the end of the module rather than inside one test, because the test that
-    does the damage is not the test that would notice.
+    module list, which happily built a forty-megabyte virtual environment in
+    the user's Application Support and pip-installed into it. Checked at the
+    end of the module rather than inside one test, because the test that does
+    the damage is not the test that would notice.
+
+    It compares against what was there when the module started, because on a
+    machine where somebody has actually installed the optional extras the
+    directory exists legitimately and asserting it is absent would fail the
+    suite for doing nothing wrong.
     """
     real = programs.runtime_dir()
-    if os.path.exists(real):
+    if os.path.exists(real) and not _RUNTIME_EXISTED:
         raise AssertionError(
             "the test run created %s -- stub programs.missing_modules or "
             "bootstrap.install_modules in whichever test calls offer()"

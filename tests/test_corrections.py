@@ -227,8 +227,12 @@ class DaemonChecks(unittest.TestCase):
         moved_to = os.path.join(elsewhere, "thing.png")
         shutil.move(destination, moved_to)
 
+        # Port 0 lets the operating system pick a free one. Without it
+        # these tests bind auto-sort's default port and fail on any machine
+        # where auto-sort is actually installed and running -- which is the
+        # one machine where they most need to pass.
         with daemon_module.PollingDaemon(
-                rule_path=self.rules_file, state_file=state,
+                rule_path=self.rules_file, state_file=state, port=0,
                 output=lambda _message: None) as service:
             service.cycle()
             recorded = service.journal.corrections("moved")
@@ -242,8 +246,12 @@ class DaemonChecks(unittest.TestCase):
     def test_the_check_is_throttled(self):
         import daemon as daemon_module
         state = os.path.join(self.directory, "state.db")
+        # Port 0 lets the operating system pick a free one. Without it
+        # these tests bind auto-sort's default port and fail on any machine
+        # where auto-sort is actually installed and running -- which is the
+        # one machine where they most need to pass.
         with daemon_module.PollingDaemon(
-                rule_path=self.rules_file, state_file=state,
+                rule_path=self.rules_file, state_file=state, port=0,
                 output=lambda _message: None) as service:
             rule_set = service._reload_rules()
             service._check_corrections(rule_set, 10000.0)
