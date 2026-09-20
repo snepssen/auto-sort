@@ -277,6 +277,11 @@ def read(peek, fmt, record):
     scan = scans.detect(found, width, height, record)
     device = "scanner" if scan else "camera"
 
+    # Model alone names the device; the Make is kept beside it under
+    # `<device>_make` rather than glued onto the front. Prepending it reads
+    # worse on exactly the files people have most of — "Apple iPhone 13 mini",
+    # "NIKON CORPORATION NIKON D7000" — and loses nothing, since the Make is
+    # the very next fact along.
     for key, fact in (("make", device + "_make"), ("model", device),
                       ("lens", "lens"), ("software", "software"),
                       ("gps", "gps"), ("artist", "author"),
@@ -285,14 +290,6 @@ def read(peek, fmt, record):
                       ("aperture", "aperture"), ("body_serial", "serial")):
         if found.get(key) not in (None, ""):
             record.set(fact, found[key], "exif", STRONG)
-
-    if found.get("make") and found.get("model"):
-        make = str(found["make"]).strip()
-        model = str(found["model"]).strip()
-        # Canon writes "Canon" in both fields; Apple writes "Apple"/"iPhone 15".
-        combined = model if model.lower().startswith(make.lower()) \
-            else "%s %s" % (make, model)
-        record.set(device, combined, "exif", STRONG)
 
     for key, fact in (("taken", "taken"), ("digitised", "digitised"),
                       ("modified", "content_modified")):

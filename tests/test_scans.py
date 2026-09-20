@@ -187,6 +187,22 @@ class ThroughTheWholeLadder(unittest.TestCase):
         self.assertEqual(record.value("paper"), "Letter")
         self.assertIn("ScanJet", record.value("scanner"))
 
+    def test_naming_the_scanner_does_not_conflict_with_itself(self):
+        """The `camera` fix, on the fact `device` becomes for a scanner.
+
+        Both facts come out of the same loop in readers/image.py, so a
+        second STRONG write that prepended the Make raised a Conflict here
+        exactly as it did on photographs -- on every scanned page, where the
+        user is even more likely to go looking at `explain` to find out why
+        their tax return was filed where it was.
+        """
+        record = self.identify(
+            "Steuerbescheid.jpg", width=2480, height=3508, make="EPSON",
+            model="Perfection V600 Photo", software="EPSON Scan", dpi=300)
+        self.assertEqual(record.value("scanner"), "Perfection V600 Photo")
+        self.assertEqual(record.value("scanner_make"), "EPSON")
+        self.assertEqual([str(c) for c in record.conflicts], [])
+
     def test_a_screenshot_is_still_a_screenshot(self):
         record = self.identify("Screenshot.jpg", width=2880, height=1800,
                                make=None, model=None, taken=None)

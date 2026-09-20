@@ -345,6 +345,27 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(record.value("width"), 4032)
         self.assertEqual(record.value("happened"), "2026-09-19 14:03:22")
         self.assertEqual(record.value("orientation_class"), "landscape")
+        # Canon writes "Canon" in both EXIF fields, which is why this fixture
+        # never showed the self-conflict that every other marque did.
+        self.assertEqual([str(c) for c in record.conflicts], [])
+
+    def test_the_camera_is_the_model_and_the_make_is_kept_beside_it(self):
+        """The Make is not glued onto the front of the Model.
+
+        It used to be, in a second `set` that could never win — both writes
+        were STRONG, and `set` only replaces on strictly greater confidence —
+        so every photograph carrying a camera tag ended up with a Conflict
+        saying the reader disagreed with itself. `explain` shows conflicts to
+        people, so a conflict on every photograph is a conflict that means
+        nothing. The bare Model is also the better name: this file is a
+        "NIKON D7000", not a "NIKON CORPORATION NIKON D7000".
+        """
+        record = identify.identify(fixtures.jpeg(
+            self.path("DSC_0031.jpg"), make="NIKON CORPORATION",
+            model="NIKON D7000"))
+        self.assertEqual(record.value("camera"), "NIKON D7000")
+        self.assertEqual(record.value("camera_make"), "NIKON CORPORATION")
+        self.assertEqual([str(c) for c in record.conflicts], [])
 
     def test_tagged_audio(self):
         record = identify.identify(fixtures.mp3(self.path("07 Song.mp3")))
