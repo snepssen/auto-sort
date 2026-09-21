@@ -70,9 +70,12 @@ class LogPage(object):
             if limit < 50 or limit > 500 or limit % 50:
                 return _json_response(400, {
                     "error": "limit must be a multiple of 50, from 50 to 500"})
+            text = query.get("q", [""])[0].strip()[:200]
+            rows = self.journal.search_moves(text, limit) if text \
+                else self.journal.recent_moves(limit)
             return _json_response(200, {"moves": [self._move(row)
-                                                  for row in
-                                                  self.journal.recent_moves(limit)]})
+                                                  for row in rows],
+                                        "searched": bool(text)})
 
         if method == "POST" and parsed.path in (
                 "/api/pause", "/api/resume", "/api/sort-now"):

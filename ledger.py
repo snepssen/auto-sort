@@ -357,6 +357,32 @@ class Ledger(object):
              ORDER BY m.id DESC LIMIT ?
         """, (limit,)).fetchall()
 
+    def search_moves(self, text, limit=200):
+        """Every move whose name, destination or rule contains `text`.
+
+        Across the whole ledger rather than the last page of it. The log
+        page used to fetch fifty rows and filter those in the browser, so a
+        search for a file moved last week found nothing and said so -- which
+        on a page whose entire job is finding a missing file reads as "it is
+        gone" rather than "look further back".
+        """
+        text = (text or "").strip()
+        if not text:
+            return []
+        # `%` and `_` are wildcards to LIKE and ordinary characters to the
+        # person typing a filename.
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = "%" + escaped + "%"
+        limit = max(1, min(int(limit), 500))
+        return self.connection.execute("""
+            SELECT m.*, r.action, r.source_root, r.started_at, r.finished_at
+              FROM moves m JOIN runs r ON r.id = m.run_id
+             WHERE m.source LIKE ? ESCAPE '\\'
+                OR m.destination LIKE ? ESCAPE '\\'
+                OR m.rule_name LIKE ? ESCAPE '\\'
+             ORDER BY m.id DESC LIMIT ?
+        """, (like, like, like, limit)).fetchall()
+
     def latest_undoable_run(self):
         return self.connection.execute("""
             SELECT DISTINCT r.*
