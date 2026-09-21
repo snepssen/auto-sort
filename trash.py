@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import urllib.parse
 
 
 class TrashError(Exception):
@@ -131,8 +132,17 @@ def send(path, files_only=True):
                             os.path.basename(destination) + ".trashinfo")
         try:
             with open(note, "w") as handle:
+                # The spec requires Path to be percent-encoded (RFC 2396),
+                # and real trash implementations rely on that: a name that
+                # happens to contain a literal "%20" or "%25" written raw
+                # here would be percent-*decoded* back into a different,
+                # nonexistent path on restore. Confirmed against KDE's own
+                # kio_trash output on a live desktop -- it writes
+                # `caf%C3%A9%20r%C3%A9sum%C3%A9.txt` for `café résumé.txt`,
+                # byte for byte what `quote(path, safe="/")` produces.
                 handle.write("[Trash Info]\nPath=%s\nDeletionDate=%s\n"
-                             % (path, time.strftime("%Y-%m-%dT%H:%M:%S")))
+                             % (urllib.parse.quote(path, safe="/"),
+                                time.strftime("%Y-%m-%dT%H:%M:%S")))
         except OSError as error:
             raise TrashError("could not write the bin's note: %s" % error)
 

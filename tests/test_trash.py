@@ -13,6 +13,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -71,6 +72,48 @@ class Bin(unittest.TestCase):
         self.assertTrue(
             trash.folder_for(os.path.join(home, "Music", "nothing.wav"))
             .startswith(home))
+
+    def _read_trashinfo_path(self, trashed_path):
+        info = os.path.join(os.path.dirname(os.path.dirname(trashed_path)),
+                            "info",
+                            os.path.basename(trashed_path) + ".trashinfo")
+        with open(info) as handle:
+            body = handle.read()
+        self.sent.append(info)
+        for line in body.splitlines():
+            if line.startswith("Path="):
+                return line[len("Path="):]
+        self.fail("no Path= line in %s" % info)
+
+    @unittest.skipUnless(os.name != "nt" and sys.platform != "darwin",
+                         "the .trashinfo note is XDG-only")
+    def test_trashinfo_path_is_percent_encoded_for_a_literal_percent_sign(self):
+        """A name that already looks percent-encoded must round-trip.
+
+        Real trash readers (verified against KDE's own kio_trash) percent-
+        decode the Path field on read. Writing it raw means a name like
+        `100%20discount.txt` is misread back as `100 discount.txt` -- a
+        path that was never real. Restore would target the wrong place.
+        """
+        original = self.write("100%20discount.txt")
+        where = trash.send(original)
+        raw_path = self._read_trashinfo_path(where)
+        self.assertEqual(urllib.parse.unquote(raw_path), original)
+
+    @unittest.skipUnless(os.name != "nt" and sys.platform != "darwin",
+                         "the .trashinfo note is XDG-only")
+    def test_trashinfo_path_matches_kio_trashs_own_encoding(self):
+        """Byte-for-byte match against KDE's kio_trash for a tricky name.
+
+        Confirmed on a live SteamOS/KDE desktop: `kioclient5 move` writes
+        `caf%C3%A9%20r%C3%A9sum%C3%A9.txt` for `café résumé.txt`. Anything
+        else here is a dialect only this project's own reader understands.
+        """
+        original = self.write("café résumé.txt")
+        where = trash.send(original)
+        raw_path = self._read_trashinfo_path(where)
+        self.assertTrue(raw_path.endswith(
+            "caf%C3%A9%20r%C3%A9sum%C3%A9.txt"))
 
 
 class WhichCopyIsReal(unittest.TestCase):
