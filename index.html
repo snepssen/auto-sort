@@ -181,6 +181,10 @@ el('import').onclick=async()=>{txt(el('error'),'');
     const done=await request('/api/import',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({folder:folder,apply:true})});
+    if(!done.applied){alert('Nothing moved yet: this is the first time this '
+      +'folder has been sorted with your current rules, so auto-sort held it '
+      +'to a preview. Choose "One-time sort of a folder…" again to '
+      +'actually move these files.');await refresh();return}
     alert('Sorted '+done.moved+' item(s).'+(done.failed?' '+done.failed+' failed.':''));
     await refresh()}
   catch(e){txt(el('error'),e.message)}};el('save').onclick=()=>{prefs.columns=Array.from(document.querySelectorAll('.checks input:checked')).map(i=>i.value);if(!prefs.columns.length)prefs.columns=['file_name'];prefs.folder=el('folder').value.trim();save();render()};el('limit').value=prefs.limit;el('limit').onchange=e=>{prefs.limit=Number(e.target.value);save();refresh()};['status-filter','kind-filter','rule-filter'].forEach(id=>el(id).addEventListener('change',render));let typing=null;el('search').addEventListener('input',()=>{clearTimeout(typing);typing=setTimeout(refresh,250)});el('pause').onclick=()=>mutate('/api/pause');el('resume').onclick=()=>mutate('/api/resume');el('sort-now').onclick=()=>mutate('/api/sort-now');menu.onkeydown=e=>{const items=[...menu.querySelectorAll('button:not(:disabled)')],i=items.indexOf(document.activeElement);if(e.key==='Escape'){e.preventDefault();closeMenu(true)}else if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();items[(i+(e.key==='ArrowDown'?1:-1)+items.length)%items.length].focus()}};document.addEventListener('pointerdown',e=>{if(menuAnchor&&!menu.contains(e.target)&&!menuAnchor.contains(e.target))closeMenu()});window.addEventListener('resize',()=>closeMenu());document.addEventListener('scroll',()=>closeMenu(),true);refresh();setInterval(refresh,3000)})();

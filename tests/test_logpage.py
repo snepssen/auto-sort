@@ -15,6 +15,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import ledger                                             # noqa: E402
 import logpage                                            # noqa: E402
+import rules                                              # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures                                            # noqa: E402
 
 
 class LogPageTests(unittest.TestCase):
@@ -202,6 +206,90 @@ class LogPageTests(unittest.TestCase):
         self.assertIn("--print-reply", run.call_args[0][0])
         popen.assert_called_once()
         self.assertEqual(popen.call_args[0][0][0], "xdg-open")
+
+
+class OneTimeSortOfAFolder(unittest.TestCase):
+    """`/api/import`: the "One-time sort of a folder..." button's endpoint.
+
+    Found on a live desktop, not in a mock: the button's first-ever apply
+    for a USB-stick-like folder reported "Sorted 1 item(s)." while the file
+    never moved. `sorter.execute` forces a folder's first apply under a
+    given rules fingerprint to a preview -- the same safety net `sort
+    --apply` already respects on the CLI -- but `_import` read the result
+    through `getattr(result, "moved", len(plan.items))` and
+    `getattr(result, "failures", [])`, names `RunResult` has never had
+    (it has `completed` and an integer `failed`), so both defaults fired
+    unconditionally and `"applied": True` was hardcoded regardless of
+    `result.dry_run`. No test exercised this endpoint at all.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.intake = os.path.join(self.directory, "usb")
+        self.output = os.path.join(self.directory, "output")
+        os.makedirs(self.intake)
+        os.makedirs(self.output)
+        self.rules_file = os.path.join(self.directory, "rules.ini")
+        self.state_file = os.path.join(self.directory, "state.db")
+        with open(self.rules_file, "w", encoding="utf-8") as handle:
+            handle.write("""
+[settings]
+dry_run = no
+settle_seconds = 0
+
+[watch]
+folders =
+
+[rule: images]
+when = kind = image
+into = {output}/Pictures
+""".format(output=self.output))
+        self.journal = ledger.Ledger(self.state_file)
+        self.page = logpage.LogPage(
+            self.journal, 48766, "test-token",
+            rules_getter=lambda: rules.load(self.rules_file))
+
+    def tearDown(self):
+        self.journal.close()
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def request(self, method, target, headers=None, body=b""):
+        return self.page.handle_request(method, target, headers or {}, body)
+
+    def payload(self, response):
+        return json.loads(response.body.decode("utf-8"))
+
+    def origin(self):
+        return {"Origin": "http://127.0.0.1:48766"}
+
+    def apply_folder(self, folder):
+        return self.request(
+            "POST", "/api/import?token=test-token", self.origin(),
+            json.dumps({"folder": folder, "apply": True}).encode("utf-8"))
+
+    def test_a_folders_first_apply_does_not_claim_success_it_did_not_earn(self):
+        source = fixtures.png(os.path.join(self.intake, "photo.png"))
+        response = self.apply_folder(self.intake)
+        body = self.payload(response)
+
+        self.assertTrue(os.path.exists(source),
+                        "the file must not have moved: this was a forced preview")
+        self.assertFalse(body["applied"])
+        self.assertEqual(body["moved"], 0)
+        self.assertTrue(body.get("forced_preview"))
+
+    def test_the_second_apply_for_the_same_folder_actually_moves_it(self):
+        source = fixtures.png(os.path.join(self.intake, "photo.png"))
+        self.apply_folder(self.intake)          # forced preview, as above
+        response = self.apply_folder(self.intake)
+        body = self.payload(response)
+
+        self.assertTrue(body["applied"])
+        self.assertEqual(body["moved"], 1)
+        self.assertEqual(body["failed"], 0)
+        self.assertFalse(os.path.exists(source))
+        self.assertTrue(os.path.exists(
+            os.path.join(self.output, "Pictures", "photo.png")))
 
 
 if __name__ == "__main__":

@@ -276,11 +276,26 @@ class LogPage(object):
                 "skipped": len(plan.skipped), "applied": False,
                 "moves": preview})
         result = sorter.execute(plan, rule_set, self.journal, dry_run=False)
+        if result.dry_run:
+            # `execute` forces a folder's first run under a given rules
+            # fingerprint to a preview even when the caller asked to apply
+            # -- the same safety net `sort --apply` respects on the CLI.
+            # Nothing moved. Reporting "applied" here anyway (as this used
+            # to, and as `getattr(result, "moved", ...)` masked by quietly
+            # falling back to the planned count on a RunResult that has no
+            # `moved` attribute at all) told the person who just clicked
+            # "One-time sort of a folder..." that their USB stick was
+            # filed when every item was still sitting where it started.
+            return _json_response(200, {
+                "folder": folder, "planned": len(plan.items),
+                "skipped": len(plan.skipped), "applied": False,
+                "forced_preview": result.forced_preview,
+                "moved": 0, "failed": 0, "moves": preview})
         return _json_response(200, {
             "folder": folder, "planned": len(plan.items),
             "skipped": len(plan.skipped), "applied": True,
-            "moved": getattr(result, "moved", len(plan.items)),
-            "failed": len(getattr(result, "failures", []) or []),
+            "moved": result.completed,
+            "failed": result.failed,
             "moves": preview})
 
     def _rules(self):
