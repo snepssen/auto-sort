@@ -8,11 +8,13 @@ is what most of these describe.
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -154,6 +156,29 @@ class TheQueue(unittest.TestCase):
         self.journal.queue_mirror(None, self.files[0], "Documents/f0.txt",
                                   100, "")
         self.assertEqual(len(self.journal.pending_mirror()), before)
+
+    def test_one_file_too_big_for_the_disk_does_not_wedge_the_rest(self):
+        # f0 is first in the queue (lowest id) and never fits -- a real disk
+        # with real free space, just not enough for this one file. The old
+        # code treated "no room for this write" exactly like "the disk is
+        # gone" and broke out of the loop, so f1 and f2 -- both tiny, both
+        # easily fittable -- never even got tried.
+        real_hashed_copy = mirror._hashed_copy
+
+        def flaky(source, target):
+            if source == self.files[0]:
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return real_hashed_copy(source, target)
+
+        with mock.patch.object(mirror, "_hashed_copy", side_effect=flaky):
+            copied, waiting, skipped = mirror.drain(self.journal, self.root)
+        self.assertEqual(copied, 2)
+        self.assertEqual(skipped, 0)
+        self.assertEqual(waiting, 1)
+        # Still pending rather than given up on: the disk itself is fine,
+        # so this is a per-file failure worth retrying later.
+        still_pending = [row["source"] for row in self.journal.pending_mirror()]
+        self.assertEqual(still_pending, [self.files[0]])
 
 
 if __name__ == "__main__":

@@ -215,8 +215,20 @@ def drain(journal, root, limit=200, on_progress=None):
         try:
             copy_one(source, root, row["relative"], row["sha256"])
         except Unavailable as error:
-            journal.mirror_failed(row["id"], error)
-            break
+            # `copy_one` raises this both when the whole disk is gone and
+            # when one file just would not fit on an otherwise fine disk
+            # (ENOSPC on a file bigger than the free space, say). Only the
+            # first is a reason to stop early -- re-checking here is what
+            # tells them apart. Getting this wrong meant one oversized file
+            # at the front of the queue wedged every smaller file behind it
+            # forever, on a disk that had room for all of them.
+            if not available(root):
+                journal.mirror_failed(row["id"], error)
+                break
+            journal.mirror_failed(
+                row["id"], error,
+                give_up=row["attempts"] + 1 >= MAX_ATTEMPTS)
+            continue
         except (OSError, IOError) as error:
             journal.mirror_failed(
                 row["id"], error,
