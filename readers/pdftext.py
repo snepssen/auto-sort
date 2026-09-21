@@ -47,7 +47,21 @@ _OCTAL = re.compile(rb"\\([0-7]{1,3})")
 # content stream calls it by. There is no xref walk here: object headers are
 # located by scanning, which is what a repair parser does and is unbothered
 # by the broken tables that twenty-year-old files are full of.
-_OBJ = re.compile(rb"(\d+)\s+\d+\s+obj\b")
+# `(\d+)\s+\d+\s+obj` looks harmless and is quadratic on binary data.
+# Inside a long run of digits every single offset is a fresh starting
+# point, and each one consumes the rest of the run, fails to find
+# whitespace, and gives a digit back one at a time. Measured: 8,000
+# digits took 0.4s and each doubling quadrupled it, so the four
+# megabytes this reads would have taken about a day -- which is what
+# it was doing, on the daemon's only thread, with the tray frozen
+# behind it.
+#
+# The lookbehind is the fix: a match can only begin where a digit run
+# begins, so the engine tries each run once instead of once per digit.
+# The bounded repeats keep any single attempt short. PDF object
+# numbers and generations are small; nothing real is lost.
+_OBJ = re.compile(rb"(?<![0-9])(\d{1,9})[ \t\r\n]{1,8}"
+                  rb"\d{1,5}[ \t\r\n]{1,8}obj\b")
 _TOUNICODE_REF = re.compile(rb"/ToUnicode\s+(\d+)\s+\d+\s+R")
 _FONT_DICT = re.compile(rb"/Font\s*<<(.{0,4000}?)>>", re.S)
 _FONT_REF = re.compile(rb"/([A-Za-z0-9_.+-]+)\s+(\d+)\s+\d+\s+R")

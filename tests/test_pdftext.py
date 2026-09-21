@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -351,3 +352,44 @@ class WordsInsideWords(unittest.TestCase):
         self.assertIn("Loonbrief", words)
         self.assertIn("Payroll", words)
         self.assertNotIn("Tamas", words)
+
+
+class PatternsThatMustNotBacktrack(unittest.TestCase):
+    """A regex that is quadratic on binary data stops the whole program.
+
+    auto-sort reads PDFs on the daemon's only thread. A pattern that takes
+    a day on four megabytes does not fail, or log, or time out -- it simply
+    stops sorting, stops answering the log page, and freezes the tray, and
+    the only diagnosis available to the person it happens to is that the
+    icon has gone. This one did exactly that on a real machine, on a Belgian
+    document whose name and contents were long runs of digits.
+    """
+
+    def scan(self, blob):
+        start = time.time()
+        list(pdftext._OBJ.finditer(blob))
+        return time.time() - start
+
+    def test_a_long_run_of_digits_is_scanned_in_linear_time(self):
+        small = self.scan(b"9" * 20000)
+        large = self.scan(b"9" * 160000)
+        # Eight times the input. Quadratic would be sixty-four times the
+        # work; a generous ceiling of twenty still fails it loudly while
+        # tolerating a slow or busy machine.
+        self.assertLess(large, max(small * 20, 0.5),
+                        "object scan is super-linear: %.3fs then %.3fs"
+                        % (small, large))
+
+    def test_four_megabytes_of_digits_finishes_promptly(self):
+        self.assertLess(self.scan(b"8" * (4 * 1024 * 1024)), 2.0)
+
+    def test_it_still_finds_the_object_headers_it_is_for(self):
+        for blob, want in ((b"12 0 obj", b"12"), (b"\n7 0 obj\n", b"7"),
+                           (b"123456 65535 obj", b"123456"),
+                           (b"4 0  obj", b"4")):
+            match = pdftext._OBJ.search(blob)
+            self.assertIsNotNone(match, blob)
+            self.assertEqual(match.group(1), want)
+
+    def test_a_number_that_is_not_an_object_header_is_not_one(self):
+        self.assertIsNone(pdftext._OBJ.search(b"999 not an object"))
