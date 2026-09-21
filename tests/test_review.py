@@ -17,6 +17,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import fixtures                                          # noqa: E402
 import ledger                                            # noqa: E402
 import review                                            # noqa: E402
 import rules                                             # noqa: E402
@@ -255,3 +256,74 @@ class AdoptingWithoutRewriting(unittest.TestCase):
 
     def test_nothing_to_add_leaves_the_file_exactly_as_it_was(self):
         self.assertEqual(review.adopt(self.text, []), self.text)
+
+
+class RulesThatMatchAndThenDecline(unittest.TestCase):
+    """The only failure in this program the person cannot see.
+
+    `min_confidence` is a floor on acting, not on matching. A rule whose
+    destination needs a fact that is only a guess matches perfectly and then
+    does nothing -- and the file still moves, to a catch-all, silently.
+    """
+
+    BROKEN = """
+[settings]
+dry_run = yes
+min_confidence = 0.6
+
+[watch]
+folders = %s
+
+[rule: scans by year]
+when = kind = document and capture = scan
+into = ~/Documents/Scans/{happened:%%Y}
+
+[rule: anything left]
+when = name is set
+into = ~/Documents/Unsorted
+holding = yes
+"""
+
+    WORKING = BROKEN.replace("{happened:%%Y}", "{added:%%Y}")
+
+    def setUp(self):
+        # The rules file lives outside the folder being scanned, or it is
+        # itself one of the files scanned and the counts are off by one.
+        self.home = tempfile.mkdtemp(prefix="autosort-reach-")
+        self.dir = os.path.join(self.home, "Downloads")
+        os.makedirs(self.dir)
+        for number in range(5):
+            fixtures.pdf(os.path.join(self.dir, "scan%04d.pdf" % number),
+                         producer="HP ScanJet Pro firmware", image_only=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def rules_from(self, template):
+        path = os.path.join(self.home, "r.ini")
+        with open(path, "w") as handle:
+            handle.write(template % self.dir)
+        return rules.load(path)
+
+    def test_a_rule_that_can_never_fill_its_destination_is_named(self):
+        broken, files = review.unreachable(self.rules_from(self.BROKEN),
+                                           [self.dir])
+        self.assertEqual(files, 5)
+        self.assertEqual([reach.name for reach in broken], ["scans by year"])
+        self.assertIn("below confidence", broken[0].reason)
+        self.assertIn("happened", broken[0].reason)
+
+    def test_the_same_rule_filed_by_a_certain_fact_is_fine(self):
+        broken, _files = review.unreachable(self.rules_from(self.WORKING),
+                                            [self.dir])
+        self.assertEqual(broken, [])
+
+    def test_one_decline_is_not_a_verdict(self):
+        """A rule waiting for the right file has not failed."""
+        for name in os.listdir(self.dir):
+            if name.startswith("scan") and name != "scan0000.pdf":
+                os.remove(os.path.join(self.dir, name))
+        broken, files = review.unreachable(self.rules_from(self.BROKEN),
+                                           [self.dir])
+        self.assertEqual(files, 1)
+        self.assertEqual(broken, [])

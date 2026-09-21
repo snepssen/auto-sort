@@ -26,8 +26,10 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import re
 
+import rules
 import shapes
 
 MIN_TRIALS = 3          # the project's threshold for "that is a pattern"
@@ -323,3 +325,90 @@ def adopt(text, blocks, above=()):
         addition.append("")
     merged = lines[:at] + addition + lines[at:]
     return "\n".join(merged) + ("\n" if text.endswith("\n") else "")
+
+
+# ---------------------------------------------------------------------------
+# Rules that match and then decline
+# ---------------------------------------------------------------------------
+#
+# The decision layer can fail in a way nobody sees. A rule's `when` matches
+# perfectly and the rule still does not act, because its destination needs a
+# fact that is only a guess -- and `min_confidence` is a floor on acting, not
+# on matching. The file still moves, to a catch-all, and nothing is said.
+#
+# `Scans/{happened:%Y}` did this. A scanned page has no capture date and
+# usually no date in its name, so `happened` falls back to when the file
+# arrived, which is WEAK and under the floor. Eight of nine scanned documents
+# went to Unfiled. The ninth was called `20090314.pdf`, got a LIKELY date out
+# of its own name, and was the only reason anybody noticed.
+#
+# The engine already explains this per file -- `below confidence 0.60:
+# happened 0.45` comes straight out of `Rule.evaluate`. What was missing was
+# anybody counting. One file declining is a file; thirty declining and none
+# ever placed is a rule that does not work.
+
+MIN_DECLINES = 3
+
+
+class Reach(object):
+    """How a rule fared against real files, rather than against a parser."""
+
+    def __init__(self, rule):
+        self.rule = rule
+        self.name = rule.name
+        self.placed = 0
+        self.declined = 0
+        self.why = collections.Counter()
+
+    @property
+    def broken(self):
+        return self.placed == 0 and self.declined >= MIN_DECLINES
+
+    @property
+    def reason(self):
+        return self.why.most_common(1)[0][0] if self.why else ""
+
+
+def reachability(rule_set, folders, tier=None, limit=400, depth=3):
+    """`(reaches, files)` -- every rule, judged against files on disk.
+
+    Real identification, so real confidences. Replaying stored facts would
+    not do: the ledger keeps what a fact was, not how sure anybody was, and
+    the whole failure here is about how sure.
+    """
+    import bundles
+    import identify as identify_module
+    if tier is None:
+        tier = identify_module.TIER_HEADER
+
+    reaches = collections.OrderedDict(
+        (rule.name, Reach(rule)) for rule in rule_set.rules)
+    seen = 0
+    for folder in folders:
+        if not os.path.isdir(folder):
+            continue
+        for item in bundles.walk(folder, max_depth=depth):
+            if seen >= limit:
+                break
+            try:
+                record = identify_module.identify(item, tier=tier)
+            except (OSError, ValueError):
+                continue
+            seen += 1
+            for result in rule_set.evaluate(record, source_root=folder):
+                name = result.rule.name
+                if name not in reaches:
+                    continue
+                if result.matched and (result.rule.mode == "leave"
+                                       or result.destination is not None):
+                    reaches[name].placed += 1
+                    break
+                if not result.matched and result.reason != rules._NO_MATCH:
+                    reaches[name].declined += 1
+                    reaches[name].why[result.reason] += 1
+    return list(reaches.values()), seen
+
+
+def unreachable(rule_set, folders, **kwargs):
+    reaches, files = reachability(rule_set, folders, **kwargs)
+    return [reach for reach in reaches if reach.broken], files

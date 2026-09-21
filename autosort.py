@@ -165,8 +165,47 @@ def check_rules(filename=None, state=None):
     print("  %d rule%s" % (len(rule_set.rules),
                             "" if len(rule_set.rules) == 1 else "s"))
     print("  dry run %s" % ("on" if rule_set.settings.dry_run else "off"))
+    _report_unreachable(rule_set)
     _report_dead_rules(rule_set, state)
     return 0
+
+
+def _report_unreachable(rule_set, folders=None):
+    """Rules that match real files and then decline to act on any of them.
+
+    `min_confidence` is a floor on acting, not on matching, so a rule whose
+    destination needs a fact that is only a guess matches perfectly and then
+    does nothing -- and the file still moves, to a catch-all, silently. That
+    is the only failure in this program the person cannot see, so it is
+    worth a scan of the folder being watched to find it.
+    """
+    folders = folders or [os.path.expanduser(folder)
+                          for folder in (rule_set.watch.folders or ())]
+    folders = [folder for folder in folders if os.path.isdir(folder)]
+    if not folders:
+        return
+    try:
+        broken, files = review.unreachable(rule_set, folders)
+    except Exception:                        # noqa: BLE001
+        return
+    if not files or not broken:
+        return
+    print()
+    print("  %s files in %s and never placed one:"
+          % ("1 rule matched" if len(broken) == 1
+             else "%d rules matched" % len(broken),
+             ", ".join(userdirs.short(folder) for folder in folders[:2])))
+    for reach in broken:
+        print("    %s" % reach.name)
+        print("      matched %d, placed 0 -- %s"
+              % (reach.declined, reach.reason))
+    print()
+    print("  A rule can match and still decline: the floor applies to acting")
+    print("  on a fact, not to matching it. Those files were not left behind,")
+    print("  they went to a catch-all instead, and nothing said so. Either")
+    print("  file by a fact that is certain -- `{added}` rather than")
+    print("  `{happened}` for undated things -- or give the rule its own")
+    print("  lower `min_confidence`.")
 
 
 def _report_dead_rules(rule_set, state=None):
