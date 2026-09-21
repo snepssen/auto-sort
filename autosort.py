@@ -165,9 +165,86 @@ def check_rules(filename=None, state=None):
     print("  %d rule%s" % (len(rule_set.rules),
                             "" if len(rule_set.rules) == 1 else "s"))
     print("  dry run %s" % ("on" if rule_set.settings.dry_run else "off"))
+    _report_atomic_folders(rule_set)
+    _report_unpromotable(rule_set)
     _report_unreachable(rule_set)
     _report_dead_rules(rule_set, state)
     return 0
+
+
+# Facts that say what a file *is* rather than what it is about. A folder
+# named only by these is a folder of everything of one type.
+_ONLY_TYPE = {"format", "kind", "ext"}
+
+
+def _report_unpromotable(rule_set):
+    """Rules that file by type alone and are not marked `holding`.
+
+    `~/Documents/Sorted/{format}` is a provisional answer in everything but
+    name: it says "this is a PDF" and nothing else. Marked `holding = yes`
+    it is a waiting room, and `regroup` fetches those files out when a
+    pattern finally shows. Left unmarked it is a destination, `regroup` will
+    not touch them, and three hundred documents are as stuck there as they
+    were in Downloads -- which is the exact problem `regroup` was written
+    for.
+    """
+    stuck = [rule for rule in rule_set.rules
+             if not rule.holding and rule.into and rule.template_facts
+             and set(rule.template_facts) <= _ONLY_TYPE]
+    if not stuck:
+        return
+    print()
+    print("  %s by type alone and not marked `holding`:"
+          % ("1 rule files" if len(stuck) == 1
+             else "%d rules file" % len(stuck)))
+    for rule in stuck:
+        print("    %-26s -> %s" % (rule.name[:26], rule.into))
+    print()
+    print("  A folder named only by what a file is says nothing about what")
+    print("  it is about, so it is a waiting room whatever it is called --")
+    print("  but `regroup` only fetches files back out of rules that admit")
+    print("  it. Add `holding = yes` and a pattern found later can still")
+    print("  reach them.")
+
+
+def _report_atomic_folders(rule_set):
+    """A depth of zero means folders are filed whole and never opened.
+
+    That is a real choice -- it is how an inbox empties in one move -- but
+    it is also how four hundred and sixty-three documents go past every
+    reader in this program without one of them being read. A sorter that
+    does not look inside what it ingests is sorting the wrapping.
+    """
+    if rule_set.watch.depth != 0:
+        return
+    holding = []
+    for folder in (rule_set.watch.folders or ()):
+        folder = os.path.expanduser(folder)
+        if not os.path.isdir(folder):
+            continue
+        try:
+            inside = [name for name in os.listdir(folder)
+                      if not name.startswith(".")
+                      and os.path.isdir(os.path.join(folder, name))]
+        except OSError:
+            continue
+        if inside:
+            holding.append((folder, inside))
+    if not holding:
+        return
+    print()
+    print("  depth = 0, so folders are filed whole and never opened.")
+    for folder, inside in holding:
+        files = 0
+        for name in inside[:20]:
+            for _dir, _subs, names in os.walk(os.path.join(folder, name)):
+                files += len([n for n in names if not n.startswith(".")])
+        print("    %s holds %d folder%s with about %d files inside them"
+              % (userdirs.short(folder), len(inside),
+                 "" if len(inside) == 1 else "s", files))
+    print("    Those files are moved, never read: no heading, no camera, no")
+    print("    duplicate check. Set `depth = 3` under [watch] to sort what")
+    print("    is in them instead of the folder they came in.")
 
 
 def _report_unreachable(rule_set, folders=None):
