@@ -518,30 +518,11 @@ def render(found, proposals):
         lines.append("; with and its folder goes with it; rename the folder")
         lines.append("; and the files follow.")
         lines.append("")
-        folded = [word.lower() for word, _count in terms]
+        others = [word for word, _count in terms]
         for word, count in terms:
-            inside = [other for other, low in zip(
-                [w for w, _c in terms], folded)
-                if low != word.lower() and word.lower() in low]
-            lines.append("[rule: %s: %s]" % (title, word))
-            if inside:
-                # A learnt word that also lives inside a longer learnt word
-                # has to be asked for as a word of its own, or it takes the
-                # longer one's files: `contains Vertrag` claims every
-                # Mietvertrag. A leading space says "a word of its own", and
-                # the second half of the condition is for a name that starts
-                # with it, where there is no space in front to find.
-                lines.append('when = %s contains " %s" or %s ~ %s*'
-                             % (fact, word, fact, word))
-                lines.append("; on its own only -- %s also sits inside %s"
-                             % (word, ", ".join(inside[:3])))
-            else:
-                lines.append("when = %s contains %s" % (fact, word))
-            lines.append("into = %s"
-                         % userdirs.short(os.path.join(
-                             destination_root(found, "document"), word)))
-            lines.append("; %d %s" % (count, unit))
-            lines.append("")
+            lines.extend(term_rule(fact, title, word, count, unit,
+                                   destination_root(found, "document"),
+                                   others))
 
     for proposal in accepted:
         facet = proposal.facet
@@ -634,6 +615,36 @@ def render(found, proposals):
             lines.append(";   %-16s %s" % (proposal.key, proposal.reason))
         lines.append("")
     return "\n".join(lines)
+
+
+def term_rule(fact, title, word, count, unit, root, others=()):
+    """The lines for one learnt-word rule.
+
+    Shared so that a rule adopted later is written exactly the way the same
+    rule would have been written on the first run. Two renderers for one
+    kind of rule is two things to keep in step and one of them to forget.
+    """
+    inside = [other for other in others
+              if other.lower() != word.lower()
+              and word.lower() in other.lower()]
+    lines = ["[rule: %s: %s]" % (title, word)]
+    if inside:
+        # A learnt word that also lives inside a longer learnt word has to
+        # be asked for as a word of its own, or it takes the longer one's
+        # files: `contains Vertrag` claims every Mietvertrag. A leading
+        # space says "a word of its own", and the second half of the
+        # condition is for a name that starts with it, where there is no
+        # space in front to find.
+        lines.append('when = %s contains " %s" or %s ~ %s*'
+                     % (fact, word, fact, word))
+        lines.append("; on its own only -- %s also sits inside %s"
+                     % (word, ", ".join(inside[:3])))
+    else:
+        lines.append("when = %s contains %s" % (fact, word))
+    lines.append("into = %s" % userdirs.short(os.path.join(root, word)))
+    lines.append("; %d %s" % (count, unit))
+    lines.append("")
+    return lines
 
 
 def _rule_name(facet, found):

@@ -210,3 +210,48 @@ class CategoriesThatArriveLater(unittest.TestCase):
                        "Rechnung")
         new, _seen = review.emerging(self.journal, self.rule_set)
         self.assertNotIn("Muenchen", [word for word, _count in new])
+
+
+class AdoptingWithoutRewriting(unittest.TestCase):
+    """Adding a rule to a file somebody has edited, and changing nothing else."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-adopt-")
+        self.text = RULES
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def block(self, word):
+        return ["[rule: %s]" % word, "when = heading contains %s" % word,
+                "into = ~/Documents/%s" % word, ""]
+
+    def test_it_lands_above_the_catch_all_not_below_it(self):
+        """Below the catch-all it would be adopted and never fire."""
+        merged = review.adopt(self.text, [self.block("Mahnung")])
+        lines = merged.splitlines()
+        self.assertLess(lines.index("[rule: Mahnung]"),
+                        lines.index("[rule: anything left]"))
+
+    def test_it_lands_above_the_rule_it_has_to_beat(self):
+        merged = review.adopt(self.text, [self.block("Mahnung")],
+                              above=["Stadtwerke"])
+        lines = merged.splitlines()
+        self.assertLess(lines.index("[rule: Mahnung]"),
+                        lines.index("[rule: Stadtwerke]"))
+
+    def test_every_other_line_is_untouched(self):
+        """The file belongs to whoever wrote it."""
+        edited = "; MY OWN NOTES\n" + self.text
+        block = self.block("Mahnung")
+        merged = review.adopt(edited, [block])
+        lines = merged.splitlines()
+        at = lines.index("[rule: Mahnung]")
+        # Cut out exactly what was inserted; what is left must be identical,
+        # blank lines and all -- filtering by content would hide a lost one.
+        del lines[at:at + len(block)]
+        self.assertEqual(lines, edited.splitlines())
+        self.assertTrue(merged.startswith("; MY OWN NOTES"))
+
+    def test_nothing_to_add_leaves_the_file_exactly_as_it_was(self):
+        self.assertEqual(review.adopt(self.text, []), self.text)

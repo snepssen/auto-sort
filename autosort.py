@@ -28,6 +28,7 @@ import duplicates as duplicates_module
 import regroup as regroup_module
 import review
 import rules
+import shapes
 import sorter
 import trash
 import userdirs
@@ -908,6 +909,115 @@ def duplicate_scan(folders=None, rule_path=None, state=None,
     return 0
 
 
+def adopt_categories(rule_path=None, state=None, apply_changes=False,
+                     as_json=False):
+    """Write a rule for a category that has shown up since the rules were made.
+
+    `propose` regenerates a rules file from scratch, which is right the
+    first time and wrong every time after: it discards whatever somebody
+    wrote, reordered or deleted since. That made adopting a new category
+    cost them their edits, so the honest advice was to do it by hand -- and
+    a learning tool whose last step is manual has not finished learning.
+
+    The rule is inserted immediately above the first catch-all: after
+    everything specific in the file, before anything that claims what is
+    left. Every other line is untouched, byte for byte. Appending would be
+    simpler and useless, because first match wins and a rule below the
+    catch-alls can never fire.
+    """
+    try:
+        rule_set = rules.load(rule_path)
+    except rules.RuleError as error:
+        print("Rules error: %s" % error, file=sys.stderr)
+        return 1
+
+    try:
+        with ledger_module.Ledger(state) as journal:
+            found, headings = review.emerging(journal, rule_set)
+    except Exception as error:               # noqa: BLE001
+        print("No ledger to learn from yet: %s" % error, file=sys.stderr)
+        return 1
+
+    if as_json:
+        print(json.dumps({"documents_read": headings,
+                          "categories": [{"word": w, "documents": c}
+                                         for w, c in found]}, indent=2))
+        return 0
+
+    print()
+    if not found:
+        print("  Nothing new. Every word that heads %d or more of your %d"
+              % (shapes.MIN_OCCURRENCES, headings))
+        print("  filed documents already has a rule.")
+        print()
+        return 0
+
+    # The guard against a short word swallowing a longer one has to see the
+    # words already in the file, not just the new ones.
+    existing = [rule.name.split(": ")[-1] for rule in rule_set.rules]
+    others = [word for word, _count in found] + existing
+    root = userdirs.home_for("document")
+    blocks = [propose_module.term_rule("heading", "what the page calls itself",
+                                       word, count, "documents say it",
+                                       root, others)
+              for word, count in found]
+
+    print("  Learnt from %d filed documents:" % headings)
+    print()
+    for block in blocks:
+        for line in block:
+            print("    %s" % line if line else "")
+    source = rule_set.source
+    with open(source, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    with ledger_module.Ledger(state) as journal:
+        beaten = review.outranked(journal, rule_set,
+                                  [word for word, _count in found])
+    at = review.insertion_point(text, beaten)
+    total = len(text.splitlines())
+    print("  Goes in at line %d of %d. No other line changes."
+          % (at + 1, total))
+    if beaten:
+        print("  Above %s, which claim%s those documents today by a word"
+              % (", ".join(sorted(name.split(": ")[-1] for name in beaten)[:3]),
+                 "s" if len(beaten) == 1 else ""))
+        print("  further down the same page. Below it, the new rule would")
+        print("  never fire.")
+    print()
+    if not apply_changes:
+        print("  Nothing written. Run again with --apply to add %s."
+              % ("it" if len(blocks) == 1 else "them"))
+        print()
+        return 0
+
+    backup = source + ".before-adopt"
+    merged = review.adopt(text, blocks, beaten)
+    try:
+        with open(backup, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        with open(source, "w", encoding="utf-8") as handle:
+            handle.write(merged)
+    except OSError as error:
+        print("Could not write %s: %s" % (source, error), file=sys.stderr)
+        return 1
+
+    # Anything this program writes, it reads back before saying it worked.
+    try:
+        rules.load(source)
+    except rules.RuleError as error:
+        with open(source, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        print("  ! the file would not load afterwards, so it was put back")
+        print("    exactly as it was: %s" % error, file=sys.stderr)
+        return 1
+
+    print("  Added to %s." % userdirs.short(source))
+    print("  Your previous file is beside it as %s."
+          % os.path.basename(backup))
+    print()
+    return 0
+
+
 def corrections(root=None, state=None, out=None, as_json=False):
     """Notice what was moved after auto-sort placed it, and what that implies.
 
@@ -1194,6 +1304,7 @@ USAGE = """auto-sort %s
   auto-sort corrections [FOLDER] what you moved afterwards, and what it implies
   auto-sort regroup [FOLDER]    re-file what was filed before the pattern showed
   auto-sort duplicates [FOLDER] find files stored twice; --apply bins the spares
+  auto-sort adopt               add a rule for a category that has since emerged
   auto-sort check-rules [FILE]  validate a rules file without changing anything
   auto-sort sort [FOLDER]       plan a sort; dry-run unless configuration says otherwise
   auto-sort undo [RUN|last]     restore a completed move run
@@ -1307,6 +1418,9 @@ def main(argv=None):
     if command == "regroup":
         return regroup(targets[0] if targets else None, rule_path,
                        state_file, dry_run is False, dry_run, as_json)
+    if command == "adopt":
+        return adopt_categories(rule_path, state_file, dry_run is False,
+                                as_json)
     if command == "duplicates":
         return duplicate_scan(targets or None, rule_path, state_file,
                               dry_run is False, as_json)

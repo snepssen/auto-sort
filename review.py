@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import collections
 import json
+import re
 
 import shapes
 
@@ -155,6 +156,170 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
             headings.append(value)
     if not headings:
         return [], 0
-    found = [(word, count) for word, count in shapes.learn_terms(headings)
-             if not _named_by_a_rule(word, rule_set, fact)]
+
+    # Candidates: words the documents themselves repeat, that no rule names.
+    candidates = [word for word, _count in shapes.learn_terms(headings)
+                  if not _named_by_a_rule(word, rule_set, fact)]
+    if not candidates:
+        return [], len(headings)
+
+    # A document counts towards a word only when that word comes before
+    # whatever currently claims the document. That single comparison settles
+    # both awkward cases at once.
+    #
+    # A `Mahnung` filed under `Stadtwerke` still counts for `Mahnung`,
+    # because the kind of letter is printed above the name of the company
+    # that sent it -- so the existing rule is claiming it by a worse word
+    # and the new rule deserves to go above it.
+    #
+    # And a `Rechnung` already filed by the `Rechnung` rule does not count
+    # towards `Stadtwerke`, which appears later on the same page. Without
+    # this, deleting a noise rule would only make the next run offer it
+    # straight back.
+    claimed_at = {}
+    for heading in headings:
+        winner = None
+        for rule in rule_set.rules:
+            if getattr(rule, "holding", False):
+                continue
+            probe = {fact: heading, "name": "probe", "kind": "document"}
+            try:
+                matched, _used = rule.condition.evaluate(probe)
+            except Exception:                # noqa: BLE001
+                continue
+            if matched:
+                winner = rule.name.split(": ")[-1]
+                break
+        claimed_at[heading] = _position(heading, winner)
+
+    earned = collections.Counter()
+    for heading in headings:
+        best, where = None, claimed_at[heading]
+        for word in candidates:
+            at = _position(heading, word)
+            if at is None or at >= where:
+                continue
+            if best is None or at < _position(heading, best):
+                best = word
+        if best is not None:
+            earned[best] += 1
+
+    found = [(word, earned[word]) for word in candidates
+             if earned[word] >= shapes.MIN_OCCURRENCES]
     return found, len(headings)
+
+
+def outranked(journal, rule_set, words, fact="heading", limit=20000):
+    """The rules currently claiming the documents these words should get.
+
+    A new rule has to sit above every one of them or it will never fire.
+    """
+    wanted = set(word.lower() for word in words)
+    beaten = set()
+    for row in journal.placed_moves(None, limit):
+        heading = (_facts_of(row).get(fact) or "").lower()
+        if not heading or not any(word in heading for word in wanted):
+            continue
+        for rule in rule_set.rules:
+            if getattr(rule, "holding", False):
+                continue
+            probe = {fact: _facts_of(row).get(fact), "name": "probe",
+                     "kind": "document"}
+            try:
+                matched, _used = rule.condition.evaluate(probe)
+            except Exception:                # noqa: BLE001
+                continue
+            if matched:
+                beaten.add(rule.name)
+                break
+    return beaten
+
+
+def _position(heading, word):
+    """Where a word sits among a heading's words, or the end if absent.
+
+    Absent counts as the end rather than as nothing, so a document no rule
+    claims is a document any candidate word can win.
+    """
+    words = shapes._WORD.findall(heading or "")
+    if word:
+        lowered = [item.lower() for item in words]
+        target = word.lower()
+        for index, item in enumerate(lowered):
+            if item == target:
+                return index
+    return len(words) + 1
+
+
+# ---------------------------------------------------------------------------
+# Adopting a category without rewriting anybody's file
+# ---------------------------------------------------------------------------
+#
+# `propose` regenerates a rules file from scratch, which is right the first
+# time and wrong every time after: it discards whatever the person wrote,
+# reordered or deleted since. So a category that emerges later cost them
+# their edits to adopt, and the honest advice was to adopt it by hand.
+#
+# Appending is not the answer either. First match wins, so a rule added at
+# the end sits below the catch-alls and can never fire -- it would look
+# adopted and do nothing, which is the silent failure this project keeps
+# running into.
+#
+# The rule goes immediately above the first catch-all instead: after
+# everything specific the person has written, before anything that claims
+# what is left. Every other line in the file is untouched, byte for byte.
+
+_SECTION = re.compile(r"^\s*\[rule:\s*(?P<name>.*?)\s*\]\s*$")
+_HOLDING_YES = re.compile(r"^\s*holding\s*=\s*(yes|true|on|1)\s*$", re.I)
+
+
+def section_line(text, rule_name):
+    """Where a named rule's section begins, or None."""
+    for index, line in enumerate(text.splitlines()):
+        match = _SECTION.match(line)
+        if match and match.group("name") == rule_name:
+            return index
+    return None
+
+
+def insertion_point(text, above=()):
+    """The line to insert at: above the first catch-all, and above `above`.
+
+    A new rule below the rule already claiming its documents is a rule that
+    never fires -- adopted, visibly present, and silently doing nothing.
+    That is this project's favourite way to fail, so the rules a new one has
+    to beat are passed in and it goes above the earliest of them.
+
+    With no catch-all and nothing to beat it lands at the end, which means
+    somebody removed the guarantee that nothing is left behind: a choice to
+    respect rather than quietly undo.
+    """
+    lines = text.splitlines()
+    starts = [index for index, line in enumerate(lines)
+              if _SECTION.match(line)]
+    candidates = []
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+        if any(_HOLDING_YES.match(line) for line in lines[start:end]):
+            candidates.append(start)
+            break
+    for name in above:
+        where = section_line(text, name)
+        if where is not None:
+            candidates.append(where)
+    return min(candidates) if candidates else len(lines)
+
+
+def adopt(text, blocks, above=()):
+    """`text` with `blocks` inserted where they will actually be reached."""
+    if not blocks:
+        return text
+    lines = text.splitlines()
+    at = insertion_point(text, above)
+    addition = []
+    for block in blocks:
+        addition.extend(block)
+    if addition and addition[-1] != "":
+        addition.append("")
+    merged = lines[:at] + addition + lines[at:]
+    return "\n".join(merged) + ("\n" if text.endswith("\n") else "")
