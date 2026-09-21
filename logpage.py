@@ -9,6 +9,7 @@ import subprocess
 import sys
 import urllib.parse
 
+import mirror
 import mover
 import sorter
 
@@ -100,6 +101,12 @@ class LogPage(object):
             return _json_response(200, self._rules())
         if parsed.path == "/api/folders" and method == "GET":
             return _json_response(200, self._folders())
+        if parsed.path == "/api/backup" and method == "GET":
+            return _json_response(200, self._backup())
+        if parsed.path == "/api/backup" and method == "POST":
+            if not self._same_origin(headers):
+                return _json_response(403, {"error": "cross-origin request refused"})
+            return self._set_backup(_body(body))
         if parsed.path == "/api/folders/watch" and method == "POST":
             if not self._same_origin(headers):
                 return _json_response(403, {"error": "cross-origin request refused"})
@@ -186,6 +193,54 @@ class LogPage(object):
             "queue": dict((row["status"], row["count"])
                           for row in self.journal.queue_counts()),
         }
+
+    def _backup(self):
+        """Whether a second copy is being kept, where, and how far behind."""
+        root = self.journal.get_state("mirror_root") or ""
+        enabled = self.journal.get_state("mirror_enabled") == "yes"
+        counts = self.journal.mirror_counts()
+        return {
+            "enabled": enabled,
+            "root": root,
+            "available": mirror.available(root) if root else False,
+            "copied": counts.get("copied", {}).get("files", 0),
+            "copied_bytes": counts.get("copied", {}).get("bytes", 0),
+            "waiting": counts.get("pending", {}).get("files", 0),
+            "waiting_bytes": counts.get("pending", {}).get("bytes", 0),
+            "set_aside": counts.get("failed", {}).get("files", 0),
+        }
+
+    def _set_backup(self, payload):
+        """Turn the second copy on or off, or point it somewhere else."""
+        if payload.get("action") == "off":
+            self.journal.set_state("mirror_enabled", "no")
+            return _json_response(200, self._backup())
+
+        root = str(payload.get("root", "")).strip()
+        if not root:
+            return _json_response(400, {"error": "no folder given"})
+        root = os.path.abspath(os.path.expanduser(root))
+        if not os.path.isdir(root):
+            return _json_response(400, {"error": "that is not a folder"})
+        home = os.path.abspath(os.path.expanduser("~"))
+        if root == home or home.startswith(os.path.join(root, "")):
+            return _json_response(400, {
+                "error": "a backup inside the folder it is backing up is not "
+                         "a backup; choose another disk"})
+        if root.startswith(os.path.join(home, "")):
+            return _json_response(400, {
+                "error": "that is inside your home folder, so one accident "
+                         "takes both copies; choose another disk"})
+        if not mirror.available(root):
+            return _json_response(400, {
+                "error": "that folder cannot be written to right now"})
+        self.journal.set_state("mirror_root", root)
+        self.journal.set_state("mirror_enabled", "yes")
+        queued = mirror.backfill(self.journal) \
+            if payload.get("backfill", True) else 0
+        result = self._backup()
+        result["queued"] = queued
+        return _json_response(200, result)
 
     def _import(self, folder, apply_it):
         """Sort one folder that is not an intake, once.

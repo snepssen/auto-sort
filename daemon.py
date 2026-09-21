@@ -24,6 +24,7 @@ import bundles
 import ledger as ledger_module
 import mover
 import logpage
+import mirror
 import rules
 import corrections as corrections_module
 import regroup as regroup_module
@@ -192,6 +193,24 @@ class PollingDaemon(object):
     # forever and enough to answer "is it alive, and what has it been doing".
     HEARTBEAT_INTERVAL = 3600
 
+    def _drain_mirror(self):
+        """Copy whatever is waiting for the second disk, if it is there.
+
+        Called on the ordinary cycle. When the disk is missing this costs one
+        failed write to a probe file and returns, which is the right price
+        for a question that is usually answered "not today".
+        """
+        if self.journal.get_state("mirror_enabled") != "yes":
+            return
+        root = self.journal.get_state("mirror_root") or ""
+        if not root:
+            return
+        copied, waiting, skipped = mirror.drain(self.journal, root)
+        if copied or skipped:
+            self.output("Backup: %d copied, %d waiting%s"
+                        % (copied, waiting,
+                           ", %d no longer there" % skipped if skipped else ""))
+
     def _check_corrections(self, rule_set, now_value):
         """Notice disagreement, record it, and say so. Never act on it.
 
@@ -326,6 +345,7 @@ class PollingDaemon(object):
         if not self.journal.paused():
             self._check_corrections(rule_set, now_value)
             self._check_regroup(rule_set, now_value, requested_dry)
+            self._drain_mirror()
         return results
 
     def _observe_root(self, root, rule_set, fingerprint, now_value):

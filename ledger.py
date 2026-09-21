@@ -18,7 +18,7 @@ import time
 import paths
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def now():
@@ -189,6 +189,34 @@ class Ledger(object):
                         "ALTER TABLE moves ADD COLUMN holding "
                         "INTEGER NOT NULL DEFAULT 0")
                 self.connection.execute("PRAGMA user_version = 6")
+            version = 6
+        if version == 6:
+            with self.connection:
+                # A second copy of everything filed, on a disk that is very
+                # often asleep, full or in a drawer. So the intention to copy
+                # is recorded the moment a file is placed and the copying
+                # happens whenever the disk is actually there. Sorting never
+                # waits for a backup and never fails because of one.
+                self.connection.executescript("""
+                    CREATE TABLE IF NOT EXISTS mirror (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        move_id INTEGER REFERENCES moves(id),
+                        source TEXT NOT NULL,
+                        relative TEXT NOT NULL,
+                        size INTEGER NOT NULL DEFAULT 0,
+                        sha256 TEXT NOT NULL DEFAULT '',
+                        status TEXT NOT NULL,
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        error TEXT,
+                        queued_at TEXT NOT NULL,
+                        copied_at TEXT,
+                        UNIQUE(relative, sha256)
+                    );
+                    CREATE INDEX IF NOT EXISTS mirror_status
+                        ON mirror(status);
+
+                    PRAGMA user_version = 7;
+                """)
 
     def record_directories(self, run_id, directories):
         """Remember the folders a run had to create, so undo can remove them.
@@ -356,6 +384,47 @@ class Ledger(object):
               FROM moves m JOIN runs r ON r.id = m.run_id
              ORDER BY m.id DESC LIMIT ?
         """, (limit,)).fetchall()
+
+    def queue_mirror(self, move_id, source, relative, size, digest):
+        """Record that a file ought to exist on the second disk too.
+
+        `UNIQUE(relative, sha256)` means re-queueing the same bytes at the
+        same place is free, so a backfill can be run as often as somebody
+        likes without copying anything twice.
+        """
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO mirror(move_id, source, relative, "
+                "size, sha256, status, queued_at) "
+                "VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+                (move_id, source, relative, int(size or 0), digest or "",
+                 now()))
+
+    def pending_mirror(self, limit=200):
+        return self.connection.execute(
+            "SELECT * FROM mirror WHERE status='pending' "
+            "ORDER BY id LIMIT ?", (limit,)).fetchall()
+
+    def mirror_done(self, mirror_id):
+        with self.connection:
+            self.connection.execute(
+                "UPDATE mirror SET status='copied', copied_at=?, error=NULL "
+                "WHERE id=?", (now(), mirror_id))
+
+    def mirror_failed(self, mirror_id, error, give_up=False):
+        with self.connection:
+            self.connection.execute(
+                "UPDATE mirror SET status=?, attempts=attempts+1, error=? "
+                "WHERE id=?",
+                ("failed" if give_up else "pending", str(error)[:300],
+                 mirror_id))
+
+    def mirror_counts(self):
+        rows = self.connection.execute(
+            "SELECT status, COUNT(*) c, COALESCE(SUM(size),0) bytes "
+            "FROM mirror GROUP BY status").fetchall()
+        return dict((row["status"], {"files": row["c"], "bytes": row["bytes"]})
+                    for row in rows)
 
     def extra_watch_folders(self):
         """Intake folders added from the log page, newest last.

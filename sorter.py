@@ -19,6 +19,7 @@ import time
 import bundles
 import duplicates
 import identify
+import mirror
 import mover
 import paths
 
@@ -255,6 +256,8 @@ def execute(plan, rule_set, ledger, dry_run=None):
 
     completed = failed = 0
     created_directories = set()
+    mirror_root = ledger.get_state("mirror_root") \
+        if ledger.get_state("mirror_enabled") == "yes" else ""
     for planned_item in plan.items:
         moved = []
         item_failed = False
@@ -284,6 +287,15 @@ def execute(plan, rule_set, ledger, dry_run=None):
             final_status = "copied" if result.copied \
                 and not result.source_removed else "done"
             ledger.update_move(member.ledger_id, final_status)
+            # The intention to keep a second copy is recorded now, while the
+            # file is known to be here and its hash is in hand. Whether the
+            # other disk is plugged in is a separate question, asked later by
+            # whoever drains the queue -- sorting does not wait on it.
+            if mirror_root:
+                relative = mirror.relative_for(member.destination)
+                if relative:
+                    ledger.queue_mirror(member.ledger_id, member.destination,
+                                        relative, member.size, member.sha256)
             moved.append(member)
 
         if item_failed and planned_item.operation == "move":
