@@ -48,6 +48,9 @@ class Sink(object):
     def add(self, detector, name, value, confidence):
         self.record.set(name, value, self.prefix + detector, confidence)
 
+    def note(self, sentence):
+        self.record.note(sentence)
+
 
 def identify(target, tier=TIER_ALL, record=None):
     """Everything knowable about one item, as an `evidence.Record`.

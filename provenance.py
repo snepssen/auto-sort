@@ -273,6 +273,28 @@ def _place(path):
 _HOST = re.compile(r"^[a-z][a-z0-9+.-]*://(?:[^/@]*@)?([^/:?#]+)", re.I)
 
 
+def _xattrs_supported(path):
+    """Whether this path's filesystem can carry a user xattr at all.
+
+    Separates "nothing to read" from "nothing to read *here*". A FAT32 drive
+    or a filesystem mounted without xattr support explains a missing origin
+    url on its own, which is the case the module docstring already covers.
+    A home directory that supports xattrs fine but simply has none on this
+    file does not explain itself, and on a Flatpak-installed or
+    privacy-focused browser that gap is the normal case, not the exception:
+    verified on a real download here (SteamOS, Zen browser, Flatpak) where
+    the file landed with zero xattrs even though `setfattr`/`getfattr` work
+    on the same filesystem.
+    """
+    if not (IS_LINUX and hasattr(os, "listxattr")):
+        return False
+    try:
+        os.listxattr(path)
+        return True
+    except OSError:
+        return False
+
+
 def read(path, out):
     """Add every provenance fact this platform can produce to `out`.
 
@@ -345,3 +367,13 @@ def read(path, out):
         # No attribute survived — a copy, a restore, an old file — but the
         # folder is still a statement of intent.
         out.add("path", "origin", "download", WEAK)
+        if IS_LINUX and _xattrs_supported(path):
+            # The filesystem can carry the attribute; this browser just
+            # never wrote it. Silence here would read as "checked, and
+            # this file has no known origin" when what actually happened
+            # is "the strongest evidence this module has was never
+            # available on this desktop."
+            out.note("no user.xdg.origin.url on a file in Downloads: this "
+                     "browser (or its Flatpak sandbox) is not writing the "
+                     "origin attribute, so this is a folder guess, not the "
+                     "browser's own record")
