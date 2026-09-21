@@ -180,10 +180,18 @@ def _report_dead_rules(rule_set, state=None):
     """
     try:
         with ledger_module.Ledger(state) as journal:
-            dead, files = review.dead_rules(journal, rule_set)
+            uses, files = review.usage(journal, rule_set)
             new_words, headings = review.emerging(journal, rule_set)
     except Exception:                        # noqa: BLE001
         return                               # no ledger yet: nothing to say
+    dead = [use for use in uses if use.dead]
+    if files and not any(use.placed for use in uses):
+        # The history was made by some other rules file. Saying "every rule
+        # has placed something" here would be a reassurance about work this
+        # file has never done.
+        print("  nothing in the record was filed by these rules, so there")
+        print("  is nothing here to judge them by yet")
+        return
     if new_words:
         print()
         print("  %s headed enough filed documents to deserve a folder,"
