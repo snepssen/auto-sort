@@ -26,6 +26,7 @@ import paths
 import propose as propose_module
 import duplicates as duplicates_module
 import regroup as regroup_module
+import review
 import rules
 import sorter
 import trash
@@ -150,7 +151,7 @@ def explain(path, tier=identify.TIER_ALL, as_json=False, rule_set=None):
     return 0
 
 
-def check_rules(filename=None):
+def check_rules(filename=None, state=None):
     try:
         rule_set = rules.load(filename)
     except rules.RuleError as error:
@@ -163,7 +164,49 @@ def check_rules(filename=None):
     print("  %d rule%s" % (len(rule_set.rules),
                             "" if len(rule_set.rules) == 1 else "s"))
     print("  dry run %s" % ("on" if rule_set.settings.dry_run else "off"))
+    _report_dead_rules(rule_set, state)
     return 0
+
+
+def _report_dead_rules(rule_set, state=None):
+    """Rules the record has already judged, if there is a record yet.
+
+    Induction has to propose generously: a word heading three documents may
+    be the kind of document or the town it was posted from, and nothing in
+    the page says which. Running settles it. Household paperwork is nearly
+    the same letter every month, so each one is another trial, and a rule
+    that has matched a hundred of them and won none is not waiting its turn.
+    """
+    try:
+        with ledger_module.Ledger(state) as journal:
+            dead, files = review.dead_rules(journal, rule_set)
+    except Exception:                        # noqa: BLE001
+        return                               # no ledger yet: nothing to say
+    if not files:
+        return
+    if not dead:
+        print("  every rule has placed something, across %d filed files"
+              % files)
+        return
+    def short_rule(name):
+        # Generated rules are called "what the page calls itself: Rechnung";
+        # the half after the colon is the part anybody reads.
+        return name.split(": ")[-1]
+
+    print()
+    print("  %s never been the answer, across %d filed files:"
+          % ("1 rule has" if len(dead) == 1
+             else "%d rules have" % len(dead), files))
+    for use in dead:
+        beaten = ", ".join(short_rule(name) for name, _count
+                           in use.shadowed_by.most_common(2))
+        print("    %-24s matched %3d, always lost to %s"
+              % (short_rule(use.name)[:24], use.shadowed, beaten))
+    print()
+    print("  Each of those matched files that a rule above it claimed first,")
+    print("  every time. Deleting them changes nothing about where anything")
+    print("  goes -- it only shortens the file. auto-sort never edits your")
+    print("  rules, so this is yours to do or ignore.")
 
 
 def sort_folders(roots, rule_set, state_file=None, dry_run=None,
@@ -1264,7 +1307,7 @@ def main(argv=None):
         if len(targets) > 1:
             print("check-rules takes at most one file", file=sys.stderr)
             return 2
-        return check_rules(targets[0] if targets else rule_path)
+        return check_rules(targets[0] if targets else rule_path, state_file)
     if command == "sort":
         try:
             rule_set = rules.load(rule_path)
