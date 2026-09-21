@@ -10,6 +10,7 @@ import sys
 import urllib.parse
 
 import mover
+import sorter
 
 MAX_HEADER_BYTES = 16384
 PAGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -28,10 +29,16 @@ class Response(object):
 class LogPage(object):
     """Small HTTP application hosted by the daemon's already-locked socket."""
 
-    def __init__(self, journal, port, token):
+    def __init__(self, journal, port, token, rules_getter=None,
+                 rule_path=None):
         self.journal = journal
         self.port = int(port)
         self.token = str(token)
+        # A getter rather than a rule set: the daemon reloads its rules
+        # whenever the file changes, and a page showing the set that was
+        # loaded at boot would quietly go stale.
+        self.rules_getter = rules_getter
+        self.rule_path = rule_path
 
     @property
     def url(self):
@@ -89,6 +96,51 @@ class LogPage(object):
                 return _json_response(200, self._status(), "")
             return _json_response(202, {"queued": True}, "sort-now")
 
+        if parsed.path == "/api/rules" and method == "GET":
+            return _json_response(200, self._rules())
+        if parsed.path == "/api/folders" and method == "GET":
+            return _json_response(200, self._folders())
+        if parsed.path == "/api/folders/watch" and method == "POST":
+            if not self._same_origin(headers):
+                return _json_response(403, {"error": "cross-origin request refused"})
+            payload = _body(body)
+            folder = str(payload.get("folder", "")).strip()
+            action = str(payload.get("action", "add"))
+            if not folder:
+                return _json_response(400, {"error": "no folder given"})
+            folder = os.path.abspath(os.path.expanduser(folder))
+            extra = self.journal.extra_watch_folders()
+            if action == "remove":
+                extra = [path for path in extra if path != folder]
+            else:
+                if not os.path.isdir(folder):
+                    return _json_response(400, {"error": "that is not a folder"})
+                rule_set = self.rules_getter() if self.rules_getter else None
+                fixed = [os.path.abspath(os.path.expanduser(path))
+                         for path in (rule_set.watch.folders if rule_set else ())]
+                if folder in fixed:
+                    return _json_response(400, {
+                        "error": "your rules file already watches that folder"})
+                if folder not in extra:
+                    extra.append(folder)
+            self.journal.set_extra_watch_folders(extra)
+            return _json_response(200, {"watch_added": extra})
+        if parsed.path == "/api/import" and method == "POST":
+            if not self._same_origin(headers):
+                return _json_response(403, {"error": "cross-origin request refused"})
+            payload = _body(body)
+            folder = os.path.abspath(os.path.expanduser(
+                str(payload.get("folder", "")).strip()))
+            if not payload.get("folder") or not os.path.isdir(folder):
+                return _json_response(400, {"error": "that is not a folder"})
+            return self._import(folder, bool(payload.get("apply")))
+        if parsed.path == "/api/choose-folder" and method == "POST":
+            if not self._same_origin(headers):
+                return _json_response(403, {"error": "cross-origin request refused"})
+            chosen = choose_folder()
+            if chosen is None:
+                return _json_response(200, {"path": "", "cancelled": True})
+            return _json_response(200, {"path": chosen, "cancelled": False})
         if method == "POST" and parsed.path.startswith("/api/reveal/"):
             if not self._same_origin(headers):
                 return _json_response(403, {"error": "cross-origin request refused"})
@@ -133,6 +185,91 @@ class LogPage(object):
             "port": self.port,
             "queue": dict((row["status"], row["count"])
                           for row in self.journal.queue_counts()),
+        }
+
+    def _import(self, folder, apply_it):
+        """Sort one folder that is not an intake, once.
+
+        A USB stick, a burned disc, the folder somebody's brother left on
+        the desktop. It is the ordinary sort with the ordinary rules and the
+        ordinary ledger -- so `undo` reverses it exactly like anything else
+        -- and the only thing that makes it special is that nobody wants
+        this folder watched afterwards.
+        """
+        rule_set = self.rules_getter() if self.rules_getter else None
+        if rule_set is None:
+            return _json_response(409, {"error": "rules could not be read"})
+        for watched in (rule_set.watch.folders or ()):
+            watched = os.path.abspath(os.path.expanduser(watched))
+            if folder == watched:
+                return _json_response(400, {
+                    "error": "that folder is already watched; it is sorted "
+                             "on its own"})
+        try:
+            plan = sorter.build_plan(folder, rule_set, journal=self.journal)
+        except (OSError, ValueError) as error:
+            return _json_response(400, {"error": str(error)})
+
+        preview = [{
+            "name": os.path.basename(item.members[0].source),
+            "destination": item.members[0].destination,
+            "rule": item.rule_name,
+        } for item in plan.items[:200]]
+        if not apply_it:
+            return _json_response(200, {
+                "folder": folder, "planned": len(plan.items),
+                "skipped": len(plan.skipped), "applied": False,
+                "moves": preview})
+        result = sorter.execute(plan, rule_set, self.journal, dry_run=False)
+        return _json_response(200, {
+            "folder": folder, "planned": len(plan.items),
+            "skipped": len(plan.skipped), "applied": True,
+            "moved": getattr(result, "moved", len(plan.items)),
+            "failed": len(getattr(result, "failures", []) or []),
+            "moves": preview})
+
+    def _rules(self):
+        """The rules as they stand, in the order they are tried.
+
+        Read-only. This page shows what the file says; the file itself
+        belongs to whoever wrote it and nothing here rewrites it.
+        """
+        rule_set = self.rules_getter() if self.rules_getter else None
+        if rule_set is None:
+            return {"source": self.rule_path or "", "rules": [],
+                    "error": "rules could not be read"}
+        return {
+            "source": rule_set.source,
+            "rules": [{
+                "name": rule.name,
+                "when": rule.when_text,
+                "into": rule.into or "",
+                "holding": bool(rule.holding),
+                "rename": rule.rename or "",
+            } for rule in rule_set.rules],
+        }
+
+    def _folders(self):
+        """Where files come in from, and where they are sent."""
+        rule_set = self.rules_getter() if self.rules_getter else None
+        if rule_set is None:
+            return {"watch": [], "destinations": [], "source": ""}
+        roots, seen = [], set()
+        for rule in rule_set.rules:
+            if not rule.into:
+                continue
+            literal = rule.into.split("{")[0].rstrip(os.sep)
+            if literal and literal not in seen:
+                seen.add(literal)
+                roots.append({"path": literal, "holding": bool(rule.holding)})
+        added = set(self.journal.extra_watch_folders())
+        return {
+            "watch": [{"path": path, "added_here": path in added}
+                      for path in (rule_set.watch.folders or ())],
+            "added": sorted(added),
+            "depth": rule_set.watch.depth,
+            "destinations": roots,
+            "source": rule_set.source,
         }
 
     def _move(self, row):
@@ -299,6 +436,65 @@ def trash(path):
         subprocess.run(["powershell", "-NoProfile", "-Command", command], check=True)
         return
     subprocess.run(["gio", "trash", path], check=True)
+
+
+def _body(raw):
+    """A POST body as a dict, never raising and never returning anything else."""
+    try:
+        payload = json.loads((raw or b"").decode("utf-8") or "{}")
+    except (UnicodeDecodeError, ValueError, AttributeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def choose_folder():
+    """Ask the operating system for a folder, and get a real path back.
+
+    A web page cannot do this. `<input type=file webkitdirectory>` hands over
+    file names without a usable path and wants to upload them, which is the
+    opposite of what a local sorter needs. So the request comes back here and
+    the platform's own chooser is opened -- the same shape as `reveal`, which
+    has always shelled out to the file manager.
+
+    Returns the path, or None when the person cancelled or no chooser could
+    be opened. A missing chooser is not an error: the page keeps a text field
+    beside the button for exactly that case, and a typed path works as well
+    as a picked one.
+    """
+    if sys.platform == "darwin":
+        script = ('POSIX path of (choose folder with prompt '
+                  '"Choose a folder for auto-sort to tidy")')
+        done = _run(["osascript", "-e", script])
+        return done.strip() or None if done is not None else None
+    if os.name == "nt":
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+            "if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }")
+        done = _run(["powershell", "-NoProfile", "-Command", script])
+        return done.strip() or None if done is not None else None
+    for chooser in (["zenity", "--file-selection", "--directory"],
+                    ["kdialog", "--getexistingdirectory", os.path.expanduser("~")]):
+        done = _run(chooser)
+        if done is not None:
+            return done.strip() or None
+    return None
+
+
+def _run(command):
+    """The chooser's answer, or None if it could not be asked at all.
+
+    A cancelled dialog and a missing program both come back as no folder,
+    and the difference matters: one is an answer and the other is a reason
+    to show the text field instead.
+    """
+    try:
+        done = subprocess.run(command, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, timeout=300,
+                              universal_newlines=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else ""
 
 
 def _applescript_string(value):

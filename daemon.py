@@ -112,7 +112,9 @@ class PollingDaemon(object):
         # answering. "Something is listening" is not the same question as
         # "the thing I asked to be replaced has been".
         self.journal.set_state("daemon_pid", str(os.getpid()))
-        self.web = logpage.LogPage(self.journal, self.lock.port, self.token)
+        self.web = logpage.LogPage(self.journal, self.lock.port, self.token,
+                                   rules_getter=self._reload_rules,
+                                   rule_path=self.rule_path)
         self.rule_set = None
         self._rule_identity = None
         self._quit_requested = False
@@ -158,7 +160,17 @@ class PollingDaemon(object):
             self.journal.set_paused(False)
             self.output("Rules load again; sorting resumed.")
 
-        identity = (loaded.source, loaded.source_hash)
+        # Folders somebody added from the log page. They live in the state
+        # database rather than in the rules file, because that file is
+        # theirs and this program promised never to write it -- a promise
+        # worth more than the convenience of putting them in one place.
+        extra = self.journal.extra_watch_folders()
+        if extra:
+            known = set(loaded.watch.folders)
+            loaded.watch.folders = list(loaded.watch.folders) + [
+                folder for folder in extra if folder not in known]
+
+        identity = (loaded.source, loaded.source_hash, tuple(extra))
         if identity != self._rule_identity:
             self.rule_set = loaded
             self._rule_identity = identity

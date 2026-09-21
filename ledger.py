@@ -357,6 +357,23 @@ class Ledger(object):
              ORDER BY m.id DESC LIMIT ?
         """, (limit,)).fetchall()
 
+    def extra_watch_folders(self):
+        """Intake folders added from the log page, newest last.
+
+        Kept here and not in the rules file. That file belongs to whoever
+        wrote it and carries their comments; a program that rewrites it to
+        add a line is a program that eventually eats one.
+        """
+        try:
+            stored = json.loads(self.get_state("extra_watch") or "[]")
+        except (TypeError, ValueError):
+            return []
+        return [path for path in stored if isinstance(path, str)]
+
+    def set_extra_watch_folders(self, folders):
+        self.set_state("extra_watch", json.dumps(
+            [str(folder) for folder in folders]))
+
     def search_moves(self, text, limit=200):
         """Every move whose name, destination or rule contains `text`.
 
