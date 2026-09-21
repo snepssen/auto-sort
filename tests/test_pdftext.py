@@ -393,3 +393,28 @@ class PatternsThatMustNotBacktrack(unittest.TestCase):
 
     def test_a_number_that_is_not_an_object_header_is_not_one(self):
         self.assertIsNone(pdftext._OBJ.search(b"999 not an object"))
+
+
+class APdfMustNotBeAbleToAskForAGigabyte(unittest.TestCase):
+    """`zlib.decompress` has no output limit and a PDF is compressed.
+
+    A real 0.91 MB file in a real folder grew the process by 171 MB on its
+    own. Only the first few thousand characters are ever used, so a stream
+    that wants more than the cap has nothing to offer that is worth it.
+    """
+
+    def test_a_highly_compressible_stream_is_capped(self):
+        import zlib
+        bomb = zlib.compress(b"A" * (64 * 1024 * 1024))
+        self.assertLess(len(bomb), 100000, "test blob is not compressible")
+        out = pdftext._unzip(bomb)
+        self.assertIsNotNone(out)
+        self.assertLessEqual(len(out), pdftext.MAX_INFLATE)
+
+    def test_an_ordinary_stream_is_returned_whole(self):
+        import zlib
+        body = b"BT /F1 12 Tf (Rechnung) Tj ET" * 20
+        self.assertEqual(pdftext._unzip(zlib.compress(body)), body)
+
+    def test_rubbish_is_declined_rather_than_raising(self):
+        self.assertIsNone(pdftext._unzip(b"not compressed at all"))

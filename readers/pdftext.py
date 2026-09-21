@@ -34,6 +34,12 @@ import zlib
 MAX_BYTES = 4 * 1024 * 1024     # how far into the file to look at all
 MAX_STREAMS = 60                # streams to inflate before giving up
 MAX_CHARS = 8000                # text to keep; a letterhead is in the first few
+# How much any one stream may inflate to. `zlib.decompress` has no output
+# limit, and a PDF is compressed: a real 0.91 MB file in a real folder
+# grew the process by 171 MB on its own, a hundred and ninety fold. Only
+# the first few thousand characters are ever used, so a stream that wants
+# more than this has nothing to offer that is worth the memory.
+MAX_INFLATE = 4 * 1024 * 1024
 
 # A page drawn as a photograph rather than set as type.
 _IMAGE_HINT = re.compile(rb"/Subtype\s*/Image|/DCTDecode|/JPXDecode|/CCITTFaxDecode")
@@ -189,13 +195,20 @@ def _inflate(body):
         return None
     end = body.find(b"endstream", match.end())
     raw = body[match.end():end if end != -1 else len(body)]
+    return _unzip(raw)
+
+
+def _unzip(raw):
+    """Inflate, but never past `MAX_INFLATE`.
+
+    `decompressobj().decompress(data, limit)` stops at the limit and leaves
+    the rest in `unconsumed_tail`, which is exactly the behaviour wanted:
+    take what is useful, refuse to be told to allocate a gigabyte.
+    """
     try:
-        return zlib.decompress(raw)
+        return zlib.decompressobj().decompress(raw, MAX_INFLATE)
     except zlib.error:
-        try:
-            return zlib.decompressobj().decompress(raw)
-        except zlib.error:
-            return None
+        return None
 
 
 def _parse_cmap(body):
@@ -251,6 +264,11 @@ def _font_maps(data):
     alternative is resolving page trees, and only the front of the file is
     ever read here anyway.
     """
+    # Offsets, not slices. `data[a:b]` copies, and four thousand objects of
+    # up to sixty-four kilobytes each is a quarter of a gigabyte of copies
+    # to answer a question about a handful of them. Measured on a real
+    # folder: two hundred PDFs peaked at 237 MB this way and at 34 MB once
+    # the copying stopped.
     objects = {}
     for count, match in enumerate(_OBJ.finditer(data)):
         if count >= MAX_OBJECTS:
@@ -258,12 +276,14 @@ def _font_maps(data):
         number = int(match.group(1))
         if number not in objects:
             end = data.find(b"endobj", match.end())
-            objects[number] = data[match.end():end if end != -1 else
-                                   match.end() + 65536]
+            objects[number] = (match.end(),
+                               end if end != -1 else match.end() + 65536)
 
+    # A view costs nothing and `re` searches it happily.
+    view = memoryview(data)
     cmap_of_font = {}
-    for number, body in objects.items():
-        ref = _TOUNICODE_REF.search(body)
+    for number, (start, stop) in objects.items():
+        ref = _TOUNICODE_REF.search(view[start:stop])
         if ref:
             cmap_of_font[number] = int(ref.group(1))
 
@@ -278,7 +298,10 @@ def _font_maps(data):
             if target is None or target not in objects:
                 continue
             if target not in parsed:
-                body = _inflate(objects[target])
+                # Only the few objects that really are character maps are
+                # ever copied out of the view.
+                start, stop = objects[target]
+                body = _inflate(bytes(view[start:stop]))
                 parsed[target] = _parse_cmap(body) if body else ({}, 1)
             if parsed[target][0]:
                 maps[label] = parsed[target]
@@ -388,15 +411,11 @@ def extract(peek):
             break
         body = data[match.end():end]
         streams += 1
-        try:
-            body = zlib.decompress(body)
-        except zlib.error:
-            try:
-                # Streams whose length was written wrong, which is common
-                # enough that giving up on the file would be an overreaction.
-                body = zlib.decompressobj().decompress(body)
-            except zlib.error:
-                continue
+        # Capped, and tolerant of a wrongly written length -- which is common
+        # enough that giving up on the file would be an overreaction.
+        body = _unzip(body)
+        if body is None:
+            continue
         if b"BT" not in body:            # no text block: a picture or a path
             continue
         piece = _page_text(body, maps)
