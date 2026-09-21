@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import collections
 import re
+import unicodedata
 
 # How many leading fields to look at. Past this the tail is usually a free
 # title with a varying number of words in it, which never clusters.
@@ -284,6 +285,19 @@ def _is_category(kind, values, total):
 _WORD = re.compile(r"[^\W\d_]{%d,}" % MIN_CATEGORY_LENGTH, re.UNICODE)
 
 
+def _fold(word):
+    """One key for one word, however it was accented or capitalised.
+
+    `Tamás` and `Tamas` are a person written twice, not two people. Counted
+    apart they each stayed under the letterhead ceiling and both came back
+    as categories; counted together they are what they always were.
+    """
+    return "".join(
+        character for character
+        in unicodedata.normalize("NFKD", word.lower())
+        if not unicodedata.combining(character))
+
+
 def _best_spelling(counter):
     """The spelling to name a folder with, out of the ones people wrote.
 
@@ -332,17 +346,20 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     frequency = collections.Counter()
     spellings = collections.defaultdict(collections.Counter)
     positions = collections.defaultdict(list)
-    for heading in headings:
+    documents = collections.defaultdict(set)
+    for number, heading in enumerate(headings):
         # Counted case-insensitively -- RECHNUNG in a letterhead and
         # Rechnung in a filename are one word -- but the spelling people
         # actually use most is the one that names the folder.
         seen = {}
         for index, word in enumerate(_WORD.findall(heading or "")):
-            seen.setdefault(word.lower(), index)
-            spellings[word.lower()][word] += 1
+            key = _fold(word)
+            seen.setdefault(key, index)
+            spellings[key][word] += 1
         for key, index in seen.items():
             frequency[key] += 1
             positions[key].append(index)
+            documents[key].add(number)
 
     ceiling = max(min_occurrences, total * max_share)
     terms = [(_best_spelling(spellings[key]), count)
@@ -353,12 +370,47 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
         # distinct answers is the smallest thing that sorts anything.
         return []
     def rank(pair):
-        key = pair[0].lower()
+        key = _fold(pair[0])
         where = positions[key]
         return (sum(where) / float(len(where)), -pair[1], key)
 
     terms.sort(key=rank)
-    return terms[:cap]
+    return _without_boilerplate(terms, documents)[:cap]
+
+
+def _without_boilerplate(terms, documents, overlap=0.9):
+    """Drop a word that only ever appears alongside an earlier one.
+
+    A payslip says `Loonbrief` at the top and then `Kantoor`, `afhaling`
+    and `nummer` further down, on all forty of them and nowhere else.
+    Counting alone cannot tell those apart -- each is in exactly forty
+    documents -- but the *same* forty is the giveaway. A word whose
+    documents are all already accounted for by a word that comes before it
+    is part of that word's template, not a category beside it.
+
+    This is the same judgement `check-rules` makes after a few hundred files
+    have moved, made here before any of them move.
+    """
+    kept = []
+    claimed = []
+    for word, count in terms:
+        mine = documents[_fold(word)]
+        if any(len(mine - theirs) <= (1 - overlap) * len(mine)
+               for theirs in claimed):
+            continue
+        # A word sitting inside two different categories at once is not a
+        # third category, it is whoever the documents are about. A name
+        # spans the payslips and the job applications and the certificates;
+        # `Loonbrief` spans only payslips. Neither the ceiling nor the
+        # subset test sees this, because the name is a minority of the pile
+        # and a subset of nothing.
+        shared = sum(1 for theirs in claimed
+                     if len(mine & theirs) >= 0.25 * len(mine))
+        if shared >= 2:
+            continue
+        kept.append((word, count))
+        claimed.append(mine)
+    return kept
 
 
 def learn_best(stems, min_support=MIN_SUPPORT, depths=(2, 3, 4)):

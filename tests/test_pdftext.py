@@ -251,12 +251,13 @@ class Induction(unittest.TestCase):
         self.assertEqual(sorted(words),
                          ["Mietvertrag", "Rechnung", "Steuerbescheid"])
 
-    def test_the_kind_of_document_comes_before_the_sender(self):
-        """Ordered by where a word sits, so a type beats who sent it.
+    def test_the_sender_is_not_a_second_category(self):
+        """`Finanzamt` heads exactly the documents `Steuerbescheid` does.
 
-        `Finanzamt` heads as many documents as `Steuerbescheid` does. The
-        one at the front of the line is the one that names the folder, and
-        nothing here knows which of them is a kind and which a sender.
+        Counting alone cannot separate them -- both appear three times --
+        but the *same* three is the giveaway: the sender is part of the
+        letter's template, not a category standing beside it. Only the word
+        at the front of the line survives.
         """
         letters = ["Steuerbescheid 2011 Finanzamt Muenchen",
                    "Steuerbescheid 2012 Finanzamt Muenchen",
@@ -265,8 +266,10 @@ class Induction(unittest.TestCase):
                    "Rechnung 5120 Stadtwerke Muenchen",
                    "Rechnung 6033 Stadtwerke Muenchen"]
         words = [word for word, _count in shapes.learn_terms(letters)]
-        self.assertLess(words.index("Steuerbescheid"), words.index("Finanzamt"))
-        self.assertLess(words.index("Rechnung"), words.index("Stadtwerke"))
+        self.assertIn("Steuerbescheid", words)
+        self.assertIn("Rechnung", words)
+        self.assertNotIn("Finanzamt", words)
+        self.assertNotIn("Stadtwerke", words)
 
 
 class WordsInsideWords(unittest.TestCase):
@@ -320,3 +323,31 @@ class WordsInsideWords(unittest.TestCase):
         """The reason the pile above has three kinds in it and not two."""
         placed = self.sorted_into(self.PILE[:6])
         self.assertNotIn("Mietvertrag", set(placed.values()))
+
+    def test_a_name_spelled_two_ways_is_one_name(self):
+        """Accents split a person in half and let both halves through.
+
+        Observed on a real library: `Tamás` and `Tamas` were counted
+        separately, each stayed under the letterhead ceiling, and both came
+        back as categories.
+        """
+        letters = ["Tamás Török Rechnung eins", "Tamas Torok Rechnung zwei",
+                   "TAMÁS TÖRÖK Rechnung drei", "Tamás Török Rechnung vier",
+                   "Tamas Torok Mietvertrag eins",
+                   "Tamás Török Mietvertrag zwei",
+                   "TAMAS TOROK Mietvertrag drei"]
+        words = [shapes._fold(word) for word, _count
+                 in shapes.learn_terms(letters)]
+        self.assertEqual(words.count("tamas"), len([w for w in words
+                                                    if w == "tamas"]))
+        self.assertLessEqual(words.count("tamas"), 1)
+
+    def test_a_word_inside_two_categories_is_neither(self):
+        """Whoever the documents are about is not a third kind of document."""
+        letters = ["Loonbrief Tamas Kantoor", "Loonbrief Tamas Kantoor",
+                   "Loonbrief Tamas Kantoor", "Payroll Tamas Office",
+                   "Payroll Tamas Office", "Payroll Tamas Office"]
+        words = [word for word, _count in shapes.learn_terms(letters)]
+        self.assertIn("Loonbrief", words)
+        self.assertIn("Payroll", words)
+        self.assertNotIn("Tamas", words)
