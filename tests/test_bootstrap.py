@@ -68,6 +68,37 @@ class BootstrapTests(unittest.TestCase):
                                   return_value=[programs.PROGRAMS["exiftool"]]):
             self.assertTrue(bootstrap.offer(quiet=True))
 
+    def test_immutable_root_warns_that_the_printed_command_will_fail(self):
+        # A stock SteamOS reports "pacman" as the manager and needs_root is
+        # True, so the naive message is a command that looks runnable and
+        # is not: pacman can't write to a locked root without an explicit
+        # unlock first. That gap is exactly what steamos-readonly signals.
+        printed = []
+        with mock.patch.object(programs, "current_manager", return_value="pacman"), \
+                mock.patch.object(programs, "missing",
+                                  return_value=[programs.PROGRAMS["exiftool"]]), \
+                mock.patch.object(programs, "immutable_root", return_value=True):
+            bootstrap.offer(assume_yes=True, quiet=False)
+        # offer() prints via builtins.print in quiet=False mode; capture it.
+        with mock.patch("builtins.print", side_effect=lambda *a: printed.append(" ".join(str(x) for x in a))), \
+                mock.patch.object(programs, "current_manager", return_value="pacman"), \
+                mock.patch.object(programs, "missing",
+                                  return_value=[programs.PROGRAMS["exiftool"]]), \
+                mock.patch.object(programs, "immutable_root", return_value=True):
+            bootstrap.offer(assume_yes=True, quiet=False)
+        joined = "\n".join(printed)
+        self.assertIn("unlocked", joined)
+        self.assertIn("sudo pacman", joined)
+
+    def test_immutable_root_detects_steamos_readonly_binary(self):
+        with mock.patch.object(shutil, "which",
+                               side_effect=lambda name: "/usr/bin/steamos-readonly"
+                               if name == "steamos-readonly" else None):
+            self.assertTrue(programs.immutable_root())
+        with mock.patch.object(shutil, "which", return_value=None), \
+                mock.patch.object(os.path, "exists", return_value=False):
+            self.assertFalse(programs.immutable_root())
+
 
 if __name__ == "__main__":
     unittest.main()

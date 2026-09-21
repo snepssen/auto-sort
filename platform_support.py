@@ -120,6 +120,23 @@ def missing():
     return [program for key, program in PROGRAMS.items() if not find(key)]
 
 
+def immutable_root():
+    """Best-effort detection of an OS-managed, read-only root filesystem.
+
+    Not every read-only signal is worth acting on -- a plain `mount -o ro`
+    means nothing here -- so this only reports True for image-based distros
+    that need an explicit unlock step before their own package manager can
+    write anything. SteamOS is the case that matters: `sudo pacman -S` looks
+    like a working command and fails anyway, which is worse than not
+    printing one at all.
+    """
+    if shutil.which("steamos-readonly"):
+        return True
+    if os.path.exists("/run/ostree-booted"):
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Python packages: there are none, and that is the point
 # ---------------------------------------------------------------------------
