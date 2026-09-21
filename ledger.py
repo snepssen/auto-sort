@@ -21,6 +21,11 @@ import paths
 SCHEMA_VERSION = 7
 
 
+def _days_ago(days):
+    return (datetime.datetime.now()
+            - datetime.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(
         timespec="seconds")
@@ -425,6 +430,87 @@ class Ledger(object):
             "FROM mirror GROUP BY status").fetchall()
         return dict((row["status"], {"files": row["c"], "bytes": row["bytes"]})
                     for row in rows)
+
+    def usage(self):
+        """How big the ledger is, and how fast it got that way.
+
+        Size alone is the wrong trigger. Fifty thousand moves is nothing if
+        it took ten years and a great deal if it took a week -- the same
+        number means "this machine is busy and fine" or "this will need its
+        own disk by Tuesday". So the rate is measured and projected, and the
+        projection is what decides.
+        """
+        size = 0
+        for suffix in ("", "-wal"):
+            try:
+                size += os.path.getsize(self.filename + suffix)
+            except OSError:
+                pass
+        rows = self.connection.execute(
+            "SELECT COUNT(*) FROM moves").fetchone()[0]
+        span = self.connection.execute(
+            "SELECT MIN(created_at), MAX(created_at) FROM moves").fetchone()
+        days = 0.0
+        if span and span[0] and span[1]:
+            try:
+                first = datetime.datetime.strptime(span[0][:19],
+                                                   "%Y-%m-%dT%H:%M:%S")
+                last = datetime.datetime.strptime(span[1][:19],
+                                                  "%Y-%m-%dT%H:%M:%S")
+                days = max((last - first).total_seconds() / 86400.0, 0.0)
+            except ValueError:
+                days = 0.0
+        # Under a day of history says nothing about a year of it.
+        per_day = size / days if days >= 1 else 0.0
+        return {"bytes": size, "rows": rows, "days": days,
+                "bytes_per_day": per_day, "projected_year": per_day * 365}
+
+    def should_compact(self, size_limit, year_limit):
+        use = self.usage()
+        if use["bytes"] >= size_limit:
+            return "it has reached %.0f MB" % (use["bytes"] / 1e6)
+        if use["projected_year"] >= year_limit:
+            return ("it is growing at %.1f MB a day, which is %.0f MB a year"
+                    % (use["bytes_per_day"] / 1e6,
+                       use["projected_year"] / 1e6))
+        return ""
+
+    def compact(self, keep_facts_days=90, keep_dry_run_days=7):
+        """Shed the bulk without losing where anything went.
+
+        Three quarters of a ledger row is `facts_json` -- everything that
+        was known about the file at the time. That is worth keeping while it
+        is still useful and is not worth keeping forever: what somebody
+        actually asks this database, years later, is where a file went, and
+        that is the source, the destination and the date.
+
+        So nothing is deleted except previews, which moved nothing by
+        definition. Old rows keep their history and lose their evidence.
+        Rows a `regroup` might still promote keep everything, because that
+        is the one thing that reads old facts and acts on them.
+        """
+        cutoff = _days_ago(keep_facts_days)
+        previews = _days_ago(keep_dry_run_days)
+        before = self.usage()["bytes"]
+        with self.connection:
+            dropped = self.connection.execute(
+                "DELETE FROM moves WHERE status = 'dry-run' AND created_at < ?",
+                (previews,)).rowcount
+            thinned = self.connection.execute(
+                "UPDATE moves SET facts_json = NULL "
+                " WHERE facts_json IS NOT NULL AND created_at < ? "
+                "   AND NOT (holding = 1 AND undone_at IS NULL)",
+                (cutoff,)).rowcount
+        # Outside the transaction: VACUUM cannot run inside one. And the
+        # checkpoint afterwards is not optional -- VACUUM rewrites the whole
+        # database through the write-ahead log, so without collapsing it the
+        # ledger measures *larger* after compaction than before, which is a
+        # very confusing thing for a maintenance job to report.
+        self.connection.execute("VACUUM")
+        self.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.set_state("last_compacted", now())
+        return {"previews_removed": dropped, "rows_thinned": thinned,
+                "bytes_before": before, "bytes_after": self.usage()["bytes"]}
 
     def extra_watch_folders(self):
         """Intake folders added from the log page, newest last.

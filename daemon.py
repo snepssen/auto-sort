@@ -204,6 +204,44 @@ class PollingDaemon(object):
     # forever and enough to answer "is it alive, and what has it been doing".
     HEARTBEAT_INTERVAL = 3600
 
+    # Two triggers, because one number cannot tell the two cases apart.
+    # Fifty thousand moves is nothing if it took ten years and a great deal
+    # if it took a week: the same size means "this machine is busy and fine"
+    # or "this will want its own disk by Tuesday".
+    LEDGER_SIZE_LIMIT = 64 * 1024 * 1024        # big enough to bother
+    LEDGER_YEAR_LIMIT = 256 * 1024 * 1024       # or heading there fast
+    LEDGER_CHECK_INTERVAL = 86400               # once a day is plenty
+
+    def _tidy_ledger(self, now_value):
+        """Shed old evidence when the ledger is big, or getting big quickly.
+
+        Nothing is deleted but previews, which moved no files by definition.
+        Everything else keeps its row -- where a file came from, where it
+        went, when, and by which rule -- and loses only the detailed facts
+        that were true at the time. What somebody asks this database years
+        later is where something went, and that survives.
+        """
+        last = self.journal.get_state("ledger_checked_at")
+        if last and now_value - float(last) < self.LEDGER_CHECK_INTERVAL:
+            return
+        self.journal.set_state("ledger_checked_at", str(now_value))
+        reason = self.journal.should_compact(self.LEDGER_SIZE_LIMIT,
+                                             self.LEDGER_YEAR_LIMIT)
+        if not reason:
+            return
+        self.output("Tidying the ledger because %s." % reason)
+        try:
+            result = self.journal.compact()
+        except Exception as error:           # noqa: BLE001
+            # A ledger that cannot be tidied is still a working ledger.
+            self.output("Could not tidy the ledger: %s" % error)
+            return
+        self.output("Ledger: %.1f MB -> %.1f MB, %d previews dropped, "
+                    "%d rows kept but thinned."
+                    % (result["bytes_before"] / 1e6,
+                       result["bytes_after"] / 1e6,
+                       result["previews_removed"], result["rows_thinned"]))
+
     def _drain_mirror(self):
         """Copy whatever is waiting for the second disk, if it is there.
 
@@ -357,6 +395,7 @@ class PollingDaemon(object):
             self._check_corrections(rule_set, now_value)
             self._check_regroup(rule_set, now_value, requested_dry)
             self._drain_mirror()
+            self._tidy_ledger(now_value)
         return results
 
     def _observe_root(self, root, rule_set, fingerprint, now_value):
