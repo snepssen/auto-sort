@@ -104,14 +104,21 @@ FACETS = (
     Facet("screenshot", ("capture",), "Screenshots/{added:%Y-%m}", 40,
           when="capture = screenshot",
           note="screenshots", group_by="capture", kind="image"),
-    Facet("scan-page", ("scan_of",), "Scans/{happened:%Y}", 42,
+    # `{added}` rather than `{happened}`, and the difference is the whole
+    # rule firing or not. A scanned page carries no capture date, so
+    # `happened` falls back to when the file arrived -- a WEAK inference
+    # that cannot clear the 0.6 floor, so the rule declines every time and
+    # the scan lands in Unfiled with no explanation. Eight of nine did
+    # exactly that on a test pile; the one that worked was called
+    # `20090314.pdf` and got its date from its own name. `added` is certain.
+    Facet("scan-page", ("scan_of",), "Scans/{added:%Y}", 42,
           when="capture = scan and scan_of = page",
           note="scanned paperwork, which is a document whatever it was "
                "stored as -- a JPEG off a flatbed and a PDF off a "
                "multifunction are the same pile",
           group_by="scan_of", per_kind=True, as_kind="document",
           holding=True),
-    Facet("scan-print", ("scan_of",), "Scans/{happened:%Y}", 44,
+    Facet("scan-print", ("scan_of",), "Scans/{added:%Y}", 44,
           when="capture = scan and scan_of = print",
           note="scanned photographs, which belong with the photographs",
           group_by="scan_of", kind="image"),

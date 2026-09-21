@@ -211,3 +211,45 @@ class ThroughTheWholeLadder(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AScanMustActuallyBeFiled(unittest.TestCase):
+    """The rule firing at all, which is a separate question from matching.
+
+    A rule whose destination needs a fact weaker than `min_confidence`
+    declines silently: the file still moves, to the catch-all, with nothing
+    said about why. That is the worst failure this program has, because it
+    looks like success.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-scanfile-")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_a_scan_with_no_date_anywhere_still_reaches_the_scans_folder(self):
+        import propose
+        import rules as rules_module
+        import sorter
+        for index in range(4):
+            fixtures.pdf(os.path.join(self.dir, "scan%04d.pdf" % index),
+                         producer="HP ScanJet Pro firmware", image_only=True)
+        for index in range(3):
+            fixtures.jpeg(os.path.join(self.dir, "unbenannt%d.jpg" % index),
+                          width=2480, height=3508, make="EPSON",
+                          model="Perfection V600 Photo", dpi=300, taken=None)
+        found = propose.survey(self.dir)
+        text = propose.render(found, propose.assess(found)).replace(
+            "settle_seconds = 3", "settle_seconds = 0")
+        path = os.path.join(self.dir, "r.ini")
+        with open(path, "w") as handle:
+            handle.write(text)
+        plan = sorter.build_plan(self.dir, rules_module.load(path))
+        landed = [os.path.dirname(item.members[0].destination)
+                  for item in plan.items
+                  if item.members[0].source.endswith(".pdf")]
+        self.assertTrue(landed, "no scanned PDF was planned at all")
+        for folder in landed:
+            self.assertIn("Scans", folder,
+                          "a scan fell through to %s" % folder)
