@@ -252,3 +252,54 @@ class ANameIsWorthMoreThanTheDiskSpace(unittest.TestCase):
     def tearDown(self):
         duplicates.forget_folders()
         shutil.rmtree(self.dir, ignore_errors=True)
+
+
+class TheDesktopAlreadySaidWhichIsTheCopy(unittest.TestCase):
+    """`Love (1).wav` beside `Ledger of Love.wav`, both in the same drawer.
+
+    Location cannot separate these and the tool declines coin tosses, so
+    without a tie-break two identical files sit there forever. The desktop
+    that made the copy wrote which one it was into the name.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-copymark-")
+        self.holding = os.path.join(self.dir, "Music", "Unfiled")
+        os.makedirs(self.holding)
+
+    def tearDown(self):
+        duplicates.forget_folders()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def write(self, name, body=b"wav" * 4000):
+        path = os.path.join(self.holding, name)
+        with open(path, "wb") as handle:
+            handle.write(body)
+        return path
+
+    def scan(self):
+        duplicates.forget_folders()
+        return duplicates.scan([self.dir], intake=[],
+                               holding=[self.holding], min_size=1)
+
+    def test_only_the_bracketed_number_counts(self):
+        self.assertTrue(duplicates.copy_marked("Love (1).wav"))
+        self.assertTrue(duplicates.copy_marked("report (12).pdf"))
+        self.assertFalse(duplicates.copy_marked("Ledger of Love.wav"))
+        # A number that is part of the name, not a mark the desktop added.
+        self.assertFalse(duplicates.copy_marked("B02 - Arctic Fox II.png"))
+        self.assertFalse(duplicates.copy_marked("Symphony No. 5.wav"))
+
+    def test_the_marked_copy_is_the_spare(self):
+        keep = self.write("Ledger of Love.wav")
+        spare = self.write("Love (1).wav")
+        group = self.scan()[0]
+        self.assertEqual(group.keeper, keep)
+        self.assertEqual(group.losers, [spare])
+
+    def test_two_unmarked_names_are_still_a_coin_toss_and_are_left(self):
+        self.write("Ledger of Love.wav")
+        self.write("Something About Love.wav")
+        group = self.scan()[0]
+        self.assertEqual(group.losers, [])
+        self.assertEqual(len(group.undecided), 1)

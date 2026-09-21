@@ -157,11 +157,23 @@ KEPT = 2          # anywhere else, which means somebody put it there
 MIN_SIZE = 4096   # below this, identical files are usually stubs and icons
 
 
+# What every desktop appends when it copies a file next to itself:
+# `Love (1).wav`, `report (2).pdf`. Only the parenthesised number, never the
+# word -- "copy" is English, "Kopie" and "kopia" are not, and a number in
+# brackets is the same mark in every locale.
+_COPY_MARK = re.compile(r"[ _-]*\(\d{1,3}\)$")
+
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
 _HEXISH = re.compile(r"^[0-9a-f]{4,}$", re.I)
 
 # Below this a name is machine noise rather than something a person wrote.
 READABLE = 0.5
+
+
+def copy_marked(path):
+    """Does this name say it was made by copying something beside it?"""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    return bool(_COPY_MARK.search(stem))
 
 
 def name_information(stem):
@@ -228,7 +240,7 @@ class Group(object):
         # Best place first, so `keeper` is simply the first one.
         self.paths = sorted(
             paths, key=lambda path: (tuple(-part for part in places[path]),
-                                     path))
+                                     copy_marked(path), path))
         self.places = places
 
     @property
@@ -249,7 +261,16 @@ class Group(object):
         best = self.places[self.keeper]
         if self.keeper_is_nameless and not self.rename_to:
             return []
-        return [path for path in self.paths[1:] if self.places[path] < best]
+        # A copy mark breaks a tie that location cannot. Two identical files
+        # in equally good folders are otherwise a coin toss this declines to
+        # make -- but when one of them is called `Love (1)` the desktop has
+        # already said which is the copy, and nothing is lost by agreeing:
+        # the bytes are the same, so only a name is being chosen.
+        marked = copy_marked(self.keeper)
+        return [path for path in self.paths[1:]
+                if self.places[path] < best
+                or (self.places[path] == best and not marked
+                    and copy_marked(path))]
 
     @property
     def keeper_is_nameless(self):
@@ -289,10 +310,10 @@ class Group(object):
         Two deliberate copies in two deliberate folders are somebody's
         filing, not a mistake to correct. They are reported and left alone.
         """
-        best = self.places[self.keeper]
         if self.keeper_is_nameless and not self.rename_to:
             return list(self.paths[1:])
-        return [path for path in self.paths[1:] if self.places[path] >= best]
+        spare = set(self.losers)
+        return [path for path in self.paths[1:] if path not in spare]
 
     def wasted(self):
         return self.size * len(self.losers)
