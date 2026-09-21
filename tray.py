@@ -29,7 +29,7 @@ def create(actions):
         if sys.platform.startswith("win"):
             return _windows_tray(actions)
         return UnavailableTray(
-            "no StatusNotifier backend on this Linux desktop; continuing headless")
+            "no StatusNotifier backend on this Linux desktop")
     except Exception as error:
         return UnavailableTray("native tray unavailable: %s" % error)
 

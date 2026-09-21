@@ -23,6 +23,7 @@ import fixtures                                          # noqa: E402
 import ledger                                            # noqa: E402
 import rules                                             # noqa: E402
 import sorter                                            # noqa: E402
+import tray                                               # noqa: E402
 
 
 class PersistentDaemon(unittest.TestCase):
@@ -343,6 +344,26 @@ folders = {other}
                 daemon.PollingDaemon(
                     self.rule_file, self.state_file, port=first.lock.port,
                     output=lambda _message: None)
+
+    def test_headless_tray_message_is_not_doubled(self):
+        # tray.create's Linux reason and daemon.run's own log line each used
+        # to say "continuing headless", so a real headless Linux daemon
+        # logged "...continuing headless; continuing headless." -- true but
+        # confusing, and cheap to get wrong again since the phrase lives in
+        # two files that don't check each other.
+        self.configure()
+        messages = []
+        with self.service(messages) as service:
+            service._quit_requested = True
+            with mock.patch.object(daemon.tray, "create",
+                                   return_value=tray.UnavailableTray(
+                                       "no StatusNotifier backend on this "
+                                       "Linux desktop")):
+                service.run()
+        headless = [message for message in messages
+                   if "continuing headless" in message]
+        self.assertEqual(len(headless), 1)
+        self.assertEqual(headless[0].count("continuing headless"), 1)
 
     def test_wake_reaches_the_running_instance(self):
         self.configure()
