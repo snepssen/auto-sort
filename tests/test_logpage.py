@@ -174,6 +174,35 @@ class LogPageTests(unittest.TestCase):
             logpage.reveal(self.destination)
         self.assertEqual(run.call_args_list[1][0][0][0], "xdg-open")
 
+    def test_linux_reveal_falls_back_when_nothing_answers_dbus(self):
+        # `dbus-send --type=method_call` alone reports success the moment the
+        # message reaches the session bus, whether or not any file manager is
+        # listening on FileManager1 -- a message with no service registered
+        # for it still returns 0. That is the common case on a desktop that
+        # has dbus-send installed but no file manager running, and it is
+        # distinct from the OSError case above (the binary is simply
+        # missing). Without --print-reply this looked like success and the
+        # fallback never ran.
+        with mock.patch("logpage.sys.platform", "linux"), \
+                mock.patch("logpage.os.name", "posix"), \
+                mock.patch("logpage.subprocess.run",
+                           return_value=mock.Mock(returncode=0)) as run, \
+                mock.patch("logpage.subprocess.Popen") as popen:
+            logpage.reveal(self.destination)
+        self.assertIn("--print-reply", run.call_args[0][0])
+        popen.assert_not_called()
+
+    def test_linux_reveal_uses_print_reply_to_detect_no_listener(self):
+        with mock.patch("logpage.sys.platform", "linux"), \
+                mock.patch("logpage.os.name", "posix"), \
+                mock.patch("logpage.subprocess.run",
+                           return_value=mock.Mock(returncode=1)) as run, \
+                mock.patch("logpage.subprocess.Popen") as popen:
+            logpage.reveal(self.destination)
+        self.assertIn("--print-reply", run.call_args[0][0])
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args[0][0][0], "xdg-open")
+
 
 if __name__ == "__main__":
     unittest.main()

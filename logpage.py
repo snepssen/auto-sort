@@ -466,17 +466,19 @@ def reveal(path):
     if os.name == "nt":                                      # pragma: no cover
         subprocess.Popen(["explorer", "/select," + path])
         return
-    # Waited for, not fired and forgotten. `Popen` only raises when the
-    # program itself is missing, so on a desktop that has `dbus-send` but
-    # no file manager answering FileManager1 -- which is most minimal ones
-    # -- the call failed silently and Reveal did nothing at all, with no
-    # fallback and nothing said. Selecting the file is nicer; opening the
-    # folder it is in is the part that must not be optional.
+    # Waited for, not fired and forgotten -- which needs `--print-reply`.
+    # Without it, `dbus-send --type=method_call` returns 0 the instant the
+    # message reaches the bus, whether or not anything is listening on
+    # FileManager1: on a desktop with `dbus-send` but no file manager
+    # answering it -- which is most minimal ones -- the call "succeeded",
+    # `selected` was true, and Reveal did nothing at all with no fallback
+    # and nothing said. Selecting the file is nicer; opening the folder it
+    # is in is the part that must not be optional.
     uri = "file://" + urllib.parse.quote(path)
     selected = False
     try:
         done = subprocess.run([
-            "dbus-send", "--session",
+            "dbus-send", "--session", "--print-reply",
             "--dest=org.freedesktop.FileManager1", "--type=method_call",
             "/org/freedesktop/FileManager1",
             "org.freedesktop.FileManager1.ShowItems",
