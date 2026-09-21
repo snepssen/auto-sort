@@ -107,7 +107,18 @@ class PollingDaemon(object):
             self.journal.close()
             raise
         self.journal.recover_processing_queue()
-        self.token = secrets.token_urlsafe(24)
+        # Kept between restarts rather than minted fresh each time. The old
+        # way meant a bookmark to the log page died at the next reboot, and
+        # the person most likely to bookmark it is the one least likely to
+        # know that "invalid log token" means "ask for a new link" rather
+        # than "this is broken now".
+        #
+        # The trade is small: the page listens on loopback only, refuses
+        # cross-origin writes, and the token sits in a database already
+        # readable by this user alone. Anybody able to read it could read
+        # the files it guards. Deleting the `web_token` row issues a new one.
+        self.token = self.journal.get_state("web_token") \
+            or secrets.token_urlsafe(24)
         self.journal.set_state("web_token", self.token)
         # Recorded so a restart can tell a new process from the old one
         # answering. "Something is listening" is not the same question as

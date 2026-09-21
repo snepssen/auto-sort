@@ -43,7 +43,11 @@ class Unavailable(Exception):
     """The second disk is not there. Not an error -- a reason to wait."""
 
 
-# Every platform's bin, by the names they actually use on disk.
+# Every platform's bin, by the names they actually use on disk. The Linux
+# one is the reason this is a list and not a constant: XDG puts it at
+# `~/.local/share/Trash`, with no leading dot, so a list built from a Mac
+# missed it entirely and the first Linux backup would have preserved the
+# wastebasket.
 _BINS = (".Trash", ".Trashes", "Trash (auto-sort)", "$RECYCLE.BIN",
          "RECYCLER")
 
@@ -55,9 +59,31 @@ def in_a_bin(path):
     preserves everything the person just threw away -- and a backup that
     resurrects the bin is worse than none, because restoring it undoes the
     tidying that made them trust the program.
+
+    `trash` is asked first, because it is the module that decides where a
+    bin is and the answer should not be written down twice. The names are a
+    fallback for the other platforms' bins, which turn up on any drive that
+    has been carried between machines.
     """
-    parts = os.path.abspath(path).split(os.sep)
-    return any(part in _BINS or part.startswith("Trash-") for part in parts)
+    path = os.path.abspath(path)
+    try:
+        import trash
+        bin_root = trash.folder_for(path)
+        if bin_root and path.startswith(os.path.join(bin_root, "")):
+            return True
+    except Exception:                        # noqa: BLE001
+        pass
+    # Windows accepts both separators and a drive carried from one machine
+    # to another brings its own bin along.
+    parts = path.replace("\\", "/").split("/")
+    for index, part in enumerate(parts):
+        if part in _BINS or part.startswith("Trash-") or part.startswith(".Trash-"):
+            return True
+        # The XDG bin: `.local/share/Trash`, which has no leading dot to
+        # give it away.
+        if part == "Trash" and index and parts[index - 1] == "share":
+            return True
+    return False
 
 
 def relative_for(path, home=None):

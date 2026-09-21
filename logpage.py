@@ -453,6 +453,10 @@ class LogPage(object):
         return source.replace("{{TOKEN_JSON}}", json.dumps(self.token))
 
 
+class RevealError(Exception):
+    """No file manager could be reached at all."""
+
+
 def reveal(path):
     """Ask the platform file manager to reveal a ledger-resolved path."""
     path = os.path.abspath(path)
@@ -462,17 +466,30 @@ def reveal(path):
     if os.name == "nt":                                      # pragma: no cover
         subprocess.Popen(["explorer", "/select," + path])
         return
+    # Waited for, not fired and forgotten. `Popen` only raises when the
+    # program itself is missing, so on a desktop that has `dbus-send` but
+    # no file manager answering FileManager1 -- which is most minimal ones
+    # -- the call failed silently and Reveal did nothing at all, with no
+    # fallback and nothing said. Selecting the file is nicer; opening the
+    # folder it is in is the part that must not be optional.
     uri = "file://" + urllib.parse.quote(path)
+    selected = False
     try:
-        subprocess.Popen([
+        done = subprocess.run([
             "dbus-send", "--session",
             "--dest=org.freedesktop.FileManager1", "--type=method_call",
             "/org/freedesktop/FileManager1",
             "org.freedesktop.FileManager1.ShowItems",
             "array:string:%s" % uri, "string:",
-        ])
-    except OSError:
-        subprocess.Popen(["xdg-open", os.path.dirname(path)])
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+        selected = done.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        selected = False
+    if not selected:
+        try:
+            subprocess.Popen(["xdg-open", os.path.dirname(path)])
+        except OSError as error:
+            raise RevealError("no file manager answered: %s" % error)
 
 
 def trash(path):

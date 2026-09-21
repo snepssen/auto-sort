@@ -179,5 +179,21 @@ class TheBinIsNotBackedUp(unittest.TestCase):
             self.assertTrue(mirror.in_a_bin(os.path.join("/x", bin_name, "f")),
                             bin_name)
 
+    def test_the_linux_bin_has_no_leading_dot_to_give_it_away(self):
+        """XDG puts it at `~/.local/share/Trash`, and a list of names built
+        on a Mac missed it -- so the first Linux backup would have carefully
+        preserved the wastebasket."""
+        for path in ("/home/u/.local/share/Trash/files/x.pdf",
+                     "/home/u/.local/share/Trash/info/x.trashinfo",
+                     "/media/usb/.Trash-1000/files/x.pdf"):
+            self.assertTrue(mirror.in_a_bin(path), path)
+
+    def test_windows_separators_are_read_too(self):
+        self.assertTrue(mirror.in_a_bin(r"C:\Users\u\$RECYCLE.BIN\S-1\x"))
+
     def test_an_ordinary_file_is_not_in_a_bin(self):
         self.assertFalse(mirror.in_a_bin("/Users/x/Documents/Trashy Novel.pdf"))
+
+    def test_a_folder_somebody_named_trash_is_not_a_bin(self):
+        """Only the one under `share`, which is the one XDG means."""
+        self.assertFalse(mirror.in_a_bin("/home/u/Music/Trash/album.mp3"))
