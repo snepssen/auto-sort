@@ -27,6 +27,8 @@ from __future__ import annotations
 import collections
 import json
 
+import shapes
+
 MIN_TRIALS = 3          # the project's threshold for "that is a pattern"
 
 
@@ -106,3 +108,53 @@ def dead_rules(journal, rule_set, limit=20000):
     """Only the ones the record has already judged."""
     usages, files = usage(journal, rule_set, limit)
     return [use for use in usages if use.dead], files
+
+
+def _named_by_a_rule(word, rule_set, fact="heading"):
+    """Would any existing rule already claim a document headed with this?
+
+    Asked of the rules themselves rather than by matching their text, so a
+    hand-written rule counts exactly as much as a generated one.
+    """
+    probe = {fact: word, "name": "probe", "kind": "document"}
+    for rule in rule_set.rules:
+        if getattr(rule, "holding", False):
+            continue        # a catch-all claims everything and names nothing
+        try:
+            matched, _used = rule.condition.evaluate(probe)
+        except Exception:                    # noqa: BLE001
+            continue
+        if matched:
+            return True
+    return False
+
+
+def emerging(journal, rule_set, fact="heading", limit=20000):
+    """Words that now head enough filed documents to deserve a folder.
+
+    The other half of the same idea. `dead_rules` finds categories the
+    record has disproved; this finds ones it has since proved and nobody
+    has written down.
+
+    It matters because rules are generated once and the post keeps coming.
+    A kind of letter that did not exist when the rules were written has no
+    rule of its own, so it is claimed by whatever else happens to match --
+    on a real run, four `Mahnung` letters were filed under `Stadtwerke`,
+    the company that sent them, because that word was also on the page and
+    had a rule. The documents were not lost, but they were sorted by who
+    wrote them instead of what they are, and nothing said so.
+
+    Reads only the ledger's own record of what it filed, so it costs no
+    disk and knows nothing it was not already told.
+    """
+    headings = []
+    for row in journal.placed_moves(None, limit):
+        facts = _facts_of(row)
+        value = facts.get(fact)
+        if value:
+            headings.append(value)
+    if not headings:
+        return [], 0
+    found = [(word, count) for word, count in shapes.learn_terms(headings)
+             if not _named_by_a_rule(word, rule_set, fact)]
+    return found, len(headings)

@@ -131,3 +131,82 @@ class WhatTheRecordShows(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CategoriesThatArriveLater(unittest.TestCase):
+    """Rules are generated once and the post keeps coming.
+
+    A kind of letter that did not exist when the rules were written has no
+    rule of its own, so it is claimed by whatever else happens to match --
+    usually the company that sent it, because that word is on the page too
+    and does have a rule. The documents are not lost; they are sorted by who
+    wrote them instead of what they are, and nothing says so.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-emerge-")
+        path = os.path.join(self.dir, "r.ini")
+        with open(path, "w") as handle:
+            handle.write(RULES)
+        self.rule_set = rules.load(path)
+        self.journal = ledger.Ledger(os.path.join(self.dir, "state.db"))
+        self.run = self.journal.start_run("sort", source_root=self.dir,
+                                          dry_run=False)
+        self.number = 0
+
+    def tearDown(self):
+        self.journal.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def filed(self, heading, winner):
+        self.number += 1
+        self.journal.add_move(
+            self.run, self.number, 1, "move", winner,
+            os.path.join(self.dir, "d%d.pdf" % self.number),
+            os.path.join(self.dir, "out", "d%d.pdf" % self.number),
+            1, "", status="done",
+            facts={"heading": heading, "name": "d%d.pdf" % self.number,
+                   "kind": "document"})
+
+    def test_a_new_kind_of_letter_is_noticed(self):
+        for number in range(5):
+            self.filed("Rechnung Nr %d Stadtwerke Muenchen" % number,
+                       "Rechnung")
+        for number in range(4):
+            # Different account number and amount every time, as always.
+            self.filed("Mahnung Nr %d Stadtwerke Konto %d Betrag %d"
+                       % (7000 + number, 88123400 + number, 40 + number),
+                       "Stadtwerke")
+        new, seen = review.emerging(self.journal, self.rule_set)
+        self.assertEqual(seen, 9)
+        self.assertIn("Mahnung", [word for word, _count in new])
+
+    def test_what_already_has_a_rule_is_not_offered_again(self):
+        for number in range(6):
+            self.filed("Rechnung Nr %d Stadtwerke" % number, "Rechnung")
+        new, _seen = review.emerging(self.journal, self.rule_set)
+        self.assertNotIn("Rechnung", [word for word, _count in new])
+
+    def test_the_parts_that_change_every_time_are_never_categories(self):
+        """Account numbers, amounts and dates vary by design.
+
+        This is the founding rule of the project pointed at the inside of a
+        page: what repeats is a category, what differs every time is an
+        identifier. The numbers differ in all nine documents below and not
+        one of them is offered as a folder.
+        """
+        for number in range(9):
+            self.filed("Rechnung Nr %d Stadtwerke Konto %d Betrag %d,%d0 EUR"
+                       % (4000 + number, 88123400 + number * 7,
+                          40 + number * 11, number), "Rechnung")
+        new, _seen = review.emerging(self.journal, self.rule_set)
+        for word, _count in new:
+            self.assertFalse(word.isdigit(), word)
+            self.assertTrue(any(ch.isalpha() for ch in word), word)
+
+    def test_a_word_on_every_document_is_a_letterhead_not_a_category(self):
+        for number in range(9):
+            self.filed("Rechnung Nr %d Stadtwerke Muenchen" % number,
+                       "Rechnung")
+        new, _seen = review.emerging(self.journal, self.rule_set)
+        self.assertNotIn("Muenchen", [word for word, _count in new])

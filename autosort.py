@@ -180,8 +180,23 @@ def _report_dead_rules(rule_set, state=None):
     try:
         with ledger_module.Ledger(state) as journal:
             dead, files = review.dead_rules(journal, rule_set)
+            new_words, headings = review.emerging(journal, rule_set)
     except Exception:                        # noqa: BLE001
         return                               # no ledger yet: nothing to say
+    if new_words:
+        print()
+        print("  %s headed enough filed documents to deserve a folder,"
+              % ("1 word has" if len(new_words) == 1
+                 else "%d words have" % len(new_words)))
+        print("  and no rule names %s (out of %d documents read):"
+              % ("it" if len(new_words) == 1 else "them", headings))
+        for word, count in new_words:
+            print("    %-24s heads %d of them" % (word[:24], count))
+        print()
+        print("  Those are being filed by whatever else happened to match --")
+        print("  often the company that sent them rather than what they are.")
+        print("  `auto-sort propose` writes an updated rules file; nothing")
+        print("  here changes yours.")
     if not files:
         return
     if not dead:
