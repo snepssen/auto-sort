@@ -671,9 +671,26 @@ def detect_scan(ctx, out):
 _INSTALLER = re.compile(
     r"\b(setup|install(er|ation)?|portable|x64|x86|amd64|arm64|aarch64|"
     r"win(dows)?(32|64)?|macos|darwin|linux|universal|full|offline)\b", re.I)
+# The trailing guard used to be `(?![\w.])`, which reads as "the number
+# ends here" and means "the number is the last thing in the name". Those are
+# not the same, and the difference is `firefox-1.5.0.12.installer.exe`: a
+# perfectly ordinary version followed by a dot, which failed the lookahead
+# and took the whole match with it. Eleven years of Firefox installers in a
+# folder is the canonical thing this tool exists for, and it read every one
+# of them as a product called "firefox 1 5 0 12" with no version at all.
+#
+# What is actually meant is "no further numeric component": a dot followed
+# by a word is a separator before a tag, and a dot followed by a digit is
+# more version.
 _VERSION = re.compile(r"(?<![\w.])v?(\d{1,3}(?:\.\d{1,4}){1,3})"
-                      r"(?:[-_]?(alpha|beta|rc\d*|dev|nightly))?(?![\w.])",
-                      re.I)
+                      r"(?:[-_]?(alpha|beta|rc\d*|dev|nightly|esr|lts|"
+                      r"stable|preview))?"
+                      r"(?!\d)(?!\.\d)", re.I)
+
+# An .exe, .msi, .dmg or .pkg is an installer whether or not its name admits
+# it. Requiring the word meant `AdobeReader_11.0.10.dmg` had a version, no
+# product, and nowhere to go but a dated folder.
+_INSTALLER_KINDS = ("app", "disk-image")
 
 
 def detect_software(ctx, out):
@@ -686,13 +703,25 @@ def detect_software(ctx, out):
             out.add("software", "channel", version.group(2).lower(), LIKELY)
     if installer:
         out.add("software", "platform_tag", installer.group(1).lower(), WEAK)
-    if installer and (version or re.search(r"\b(setup|install)", lower)):
+    said_so = bool(installer) and (version
+                                   or re.search(r"\b(setup|install)", lower))
+    # Archives are read by this detector too, and an archive with a version
+    # in its name is a release, not an installer -- so the extension only
+    # speaks for the kinds where it means something.
+    by_kind = ctx.kind in _INSTALLER_KINDS and version
+    if said_so or by_kind:
         out.label("software", "installer", LIKELY)
         # The product name is what precedes the first version or platform tag.
         cut = min(x.start() for x in (version, installer) if x)
         product = re.sub(r"[-_.]+", " ", stem[:cut]).strip()
         if product:
-            out.add("software", "product", product, WEAK)
+            # Two independent signals agreeing -- a version number *and*
+            # either an installer word or an installer's own extension --
+            # make the cut a good deal more than a guess, and a bare 0.45
+            # is below the default floor, which meant a rule filing by
+            # `{product}` could never fire at all.
+            sure = LIKELY if (version and (installer or by_kind)) else WEAK
+            out.add("software", "product", product, sure)
 
 
 # ---------------------------------------------------------------------------

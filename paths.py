@@ -90,6 +90,71 @@ def ensure(directory):
     return directory
 
 
+_CASE_CACHE = {}
+
+
+def _folders_in(parent):
+    """`{folded name: real name}` for one directory, remembered briefly.
+
+    Cached against the directory's own modification time, because the
+    alternative is listing a twenty-thousand-entry Downloads folder once per
+    file in a dry run of it.
+    """
+    try:
+        stamp = os.stat(parent).st_mtime_ns
+    except (OSError, AttributeError):
+        return {}
+    cached = _CASE_CACHE.get(parent)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    found = {}
+    try:
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir():
+                        found.setdefault(entry.name.lower(), entry.name)
+                except OSError:
+                    continue
+    except OSError:
+        return {}
+    if len(_CASE_CACHE) > 64:
+        _CASE_CACHE.clear()
+    _CASE_CACHE[parent] = (stamp, found)
+    return found
+
+
+def settled(directory):
+    """`directory`, spelled the way the disk already spells it.
+
+    `Firefox Setup 115.0.2.exe` and `firefox-1.5.0.12.installer.exe` are the
+    same program named by two different people a decade apart, and a rule
+    filing by `{product}` puts them in `Firefox` and `firefox`. On macOS and
+    Windows that is one folder and nobody notices; on Linux it is two, and
+    the whole point of gathering eleven years of installers is lost to a
+    capital letter.
+
+    So a folder that does not exist, but that differs from one which does
+    only in case, becomes that one. Conservative in both directions: an
+    exact match is always used as-is, and where *two* existing folders
+    differ only in case -- which only a case-sensitive filesystem can even
+    hold -- nothing is guessed and the name is left exactly as asked for.
+    """
+    if not directory or os.path.isdir(directory):
+        return directory
+    parent, name = os.path.split(directory)
+    if not name or not parent or parent == directory:
+        return directory
+    parent = settled(parent)
+    candidate = os.path.join(parent, name)
+    if os.path.isdir(candidate):
+        return candidate
+    existing = _folders_in(parent).get(name.lower())
+    if existing is not None and existing != name:
+        return os.path.join(parent, existing)
+    return candidate
+
+
 def missing_ancestors(directory):
     """The directories that would have to be created to reach `directory`.
 

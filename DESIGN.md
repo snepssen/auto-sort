@@ -414,3 +414,9 @@ duplication is three files and it buys each tool the ability to stand alone.
     from work it refuses to stop doing. A worker that stops answering is
     killed, the file is set aside with a reason, and the tray icon, the log
     page and the nineteen thousand files behind it carry on.
+12. Installers read as installers. A version number followed by a dotted tag
+    is still a version number, an installer's own extension is evidence that
+    it is one, and a destination folder is spelled the way the disk already
+    spells it -- so eleven years of one program's installers gather in one
+    folder rather than eleven dated ones or two differing by a capital
+    letter.

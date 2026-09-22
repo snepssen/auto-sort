@@ -217,6 +217,13 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None,
             holding = decision.rule.holding
             renamed = decision.rule.rename is not None
 
+        # Spell the destination folder the way the disk already spells it,
+        # so that `Firefox` and `firefox` -- the same program named by two
+        # different people a decade apart -- do not become two folders on a
+        # case-sensitive filesystem.
+        _folder, _base = os.path.split(primary_destination)
+        primary_destination = os.path.join(paths.settled(_folder), _base)
+
         try:
             destinations = _member_destinations(
                 item, primary_destination, renamed)

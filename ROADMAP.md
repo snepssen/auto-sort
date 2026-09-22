@@ -250,11 +250,6 @@ is listed somewhere.
 
 ## 5. Smaller, known, and worth doing
 
-**Installer version parsing.** `firefox-1.5.0.12.installer.exe` yields
-`product = "firefox 1 5 0 12"` and no version at all. A folder with eleven
-years of Firefox installers in it is the canonical case this tool exists
-for, and it currently files them by date rather than by what they are.
-
 **`contains` matches inside words.** Deliberate — it is what lets a learnt
 `Vertrag` catch `Mietvertrag` — and the collision between two *learnt* words
 is handled (the shorter one is asked for as a word of its own). What is not

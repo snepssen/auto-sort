@@ -829,6 +829,14 @@ its own specification at test time.
     happens in a process that is killed if it stops answering. The file is
     then set aside with a reason and everything behind it carries on.
 
+12. **Installers filed by what they are** ✓
+    The product is whatever precedes the version number in the file's own
+    name — no list of programs anywhere in the code — so eleven years of
+    Firefox installers land in one folder instead of eleven dated ones. A
+    destination folder is also spelled the way the disk already spells it,
+    so `Firefox` and `firefox` do not become two folders on a
+    case-sensitive filesystem.
+
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.
 [ROADMAP.md](ROADMAP.md) covers what is not built: the rest of the job
