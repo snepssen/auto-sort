@@ -35,6 +35,11 @@ python3 autosort.py sort-now
 python3 autosort.py autostart status
 python3 autosort.py autostart install --rules ./rules.ini
 python3 autosort.py autostart remove
+python3 autosort.py propose ~/Downloads --out my-rules.ini
+python3 autosort.py regroup ~/Downloads
+python3 autosort.py corrections ~/Downloads
+python3 autosort.py adopt --apply
+python3 autosort.py duplicates ~/Music --apply
 ```
 
 `explain` prints every fact about one file, which reader established it, and
@@ -126,6 +131,126 @@ a bank.
 Nothing is decided by looking at an image, listening to audio, or asking a
 model. See the [constraints](DESIGN.md#the-machine-it-has-to-run-on): this has
 to run on the machines that need it most, which are the worst ones.
+
+## A scanned page is not a photograph
+
+A scanner writes into the same EXIF tags a camera does — Make, Model, even a
+lens field some firmware fills with nonsense — so `camera is set` is true of
+a scanned tax return exactly as it is true of a photograph. Filed by the
+obvious rule, twenty years of paperwork lands in Pictures, in folders named
+after an Epson.
+
+Two things separate them, and neither alone is enough. A scanner writes no
+exposure: no shutter speed, no aperture, no ISO — none of it means anything
+to a lamp on a rail. That only says *not a camera*, which is equally true of
+a screenshot or an exported PNG. And a scan is a picture of a sheet of known
+physical size, which the file states twice over — pixel dimensions and
+resolution — so a scanned A4 page divides out to 8.27 by 11.69 inches at
+whatever DPI it was scanned at. Shape alone is worse than useless: a sweep of
+a real library flagged pieces of digital art as A4 purely because root-two is
+a pleasant aspect to crop to. It is the *conjunction* that means something,
+and only because 72 DPI — what every editor and web exporter writes — is
+excluded outright as a resolution nobody scans at.
+
+The device is filed under `scanner`, not `camera`, which is what actually
+removes the collision. Guarding the photographs rule with `capture != scan`
+does not work: a comparison against an absent fact is false, and an ordinary
+photograph has no `capture` fact at all, so the guard would stop the rule
+matching anything.
+
+```ini
+[rule: scanned paperwork]
+when = kind = document and capture = scan and scan_of = page
+into = ~/Documents/Scans/{added:%Y}
+holding = yes
+```
+
+Scanned prints go to Pictures rather than Documents — a scan of somebody's
+grandmother is a photograph, whatever the platen was — but only once a
+scanner is named outright, because 4×6 is 3:2 and 5×7 is nearly A4, and shape
+alone would misfile half a photo library as paper.
+
+## Reading what a document says
+
+`scan0001.pdf`. `Document1.pdf`. `20090314.pdf`. That is what a decade of
+bank portals, scanner drivers and Save As dialogues actually produced, and
+those are exactly the files somebody is required to keep for twenty-five more
+years. The filename is a dead end and the metadata usually is too — the
+words on the page are the only evidence left, and until this was built,
+nothing read them.
+
+Getting at them needs nothing but `zlib`. Page content is a stream of drawing
+operators, the streams are Flate-compressed, and the text-showing operators
+take a plain string. There is no need to lay out a page or resolve an object
+graph to learn that the first word on it is `Rechnung`.
+
+Two things had to be right or the feature would read as noise on anything
+written this century. Modern writers subset their fonts, so the bytes in a
+content stream are glyph numbers, not letters — decoded naively they read as
+`(OHFWURWHFKQLFDO` where the page says `Electrotechnical`. Every such file
+carries a `ToUnicode` table for exactly this reason, so it is parsed and the
+codes mapped through whichever font was active when the string was drawn; a
+font with no table falls back to reading its bytes as characters, which is
+right for the old files this matters most for. And PDF separates words by
+moving the pen, not by drawing a space character, so raw extraction reads as
+`TamásTörökMultilingualHousekeeper` with no boundary a keyword could ever
+match — pen moves and kerning past a threshold are read as the spaces they
+are.
+
+Only the first five hundred characters of a page are ever offered anywhere
+else in the program. A document announces what it is at the top and mentions
+everything else further down: read whole, a CV that lists two certifications
+looks like a certificate, and a covering letter that mentions a booking looks
+like a ticket, both observed on real files. Read from the top, both say
+nothing, correctly — their filenames already carried the answer, and a
+reader that stays quiet leaves better evidence standing rather than
+overruling it.
+
+A page that is a photograph of a page — no text layer, however hard it is
+looked at — is told apart from one that simply has nothing to say. It gets
+`needs_ocr` and is held rather than guessed at, because there was nothing to
+find, which is a different fact from finding nothing.
+
+## Categories nobody configured, in languages nobody taught it
+
+There used to be a table here: sixteen kinds of paperwork, each a regular
+expression for the words that name it in six languages. It sorted post
+written in those six languages and filed a lone invoice into a folder called
+`invoice` holding one file, and the very first thing it needed after being
+finished was a seventh language. That is not a table, it is an admission that
+the pile this tool is for was never going to be described in advance.
+
+What replaced it is counting, over the same evidence the previous two
+sections produce — a document's heading, or its filename when it has no
+readable text. A word heading three or more of somebody's files, and not
+nearly all of them, is a category those files chose. A word heading nearly
+every one of them is the letterhead — a name, a bank, a town — and describes
+the pile instead of dividing it, so it is dropped. On a real pile of Belgian
+and German paperwork this finds `Loonbrief`, `Rechnung`, `Steuerbescheid` and
+`Mietvertrag` with no vocabulary anywhere in the code, and correctly finds
+nothing at all in a folder of CVs that all begin with the same person's name.
+
+Three refinements earned their place against real files, not a clean example.
+**Spelling.** Twenty years of typing habits give `Rechnung`, `rechnung` and
+`RECHNUNG` in one folder; words are counted folded and the folder takes
+whichever spelling was commonest. **A letter's own template is not a pile of
+categories** — a payslip says `Loonbrief` at the top and `Kantoor` and
+`nummer` further down, on the same forty documents every time, and a word
+whose documents are entirely accounted for by an earlier word belongs to that
+word's template rather than beside it. **A name spanning two categories is
+neither** — `Tamás` heads both the CVs and the payslips and is a person, not
+a third kind of document.
+
+```ini
+[rule: what these files are called: Rechnung]
+when = stem contains Rechnung
+into = ~/Documents/Rechnung
+; 9 files are named it
+```
+
+One rule per learnt word, in the order the words usually sit on the page, so
+a kind of document comes before whoever sent it. `auto-sort adopt` can add
+one of these later without touching a line you wrote — see below.
 
 ## Evidence, not values
 
@@ -413,7 +538,149 @@ screenshot left exactly where it was put. A fact shared by the files you moved
 folder correctly yields no rule at all, just the note that one rule was
 overridden five times.
 
+## Keeping the rules honest
+
+`check-rules` used to mean "does this file parse." Two failures never showed
+up in that answer, and both look exactly like success: the funnel empties,
+every file moves, and the wrong thing happened anyway.
+
+**A rule that matches and then quietly does nothing.** `min_confidence` is a
+floor on *acting*, not on matching — a rule whose destination needs a fact
+that is only a guess matches perfectly, declines, and the file goes to a
+catch-all with nothing said. `Scans/{happened:%Y}` did exactly this: a
+scanned page has no capture date, so `happened` falls back to a WEAK guess at
+when the file arrived, under the floor, and the rule silently never fired.
+`check-rules` now walks the watched folder and names any rule that matched
+real files and placed none of them:
+
+```
+  1 rule matched files in ~/Downloads and never placed one:
+    scans by year
+      matched 6, placed 0 -- below confidence 0.60: happened 0.45
+```
+
+**A rule that has had its chance and lost it, over and over.** Household
+paperwork repeats — the same letter, month after month — so every bill that
+arrives is another trial, and induction proposes generously: a word that
+turns up three times might be the kind of document, or it might be the town
+it was posted from, and nothing in the page says which. Time settles it. A
+rule that has matched a hundred files and never once been the answer, because
+something above it always wins first, is named:
+
+```
+  9 rules have never been the answer, across 126 filed files:
+    Stadtwerke               matched  10, always lost to Rechnung
+```
+
+A catch-all is never named this way, however often it loses — it exists to
+be last, and the day it fires is the day it earns its keep. Neither is a rule
+that has simply never matched anything: silence is not evidence.
+
+**And the reverse.** A kind of letter that did not exist when the rules were
+written has no rule of its own, so it gets claimed by whatever else happens
+to match — often the company that sent it, because that word is on the page
+too. `check-rules` also names words that now head enough filed documents to
+deserve a folder and have none:
+
+```
+  1 word has headed enough filed documents to deserve a folder,
+  and no rule names it (out of 29 documents read):
+    Mahnung                  heads 4 of them
+```
+
+`auto-sort adopt` writes that one rule and nothing else — inserted above
+every rule currently claiming those documents by a worse word, or it would
+sit there unreachable exactly like the first failure above, and above the
+first catch-all, or first match would never reach it. Every other line in
+the file, comments included, is untouched:
+
+```sh
+auto-sort adopt              # preview what would be added
+auto-sort adopt --apply      # add it
+```
+
+`propose` regenerates a rules file from scratch, which is right the first
+time and wrong every time after — it would discard whatever you had since
+written, reordered or deleted. `adopt` is how the rules keep learning without
+that cost.
+
+## Two copies of the same file is one too many
+
+macOS has no cut-and-paste for files, so tidying by hand means copy, then
+remember to go back and delete the original — and the second half is the
+half that does not happen. `auto-sort duplicates` finds files that are
+byte-for-byte the same and clears the spare copy, reading the disk rather
+than the ledger, because a copy filed by hand is invisible to anything that
+only remembers what auto-sort itself moved.
+
+Which copy is the real one is decided by where it belongs before it is
+decided by how it got there. A `.md` lyric sheet copied next to the music it
+was written for is still a document, and the sorter itself would file it
+under Documents — a duplicate check that disagreed would tidy the disk one
+way and file it the other. Only among copies that agree on that does location
+matter: a copy in the intake funnel or in a holding folder loses to a copy in
+a folder somebody chose. Two copies in two chosen folders are somebody's own
+filing and are left alone.
+
+```
+  153.0 MB, 2 copies
+    keep   ~/Movies/Projects/Protoke Video/Portrait/core/B04 Oli.mp4
+    spare  ~/Music/Core Aura/B/B04 Oli-short.mp4
+```
+
+Real duplicates copied by hand hide in the strangest places for exactly this
+reason — video files sitting in a Music folder beside the album they were
+made for, invisible to the ledger because both copies were placed by hand and
+neither was ever in a funnel.
+
+A name is worth more than the disk space, and this is checked before
+anything is binned. A folder can be so thoroughly machine-named — `exec-
+63512093-74d5-4282-a7fc-159ff1ce12ea.png` a hundred and thirty-eight times
+over — that keeping its "correct" copy would erase the only readable name in
+the group. When that happens, the name is moved across before the spare is
+binned, not thrown away with it: the file goes where its kind belongs, and
+the name goes with it. Judged per folder rather than per file, because one
+accidentally well-named file among a hundred machine names is an accident,
+not a scheme worth protecting.
+
+The spare copy goes to the operating system's own bin — not deleted, still
+there, already understood, emptied on the person's own schedule — and the
+move is journalled like any other, so `undo` reaches it without anyone
+opening the Trash.
+
+## A second copy, for people who have never made one
+
+Nobody this tool is for has a backup, and telling them to make one does not
+fix that. `auto-sort` turning on a second copy while it does the sorting it
+was already doing does. Off by default — out of the box this touches nothing
+but the folders the machine already has — and on in a couple of clicks from
+the same log page.
+
+The disk being unplugged, asleep, full, or in a drawer is the *ordinary*
+case for the people this matters most to, not the exception, so sorting
+never waits on it and never fails because of it. The intention to copy a
+file is written to the ledger the instant it is filed, while its hash is
+still in hand; the copying happens whenever the disk is actually there. A
+drive missing for three weeks means a queue three weeks long and nothing
+else — no failed sorts, no files stuck in Downloads.
+
+Whether the disk is there is decided by writing to it, not by looking. A
+mount point whose disk has gone is still a directory — an empty one, on the
+machine's own disk — and copying a backup into that quietly fills the boot
+drive with a copy of itself. Copies are written beside their final name,
+hashed as they go, and only take the real name once the bytes match what was
+recorded, so a power cut leaves a stray part-file rather than half a file
+wearing a whole one's name.
+
+Turning it on protects what is already there, not only what arrives next —
+twenty years of files were sorted before anyone clicked the button. And the
+wastebasket is never mirrored: auto-sort's own duplicate cleanup puts spare
+copies there, and a backup that faithfully preserves the bin resurrects
+exactly what the tidying just removed.
+
 ## Starting from nothing
+
+
 
 ```sh
 auto-sort init          # writes a starter rules file and tells you where
@@ -476,7 +743,7 @@ is nobody to answer, and never blocks the sorter when something fails.
 python3 -m unittest discover -s tests
 ```
 
-131 tests, no binary fixtures committed: every sample file is assembled from
+418 tests, no binary fixtures committed: every sample file is assembled from
 its own specification at test time.
 
 ## Where this is going
@@ -485,16 +752,43 @@ its own specification at test time.
 2. **Rules engine, ledger, real moves and `undo`** ✓
 3. **The background daemon: watch, settle, queue, pause** ✓
 4. **The loopback log page and ledger-ID file reveal** ✓
-   Optional native status items are available through PyObjC on macOS and the
-   standard-library Windows notification API. Linux continues headless when a
-   StatusNotifier service is not available, with the log page as its UI.
+   Optional native status items are built on the Objective-C runtime through
+   `ctypes` on macOS and the standard-library Windows notification API on
+   Windows — no PyObjC, no dependency of any kind. Linux continues headless
+   when a StatusNotifier service is not available; a menu entry and the log
+   page are its UI there instead of a tray icon.
 5. **Explicit per-user start at login** ✓
    `autostart install` writes a LaunchAgent on macOS, an XDG autostart entry on
-   Linux, or a Startup shortcut on Windows; `autostart remove` reverses it.
+   Linux, or a Startup shortcut on Windows, plus an applications-menu entry on
+   Linux where there is otherwise no tray to click; `autostart remove`
+   reverses all of it.
 6. **Self-contained bootstrap and launchers** ✓
    `start.sh`, `Start auto-sort.command`, and `start.bat` start with Python
    alone. `bootstrap.py` can offer optional `ffprobe` and `exiftool` installs,
    but never invokes `sudo` and never blocks the sorter.
+7. **Structure that builds and corrects itself** ✓
+   `propose` surveys a folder and writes the rules it turns out to need,
+   without a table of sites, document types or languages anywhere in the
+   code. `regroup` promotes files out of holding once a pattern shows;
+   `corrections` learns from a placement somebody moved back;
+   `check-rules` names a rule that matches and never wins, or never
+   fires at all; `adopt` writes a newly-earned rule without rewriting
+   anyone's file.
+8. **Reading a document, not just its name** ✓
+   PDF text extraction (subset-font `ToUnicode` maps included), a scanner
+   told apart from a camera, and a decompression cap so one adversarial
+   PDF cannot ask for a gigabyte.
+9. **Never losing a second copy** ✓
+   `duplicates` finds and clears byte-identical files already on disk,
+   choosing by where a file belongs before how it got there and never at
+   the cost of the only readable name in a folder. An optional, off-by-
+   default mirror keeps a second copy on another disk, queued rather than
+   blocking, and never touching the wastebasket.
+10. **The log page as the whole interface** ✓
+    Three views — the move ledger, the rules as learnt, and folders and
+    drives — a native folder picker for a one-time sort or a new intake,
+    and ledger search and compaction so the database that remembers
+    everything does not need a disk of its own.
 
-[DESIGN.md](DESIGN.md) covers all six, including the filesystem hazards that
-have to be handled before anything is allowed to move a file.
+[DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
+hazards that have to be handled before anything is allowed to move a file.

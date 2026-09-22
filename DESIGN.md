@@ -53,7 +53,13 @@ atoms, Matroska EBML, RIFF, the PDF trailer and `/Info` dictionary. This is
 `struct` and seeks — a few hundred lines per format, no dependency, and fast
 enough to run on every file. It is where the leverage is: camera make and
 model, capture date, artist and album, duration, track layout, page count, PDF
-producer.
+producer. The same tier now also reads the *words* on a PDF's first page —
+inflating content streams, following subset-font `ToUnicode` maps, capped at
+four megabytes of decompressed output per stream so one adversarial file
+cannot ask the process for a gigabyte — and tells a scanner from a camera by
+the tags a lamp on a rail has no reason to write. Structural reads, still: no
+model, nothing that looks at the pixels or listens to the audio, which is
+what keeps this tier and the deferred one below apart.
 
 **Tier 2 — external programs, if they happen to exist.** ffprobe for containers
 Tier 1 declines, exiftool for exotic RAW. Found at runtime the way siphon finds
@@ -386,5 +392,15 @@ duplication is three files and it buys each tool the ability to stand alone.
 3. Daemon: watch loop, settle detection, queue, pause, single-instance lock.
 4. Log page on loopback, reveal, and the tray backends behind a capability
    check.
-5. Autostart install/uninstall per platform.
+5. Autostart install/uninstall per platform, plus a menu entry where there is
+   no tray to click.
 6. `bootstrap.py`, launchers, and the optional Tier 2 programs.
+7. Structure that derives and corrects itself: `propose`, `regroup`,
+   `corrections`, and a `check-rules`/`adopt` pair that can name a rule that
+   never wins or never fires, and add an earned one without rewriting the
+   file a person wrote.
+8. PDF text as Tier 1 evidence, scan detection, and the induction that
+   replaced every hand-written keyword table in the project with counting.
+9. Duplicate detection on-disk, the optional off-by-default mirror, and
+   ledger compaction — everything a machine accumulates over years now has
+   an answer for not accumulating forever.
