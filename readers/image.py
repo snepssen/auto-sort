@@ -17,7 +17,7 @@ import re
 import struct
 
 from evidence import CERTAIN, STRONG, LIKELY, WEAK
-from . import scans, tiff
+from . import ocr, scans, tiff
 
 # Displays people actually own, plus their retina doubles. A photograph that
 # happens to land on one of these is possible; a photograph that lands on one
@@ -311,5 +311,35 @@ def read(peek, fmt, record):
             record.set("capture", "screenshot", "dimensions", LIKELY)
             record.note("no camera tags and %dx%d is a display size"
                         % (width, height))
+    # A scanned page is a document that happens to be stored as a picture,
+    # and the only thing standing between it and every rule this program
+    # has is that nobody has read the words on it.
+    if scan and record.value("scan_of") == "page":
+        _read_the_page(peek, record)
+
     record.reader_ran("image:" + fmt, "%d fields" % len(found))
     return True
+
+
+def _read_the_page(peek, record):
+    """OCR a scanned page, where there is something installed to do it.
+
+    Only a page. A scan of a photograph -- `scan_of = print` -- is somebody
+    digitising an album, and running OCR over a picture of a beach costs
+    seconds and returns nothing.
+    """
+    if not ocr.available():
+        record.set("needs_ocr", True, "scan", STRONG)
+        return
+    text = ocr.read_file(peek.path)
+    if not text:
+        record.set("needs_ocr", True, "scan", STRONG)
+        record.note("a scanned page was read by OCR and produced nothing")
+        return
+    record.set("read_by", "ocr", "ocr", CERTAIN)
+    record.set("words_read", len(text.split()), "ocr", CERTAIN)
+    heading = " ".join(text[:500].split()[:6])
+    if heading:
+        record.set("heading", heading[:80], "ocr", LIKELY)
+    record.reader_ran("ocr", "%d words from a scanned page"
+                      % len(text.split()))

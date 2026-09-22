@@ -41,6 +41,13 @@ import time
 # quadratic regex spent hours. Any file over this is worth a row.
 SLOW_SECONDS = 1.0
 
+# Reading a scanned page means launching another program and waiting for it
+# to look at a photograph, which is seconds by its nature rather than by
+# anything going wrong. Judging that against the ordinary threshold would
+# fill the report with every scan in the folder and bury the one file that
+# actually misbehaved -- expensive is relative to what the file asked for.
+OCR_SLOW_SECONDS = 25.0
+
 # Growth, by one file, over everything the process had ever used before it.
 # 16 MB is far past any header this program reads on purpose and far below
 # the 171 MB that started this.
@@ -132,7 +139,7 @@ class Watch(object):
             self.growth = max(0, self.peak - self._before)
         return False                         # never swallow the exception
 
-    def notable(self):
+    def notable(self, slow_seconds=None):
         """Whether this reading is worth a row in the ledger.
 
         Most files are not. A folder of twenty thousand holiday photographs
@@ -140,7 +147,8 @@ class Watch(object):
         and a table of twenty thousand unremarkable readings answers no
         question anybody has.
         """
-        if self.seconds >= SLOW_SECONDS:
+        if self.seconds >= (SLOW_SECONDS if slow_seconds is None
+                            else slow_seconds):
             return True
         return self.growth is not None and self.growth >= GREEDY_BYTES
 

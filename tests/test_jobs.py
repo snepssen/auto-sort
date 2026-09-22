@@ -260,7 +260,7 @@ class WhatASortDoesWithAFileThatWillNotRead(unittest.TestCase):
         class Stubborn(object):
             """Answers for everything except one file."""
 
-            def read(self, item, tier=None):
+            def read(self, item, tier=None, ocr="auto"):
                 if item.primary == awkward:
                     return None, ("stopped after 30 seconds without an "
                                   "answer; the file was left alone")
@@ -281,7 +281,7 @@ class WhatASortDoesWithAFileThatWillNotRead(unittest.TestCase):
                  if item.primary == awkward]
 
         class Slow(object):
-            def read(self, item, tier=None):
+            def read(self, item, tier=None, ocr="auto"):
                 time.sleep(0.05)
                 return None, "stopped after 30 seconds without an answer"
 

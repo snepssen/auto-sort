@@ -211,6 +211,29 @@ looked at — is told apart from one that simply has nothing to say. It gets
 `needs_ocr` and is held rather than guessed at, because there was nothing to
 find, which is a different fact from finding nothing.
 
+**Unless something is installed that can read it.** With `tesseract` present,
+a photographed page is read and the words go to the same induction as any
+other document, with no new vocabulary anywhere — what comes back is text,
+and this program already knows what to do with text. The page image is lifted
+straight out of the PDF: a JPEG inside a PDF is a JPEG, copied byte for byte
+with nothing decoded, so no rasteriser and no third-party library is involved.
+The *largest* image, not the first, because nearly every scan arrives with the
+sender's logo in front of it — and only if it is page-sized, since OCR on a
+218×62 letterhead costs a process launch to learn the sender's name, which the
+rest of the document already said.
+
+What comes back is weaker evidence and is recorded that way: a heading from a
+text layer is what the document contains, and a heading from OCR is a
+machine's reading of a photograph of it. `LIKELY` rather than `STRONG`, which
+is the confidence model doing its job rather than a special case. `explain`
+says `read_by: ocr` so it is never a mystery where a word came from.
+
+Without tesseract, nothing changes: the scan is held exactly as before. It
+runs inside the identify worker, where it can be killed, with its own
+twenty-second limit well inside the worker's thirty. `ocr = off` in
+`[settings]` turns it off for somebody who has the program installed for
+other reasons.
+
 ## Categories nobody configured, in languages nobody taught it
 
 There used to be a table here: sixteen kinds of paperwork, each a regular
@@ -788,16 +811,17 @@ PyObjC and it was a mistake twice over: forty megabytes for one icon, and it
 those are marked externally managed under PEP 668 and refuse `pip install`.
 The icon was unreachable on exactly the machines most likely to run this.
 
-Two optional *programs* genuinely add something, and the launcher offers them
-on first run — described by what they let the tool do, never by package name
-first:
+Three optional *programs* genuinely add something, and the launcher offers
+them on first run — described by what they let the tool do, never by package
+name first:
 
 | | What it adds | Without it |
 | --- | --- | --- |
+| `tesseract` | reads pages that were scanned rather than typed, so they can be filed by what they say | a scanned page is held, with a note saying why |
 | `ffprobe` | durations and frame sizes for containers the built-in parsers decline | those facts are absent, and rules needing them decline |
 | `exiftool` | metadata from uncommon cameras and RAW formats | the same, for a smaller set of files |
 
-Declining both still leaves a working sorter. `bootstrap.py` never runs
+Declining all three still leaves a working sorter. `bootstrap.py` never runs
 `sudo` — on a system whose package manager needs root it prints the command
 for you to run — never installs without being asked, never prompts when there
 is nobody to answer, and never blocks the sorter when something fails.
@@ -866,8 +890,14 @@ its own specification at test time.
     so `Firefox` and `firefox` do not become two folders on a
     case-sensitive filesystem.
 
+13. **Pages that were scanned rather than typed** ✓
+    With `tesseract` installed, a photographed page is read and filed by
+    what it says; without it, nothing changes and the page is held. The
+    image comes out of the PDF byte for byte, so no rasteriser and no
+    library is involved.
+
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.
 [ROADMAP.md](ROADMAP.md) covers what is not built: the rest of the job
-manager, OCR for the 56% of real scanned paperwork that has no text layer,
-and a Linux tray.
+manager, a Linux tray, Windows, and the 185 documents in 195 that have real
+text in them which auto-sort currently reads and then discards.

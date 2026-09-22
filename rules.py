@@ -473,6 +473,7 @@ def parse(source):
 _SETTINGS_KEYS = {
     "dry_run", "unsorted", "unsorted_into", "on_collision",
     "min_confidence", "settle_seconds", "poll_seconds", "preserve_dates",
+    "ocr",
     "regroup",
 }
 _WATCH_KEYS = {"folders", "ignore", "depth"}
@@ -508,6 +509,12 @@ class Settings(object):
             values.get("poll_seconds", 5), "poll_seconds")
         self.preserve_dates = _boolean(
             values.get("preserve_dates", "yes"), "preserve_dates")
+        # Whether to read pages that were scanned rather than typed. `auto`
+        # means "if an OCR program is installed", which for most people is
+        # the same as "no" until they install one -- the switch is really
+        # the install. `off` is for somebody who has one for other reasons
+        # and does not want seconds of processor time spent on each page.
+        self.ocr = _choice(values.get("ocr", "auto"), ("auto", "off"), "ocr")
 
 
 class Watch(object):

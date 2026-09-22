@@ -38,6 +38,11 @@ PROGRAMS = {
         "reading detailed audio and video metadata",
         {"brew": "ffmpeg", "apt": "ffmpeg", "dnf": "ffmpeg",
          "pacman": "ffmpeg", "winget": "Gyan.FFmpeg"}),
+    "tesseract": Program(
+        "tesseract", ("tesseract",),
+        "reading pages that were scanned rather than typed",
+        {"brew": "tesseract", "apt": "tesseract-ocr", "dnf": "tesseract",
+         "pacman": "tesseract", "winget": "UB-Mannheim.TesseractOCR"}),
     "exiftool": Program(
         "exiftool", ("exiftool",),
         "reading metadata from uncommon cameras and RAW formats",

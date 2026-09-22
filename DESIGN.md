@@ -420,3 +420,8 @@ duplication is three files and it buys each tool the ability to stand alone.
     spells it -- so eleven years of one program's installers gather in one
     folder rather than eleven dated ones or two differing by a capital
     letter.
+13. Reading a page that was photographed. An optional OCR program, found at
+    runtime and never a dependency, with the page image lifted straight out
+    of the PDF rather than rendered. What it returns is text, which the
+    induction already knows what to do with, recorded a band weaker than a
+    text layer because it is a machine's reading of a picture of the words.

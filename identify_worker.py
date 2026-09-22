@@ -33,6 +33,7 @@ if HERE not in sys.path:
 
 import bundles                                           # noqa: E402
 import identify                                          # noqa: E402
+from readers import ocr                                   # noqa: E402
 
 
 def set_ceiling(megabytes):
@@ -72,6 +73,9 @@ def handle(request):
     primary = request.get("primary")
     if not primary:
         return {"ok": False, "error": "no path given"}
+    # Sent with every request rather than read from the rules here: this
+    # process has no rules file, and the two must not be able to disagree.
+    ocr.configure(request.get("ocr", "auto"))
     try:
         item = bundles.Item(primary,
                             members=request.get("members") or None,

@@ -431,3 +431,73 @@ def extract(peek):
     if not _readable(text):
         return "", bool(_IMAGE_HINT.search(data))
     return text[:MAX_CHARS], False
+
+
+# ---------------------------------------------------------------------------
+# The page as a picture, for the files that really are one
+# ---------------------------------------------------------------------------
+
+# How far back from a `stream` keyword to look for the dictionary that
+# describes it. Image dictionaries are short -- a colour space, a filter, a
+# width, a height -- and a kilobyte covers every one seen in a real folder.
+_DICT_LOOKBACK = 1500
+
+# Below this, an image is a logo rather than a page. Measured: of 195 PDFs
+# on one machine with no readable text layer, 185 hold nothing bigger than a
+# letterhead graphic and only 10 hold an actual photographed page. OCR on a
+# 218x62 logo costs a process launch and returns the sender's name, which
+# the rest of the document already said.
+MIN_PAGE_PIXELS = 700 * 700
+
+# A page scan at 300 dpi is a few megabytes; far past that and something is
+# wrong enough to leave alone.
+MAX_IMAGE_BYTES = 24 * 1024 * 1024
+
+_WIDTH = re.compile(rb"/Width\s+(\d{1,6})")
+_HEIGHT = re.compile(rb"/Height\s+(\d{1,6})")
+
+
+def page_image(data):
+    """The largest embedded JPEG that is big enough to be a page.
+
+    Returns `(bytes, width, height)` or None. Only DCTDecode, and
+    deliberately: a JPEG inside a PDF is a JPEG, copied out byte for byte
+    with no decoding, no colour management and no third-party library. The
+    other filters would each need a decoder written here to produce an image
+    anything else could read, which is a great deal of code for the one file
+    in twenty that uses them.
+
+    Largest rather than first. Nearly every scanned page arrives with the
+    sender's logo in front of it, and the first image in the file is that
+    logo every time.
+    """
+    best = None
+    for match in _STREAM.finditer(data):
+        head = data[max(0, match.start() - _DICT_LOOKBACK):match.start()]
+        if b"/DCTDecode" not in head:
+            continue
+        end = data.find(b"endstream", match.end())
+        if end == -1:
+            continue
+        if end - match.end() > MAX_IMAGE_BYTES:
+            continue
+        body = data[match.end():end].rstrip(b"\r\n")
+        # The bytes have to be a JPEG in their own right; a stream that only
+        # mentions DCTDecode nearby is not one.
+        if not body.startswith(b"\xff\xd8\xff"):
+            continue
+        # The last ones before the stream, not the first: what is in front
+        # of a page's stream is usually the logo's dictionary, and reading
+        # the logo's size as the page's is how a scan gets skipped for
+        # being 218 by 62.
+        widths = _WIDTH.findall(head)
+        heights = _HEIGHT.findall(head)
+        if not (widths and heights):
+            continue
+        width, height = int(widths[-1]), int(heights[-1])
+        pixels = width * height
+        if pixels < MIN_PAGE_PIXELS:
+            continue
+        if best is None or pixels > best[1] * best[2]:
+            best = (body, width, height)
+    return best

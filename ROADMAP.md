@@ -186,26 +186,60 @@ this section.
 
 ---
 
-## 2. OCR for scanned paperwork
+## 2. OCR for scanned paperwork — **built, and the number was wrong**
 
-**197 of 352** real PDFs on the machine this was developed against have no
-text layer — **56%**. auto-sort detects them correctly, marks them
-`needs_ocr`, and holds them rather than guessing, which is honest and not
-useful.
+`tesseract` is now found at runtime the way `ffprobe` and `exiftool` are
+meant to be, and a photographed page is read and handed to the same
+induction as any other document. Absent, nothing changes.
 
-The shape is already decided: an **optional external program**, found at
-runtime exactly like `ffprobe` and `exiftool`, never a dependency. Absent, a
-scan stays held; present, it gets read and the existing induction does the
-rest with no new vocabulary.
+**The 56% figure in the earlier version of this file was wrong, and it was
+mine.** 197 of 352 PDFs have no *readable* text layer, which is true. What
+that was taken to mean — that 197 of them are photographs of pages — is not.
+Looking at what is actually inside them:
 
-- `tesseract` via `brew` / `apt` / `winget` — the portable answer.
-- macOS has far better OCR built into the system (the Vision framework),
-  reachable through `ctypes` the same way the tray is. Worth doing **after**
-  tesseract, not instead of it — it is one platform only, and the target
-  machine for this tool is more often a Windows box.
+| Of 195 PDFs with no readable text layer | |
+| --- | --- |
+| Hold only a letterhead-sized image | **185** |
+| Hold a page-sized image — a real scan | **10** |
 
-Nothing about this changes the classification path. It produces text; the
-existing heading induction already knows what to do with text.
+So OCR helps about ten files on that machine, not a hundred and ninety-seven.
+The other 185 are documents with real text in them that auto-sort fails to
+read, which is a different problem and a much larger one. See item 5.
+
+What was built, and why it looks the way it does:
+
+- The page image is lifted straight out of the PDF. A JPEG inside a PDF is a
+  JPEG, copied byte for byte — no rasteriser, no decoder, nothing installed.
+  The other filters would each need an image encoder written here to produce
+  something another program could open, which is a lot of code for the files
+  that do not use DCTDecode.
+- The **largest** image, not the first: nearly every scan arrives with the
+  sender's logo in front of it. And only if it is page-sized, because OCR on
+  a 218×62 logo costs a process launch to learn the sender's name.
+- Text from OCR is **LIKELY** where a text layer is STRONG. It is a machine's
+  reading of a photograph of the words, and `rn` becomes `m` at any
+  resolution a fax ever used.
+- It runs inside the identify worker, where it can be killed, with a
+  twenty-second limit inside the worker's thirty. Measured on real scans:
+  **1.0 to 1.5 seconds a page**, 126 to 403 words each.
+- The cost report does not list it. Slow is what OCR *is*; expensive is
+  relative to what the file asked for, and a report full of every scan in
+  the folder would bury the one file that actually misbehaved.
+
+Still open:
+
+- **Filters other than JPEG.** CCITT and JBIG2 fax images, and Flate raw
+  bitmaps, are skipped. Writing a PNM out of a Flate bitmap is not hard and
+  would need the colour space handled honestly; the fax codecs are a real
+  decoder each.
+- **Pages that are not images at all.** A PDF whose text cannot be decoded
+  has nothing to OCR without rendering it first, which needs `pdftoppm` or
+  equivalent. That is the natural second optional program, and item 5 may
+  make it unnecessary.
+- **macOS has far better OCR built in** (the Vision framework), reachable
+  through `ctypes` the same way the tray is. Worth doing after tesseract,
+  not instead of it: one platform only, and the machine this tool is aimed
+  at is more often a Windows box.
 
 ---
 
@@ -245,6 +279,44 @@ spawn cost hurts item 1.
 The decision on record is to **ship and wait for complaints through approved
 channels** rather than guess. That remains sensible. It is listed here so it
 is listed somewhere.
+
+---
+
+## 5. The documents that are not scans
+
+Found while building item 2, and much bigger than item 2.
+
+**185 of 195** PDFs with no readable text layer, on the machine this was
+developed against, are not scans at all. They contain ordinary text, set in
+ordinary base-14 fonts with `WinAnsiEncoding` and no embedded font files —
+about as readable as a PDF gets. auto-sort extracts the words correctly and
+then throws them away.
+
+The thrower is `_readable()` in `readers/pdftext.py`, which asks whether
+letters make up 45% of the characters. It exists to reject the letter-soup
+that comes out of a subset-encoded CID font with no `ToUnicode` map, and
+that is a real thing it has to reject. But an invoice is full of amounts,
+dates, customer numbers and reference codes:
+
+```
+chars: 62994   letters: 22425   ratio: 0.36   ->  rejected
+words with letters: 3035
+```
+
+Three thousand words of German, thrown away for being 36% letters.
+
+The fix is to judge on **words rather than characters** — soup does not
+produce repeated alphabetic tokens — and the test has to be built against
+examples of both, which means finding a real subset-CID file to tune the
+rejection side against. Otherwise this trades a false negative for a false
+positive and the induction starts learning from noise.
+
+Worth noting for whoever does it: these files extract 3,035 words and still
+produce a useless *heading*, because the first five hundred characters of
+the extracted text are reference numbers rather than the letterhead. Text
+order in a content stream is drawing order, not reading order. Getting the
+words back is most of the job; getting the top of the page is the other
+half.
 
 ---
 

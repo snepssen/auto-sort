@@ -196,7 +196,7 @@ class Reader(object):
 
     # -- the work ----------------------------------------------------------
 
-    def read(self, item, tier=identify.TIER_ALL):
+    def read(self, item, tier=identify.TIER_ALL, ocr="auto"):
         """Facts about one item, as `(record, error)`.
 
         Exactly one of the two is ever meaningful: a record, or a sentence
@@ -208,7 +208,7 @@ class Reader(object):
 
         request = {"primary": item.primary, "members": list(item.members),
                    "is_dir": bool(item.is_dir), "reason": item.reason,
-                   "sequence": item.sequence, "tier": tier}
+                   "sequence": item.sequence, "tier": tier, "ocr": ocr}
         try:
             self._process.stdin.write(
                 (json.dumps(request) + "\n").encode("utf-8"))

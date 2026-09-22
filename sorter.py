@@ -23,6 +23,7 @@ import identify
 import mirror
 import mover
 import paths
+from readers import ocr
 
 
 BUILTIN_IGNORE = (
@@ -94,7 +95,7 @@ def rules_hash(rule_set):
     return digest.hexdigest()
 
 
-def _read(reader, item):
+def _read(reader, item, ocr_mode="auto"):
     """Facts about one item, from wherever it is safe to read them.
 
     Without a `reader` this is a plain call, which is what the one-shot
@@ -104,17 +105,22 @@ def _read(reader, item):
     """
     if reader is None:
         return identify.identify(item), ""
-    return reader.read(item)
+    return reader.read(item, ocr=ocr_mode)
 
 
-def _note_cost(journal, path, watch, note=""):
+def _note_cost(journal, path, watch, note="", record=None):
     """File away a reading, but only the ones worth a person's attention.
 
     Silent about everything ordinary, and silent about everything if there
     is no ledger to write to. It must also never be the reason a sort
     fails: a measurement is a courtesy and the file is the job.
     """
-    if journal is None or not watch.notable():
+    # A page that had to be photographed and read back is slow because that
+    # is what it costs, not because anything went wrong. It earns a row only
+    # if it was slow even for that.
+    read_by_ocr = record is not None and record.value("read_by") == "ocr"
+    if journal is None or not watch.notable(
+            costs.OCR_SLOW_SECONDS if read_by_ocr else None):
         return
     try:
         size = os.path.getsize(path)
@@ -139,6 +145,10 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None,
     it, just one that cannot tell a second copy from a first.
     """
     root = os.path.abspath(root)
+    # Both processes have to agree about this, so it is set here for the one
+    # doing the reading and sent across with every request for the other.
+    ocr_mode = getattr(rule_set.settings, "ocr", "auto")
+    ocr.configure(ocr_mode)
     seen = duplicates.Index(journal)
     planned = []
     skipped = []
@@ -181,10 +191,10 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None,
         watch = costs.Watch()
         try:
             with watch:
-                record, failure = _read(reader, item)
+                record, failure = _read(reader, item, ocr_mode)
         except (OSError, ValueError) as error:
             record, failure = None, "identification failed: %s" % error
-        _note_cost(journal, item.primary, watch, failure)
+        _note_cost(journal, item.primary, watch, failure, record)
         if failure:
             skipped.append((item.primary, failure))
             continue
