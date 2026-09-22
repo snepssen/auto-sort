@@ -478,6 +478,11 @@ def watch(rule_path=None, state_file=None, dry_run=None, port=None,
         with daemon_module.PollingDaemon(
                 rule_path, state_file, dry_run, port) as service:
             service.run(once=once)
+        # Outside the `with`, and that is the whole point: the replacement
+        # cannot bind the port or open the ledger until this one has let go
+        # of both, and it only lets go on the way out of that block.
+        if service.restart_requested:
+            return relaunch(rule_path, state_file, port)
     except daemon_module.AlreadyRunning as error:
         print(str(error), file=sys.stderr)
         return 2
@@ -720,6 +725,96 @@ def restart(rule_path=None, state=None, port=None, wait_seconds=20):
               file=sys.stderr)
         return 1
 
+    command = _watch_command(rule_path, state, port)
+    import subprocess
+    log = _daemon_log()
+    try:
+        # Detached, so it outlives this command rather than dying with it.
+        subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                         start_new_session=True)
+    except OSError as error:
+        print("Could not start a replacement: %s" % error, file=sys.stderr)
+        return 1
+    finally:
+        if hasattr(log, "close"):
+            log.close()
+    if _wait_for_new_daemon(state, before, wait_seconds):
+        print("Restarted. %s" % _daemon_line(state))
+        return 0
+    print("Started a replacement, but it has not answered yet.",
+          file=sys.stderr)
+    return 1
+
+
+def relaunch(rule_path=None, state=None, port=None, wait_seconds=20):
+    """Start the daemon again, for a daemon that asked to be replaced.
+
+    The other half of the tray's Restart. `restart` above is the outside
+    view -- something asking a running daemon to go away and starting
+    another. This is the inside view, and it runs in the process that has
+    just stopped being the daemon.
+
+    Where launchd owns the login item there is nothing to do but say so: it
+    keeps this alive, so exiting is the restart. Anywhere else a detached
+    replacement is started here, which also covers the daemon somebody
+    started by hand in a terminal they have since closed.
+    """
+    mine = os.getpid()
+    if state is None and port is None and _launchd_manages():
+        if _wait_for_new_daemon(state, mine, wait_seconds):
+            print("Restarted by launchd. %s" % _daemon_line(state))
+            return 0
+        print("Stood down for a restart, but launchd has not brought it "
+              "back yet.", file=sys.stderr)
+        return 1
+
+    import subprocess
+    log = _daemon_log()
+    try:
+        subprocess.Popen(_watch_command(rule_path, state, port),
+                         stdout=log, stderr=subprocess.STDOUT,
+                         start_new_session=True)
+    except OSError as error:
+        print("Could not start a replacement: %s" % error, file=sys.stderr)
+        return 1
+    finally:
+        if hasattr(log, "close"):
+            log.close()
+    if _wait_for_new_daemon(state, mine, wait_seconds):
+        print("Restarted. %s" % _daemon_line(state))
+        return 0
+    print("Started a replacement, but it has not answered yet.",
+          file=sys.stderr)
+    return 1
+
+
+def _daemon_log():
+    """Where a detached replacement should write what it says.
+
+    Not `/dev/null`. A daemon started this way has no terminal to print to,
+    and sending its output nowhere means the one machine-readable account of
+    what it did -- "restarting", "watched folder unavailable", "reader
+    stopped for not answering" -- exists only for daemons somebody started
+    by hand. launchd already points its own copy at this same file.
+    """
+    import subprocess
+    try:
+        paths.ensure(paths.state_dir())
+        return open(os.path.join(paths.state_dir(), "daemon.log"), "ab")
+    except OSError:
+        return subprocess.DEVNULL
+
+
+def _launchd_manages():
+    """Whether a service manager will put the daemon back by itself."""
+    try:
+        state = autostart.status()
+    except Exception:                        # noqa: BLE001
+        return False
+    return bool(state.get("installed")) and state.get("platform") == "macos"
+
+
+def _watch_command(rule_path=None, state=None, port=None):
     command = [sys.executable, os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "autosort.py"), "watch"]
     if rule_path:
@@ -728,20 +823,7 @@ def restart(rule_path=None, state=None, port=None, wait_seconds=20):
         command += ["--state", state]
     if port:
         command += ["--port", str(port)]
-    try:
-        # Detached, so it outlives this command rather than dying with it.
-        import subprocess
-        subprocess.Popen(command, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
-    except OSError as error:
-        print("Could not start a replacement: %s" % error, file=sys.stderr)
-        return 1
-    if _wait_for_new_daemon(state, before, wait_seconds):
-        print("Restarted. %s" % _daemon_line(state))
-        return 0
-    print("Started a replacement, but it has not answered yet.",
-          file=sys.stderr)
-    return 1
+    return command
 
 
 def _wait_for_stop(state, seconds):

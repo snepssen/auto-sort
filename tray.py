@@ -205,6 +205,7 @@ def _mac_tray(actions):                                      # pragma: no cover
                 "openLog:": lambda: _dispatch("open_log"),
                 "togglePause:": lambda: _dispatch("toggle_pause"),
                 "sortNow:": lambda: _dispatch("sort_now"),
+                "restart:": lambda: _dispatch("restart"),
                 "quit:": lambda: _dispatch("quit"),
             })
             return _MAC_TARGET
@@ -226,10 +227,15 @@ def _mac_tray(actions):                                      # pragma: no cover
             self.menu = runtime.send(void_p, runtime.send(
                 void_p, runtime.cls("NSMenu"), "alloc"), "init")
             self.pause_item = None
+            # Restart is in the menu because a daemon cannot reload its own
+            # code, so every change to auto-sort itself needs one -- and
+            # asking for a terminal is the wrong answer for somebody whose
+            # whole interface is this icon.
             for title, selector in (("Open log", "openLog:"),
                                     ("Pause sorting", "togglePause:"),
                                     ("Sort now", "sortNow:"),
                                     (None, None),
+                                    ("Restart auto-sort", "restart:"),
                                     ("Quit auto-sort", "quit:")):
                 if title is None:
                     separator = runtime.send(void_p,
@@ -344,7 +350,7 @@ def _windows_tray(actions):                                  # pragma: no cover
     NIM_ADD, NIM_DELETE = 0x00000000, 0x00000002
     NIF_MESSAGE, NIF_ICON, NIF_TIP = 0x00000001, 0x00000002, 0x00000004
     TPM_RIGHTBUTTON = 0x0002
-    ID_OPEN, ID_TOGGLE, ID_SORT, ID_QUIT = 1, 2, 3, 4
+    ID_OPEN, ID_TOGGLE, ID_SORT, ID_QUIT, ID_RESTART = 1, 2, 3, 4, 5
     IDI_APPLICATION = 32512
     SHGFI_ICON, SHGFI_SMALLICON, SHGFI_USEFILEATTRIBUTES = 0x100, 0x1, 0x10
     FILE_ATTRIBUTE_NORMAL = 0x80
@@ -448,6 +454,7 @@ def _windows_tray(actions):                                  # pragma: no cover
                                    "Resume sorting" if self.paused else "Pause sorting")
                 user32.AppendMenuW(menu, 0, ID_SORT, "Sort now")
                 user32.AppendMenuW(menu, 0x0800, 0, None)
+                user32.AppendMenuW(menu, 0, ID_RESTART, "Restart auto-sort")
                 user32.AppendMenuW(menu, 0, ID_QUIT, "Quit auto-sort")
                 point = wintypes.POINT()
                 user32.GetCursorPos(ctypes.byref(point))
@@ -459,7 +466,8 @@ def _windows_tray(actions):                                  # pragma: no cover
 
         def _run_action(self, item):
             mapping = {ID_OPEN: "open_log", ID_TOGGLE: "toggle_pause",
-                       ID_SORT: "sort_now", ID_QUIT: "quit"}
+                       ID_SORT: "sort_now", ID_RESTART: "restart",
+                       ID_QUIT: "quit"}
             callback = actions.get(mapping.get(item))
             if callback:
                 callback()

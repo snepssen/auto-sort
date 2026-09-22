@@ -93,7 +93,8 @@ class LogPage(object):
                                         "searched": bool(text)})
 
         if method == "POST" and parsed.path in (
-                "/api/pause", "/api/resume", "/api/sort-now"):
+                "/api/pause", "/api/resume", "/api/sort-now",
+                "/api/restart"):
             if not self._same_origin(headers):
                 return _json_response(403, {"error": "cross-origin request refused"})
             if parsed.path == "/api/pause":
@@ -102,6 +103,12 @@ class LogPage(object):
             if parsed.path == "/api/resume":
                 self.journal.set_paused(False)
                 return _json_response(200, self._status(), "")
+            if parsed.path == "/api/restart":
+                # The same command the tray sends. The page will go quiet
+                # for a moment and come back on its own: the token lives in
+                # the ledger rather than in the process, so this URL is
+                # still the right one afterwards.
+                return _json_response(202, {"restarting": True}, "restart")
             return _json_response(202, {"queued": True}, "sort-now")
 
         if parsed.path == "/api/rules" and method == "GET":

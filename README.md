@@ -356,6 +356,15 @@ The daemon re-reads its rules whenever the file changes, but it cannot reload
 process, and it is needed at exactly the moment it is least obvious: right
 after a change, when everything looks fine and the old code is still running.
 
+Because that comes up often, **Restart is in the tray menu and on the log
+page**, not only in a terminal. The daemon stands down, and the replacement
+is started once it has actually let go of the port, the ledger and its
+reader — which is why the daemon cannot do it alone. Where launchd owns the
+login item there is nothing to start: `KeepAlive` means exiting *is* the
+restart, and starting a second one would be a daemon racing its own
+replacement for the port. The log page reconnects by itself, on the same
+URL, because the token lives in the ledger rather than in the process.
+
 Where a service manager owns the process, `restart` asks it to do the swap so
 the replacement stays supervised. macOS is the only platform here that has
 one; an XDG autostart entry and a Startup-folder shortcut say what to run at

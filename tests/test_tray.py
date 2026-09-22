@@ -68,14 +68,17 @@ class TrayActions(unittest.TestCase):
         self.service._tray_quit()
         self.assertTrue(self.service._quit_requested)
 
+    def test_restart_stands_down_and_says_why(self):
+        """Quitting and restarting both end the loop; only one comes back."""
+        self.assertFalse(self.service.restart_requested)
+        self.service._tray_restart()
+        self.assertTrue(self.service.restart_requested)
+        self.assertTrue(self.service._quit_requested)
+
     def test_open_log_uses_the_daemon_owned_url(self):
         with mock.patch("daemon.webbrowser.open") as open_browser:
             self.service._tray_open_log()
         open_browser.assert_called_once_with(self.service.web.url)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class NativeBackend(unittest.TestCase):
@@ -106,6 +109,7 @@ class NativeBackend(unittest.TestCase):
             "open_log": lambda: self.calls.append("open_log"),
             "toggle_pause": lambda: self.calls.append("toggle_pause"),
             "sort_now": lambda: self.calls.append("sort_now"),
+            "restart": lambda: self.calls.append("restart"),
             "quit": lambda: self.calls.append("quit"),
         }
 
@@ -128,6 +132,9 @@ class NativeBackend(unittest.TestCase):
             self.assertTrue(item.pause_item,
                             "the pause entry was never found, so it can "
                             "never be renamed")
+            # Open log, Pause, Sort now, separator, Restart, Quit.
+            self.assertEqual(item.runtime.send(
+                item.runtime.ctypes.c_long, item.menu, "numberOfItems"), 6)
         finally:
             item.close()
 
@@ -150,3 +157,7 @@ class NativeBackend(unittest.TestCase):
             self.assertTrue(item.pause_item)
         finally:
             item.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

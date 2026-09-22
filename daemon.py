@@ -140,6 +140,10 @@ class PollingDaemon(object):
         self._rule_identity = None
         self._quit_requested = False
         self._sort_requested = False
+        # A daemon cannot reload its own code, and until now the only way to
+        # get the new code running was a terminal. That is the wrong ask of
+        # somebody whose entire interface is an icon in the menu bar.
+        self.restart_requested = False
         self.output("Log: %s" % self.web.url)
 
     def close(self):
@@ -609,6 +613,7 @@ class PollingDaemon(object):
             "open_log": self._tray_open_log,
             "toggle_pause": self._tray_toggle_pause,
             "sort_now": self._tray_sort_now,
+            "restart": self._tray_restart,
             "quit": self._tray_quit,
         })
         if not status_item.available:
@@ -632,6 +637,8 @@ class PollingDaemon(object):
             status_item.pump(min(0.25, remaining))
             command = self.lock.wait(min(0.25, remaining),
                                      self.web.handle_connection)
+            if command == "restart":
+                self._tray_restart()
             if command in ("quit", "stop"):
                 # Asked to stand down. Under a service manager something
                 # will start a replacement; on its own this is a clean stop.
@@ -650,6 +657,18 @@ class PollingDaemon(object):
 
     def _tray_sort_now(self):
         self._sort_requested = True
+
+    def _tray_restart(self):
+        """Stand down, and have something start the new code.
+
+        Only the standing down happens here. Starting the replacement is the
+        caller's, because it cannot happen until this process has let go of
+        the port, the ledger and its worker -- and this process is still
+        holding all three while it is running.
+        """
+        self.output("Restarting on the current code.")
+        self.restart_requested = True
+        self._quit_requested = True
 
     def _tray_quit(self):
         self._quit_requested = True

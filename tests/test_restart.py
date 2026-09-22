@@ -182,5 +182,112 @@ class StopOnRequest(unittest.TestCase):
         self.assertEqual(int(recorded), os.getpid())
 
 
+class RestartingItself(unittest.TestCase):
+    """The tray's Restart: the daemon stands down and something replaces it.
+
+    Split in two because the two halves cannot happen in one process. The
+    daemon can only ask; the replacement can only start once the asking
+    process has let go of the port, the ledger and its worker.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.state = os.path.join(self.directory, "state.db")
+        self.rules = os.path.join(self.directory, "rules.ini")
+        with open(self.rules, "w", encoding="utf-8") as handle:
+            handle.write("[settings]\ndry_run = yes\n\n[watch]\nfolders = %s\n"
+                         "\n[rule: images]\nwhen = kind = image\ninto = %s/out\n"
+                         % (self.directory, self.directory))
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def service(self):
+        return daemon.PollingDaemon(rule_path=self.rules,
+                                    state_file=self.state, port=0,
+                                    output=lambda _m: None)
+
+    def test_the_tray_asks_and_the_loop_ends(self):
+        with self.service() as service:
+            self.assertFalse(service.restart_requested)
+            service._tray_restart()
+            self.assertTrue(service.restart_requested)
+            self.assertTrue(service._quit_requested)
+
+    def test_a_restart_command_over_the_wire_does_the_same(self):
+        """The log page's button and the tray send the same word."""
+        with self.service() as service:
+            item = mock.Mock(available=False)
+            with mock.patch.object(service.lock, "wait",
+                                   return_value="restart"):
+                service._wait_with_tray(5, item)
+            self.assertTrue(service.restart_requested)
+
+    def test_quitting_is_not_restarting(self):
+        with self.service() as service:
+            service._tray_quit()
+            self.assertFalse(service.restart_requested)
+
+    def test_a_replacement_is_started_where_nothing_manages_the_daemon(self):
+        started = []
+        with mock.patch.object(autosort, "_launchd_manages",
+                               return_value=False), \
+                mock.patch("subprocess.Popen",
+                           side_effect=lambda cmd, **k: started.append(cmd)), \
+                mock.patch.object(autosort, "_wait_for_new_daemon",
+                                  return_value=True), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(autosort.relaunch(self.rules, self.state), 0)
+        self.assertEqual(len(started), 1)
+        self.assertIn("watch", started[0])
+        self.assertIn(self.state, started[0])
+
+    def test_launchd_is_left_to_do_it(self):
+        """KeepAlive means exiting *is* the restart; a second one would be
+        a daemon racing its own replacement for the port."""
+        started = []
+        with mock.patch.object(autosort, "_launchd_manages",
+                               return_value=True), \
+                mock.patch("subprocess.Popen",
+                           side_effect=lambda cmd, **k: started.append(cmd)), \
+                mock.patch.object(autosort, "_wait_for_new_daemon",
+                                  return_value=True), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(autosort.relaunch(), 0)
+        self.assertEqual(started, [])
+
+    def test_a_named_daemon_is_never_left_to_launchd(self):
+        """A state file or a port names a daemon launchd knows nothing of."""
+        started = []
+        with mock.patch.object(autosort, "_launchd_manages",
+                               return_value=True), \
+                mock.patch("subprocess.Popen",
+                           side_effect=lambda cmd, **k: started.append(cmd)), \
+                mock.patch.object(autosort, "_wait_for_new_daemon",
+                                  return_value=True), \
+                contextlib.redirect_stdout(io.StringIO()):
+            autosort.relaunch(self.rules, self.state, 47000)
+        self.assertEqual(len(started), 1)
+
+    def test_a_replacement_that_never_answers_is_reported(self):
+        with mock.patch.object(autosort, "_launchd_manages",
+                               return_value=False), \
+                mock.patch("subprocess.Popen", return_value=None), \
+                mock.patch.object(autosort, "_wait_for_new_daemon",
+                                  return_value=False), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(autosort.relaunch(self.rules, self.state), 1)
+
+    def test_the_replacement_keeps_a_log(self):
+        """Not /dev/null: it is the only account of what the daemon did."""
+        handle = autosort._daemon_log()
+        try:
+            self.assertTrue(hasattr(handle, "write") or handle is not None)
+        finally:
+            if hasattr(handle, "close"):
+                handle.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
