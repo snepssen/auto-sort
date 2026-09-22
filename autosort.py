@@ -301,6 +301,7 @@ def _report_dead_rules(rule_set, state=None):
         with ledger_module.Ledger(state) as journal:
             uses, files = review.usage(journal, rule_set)
             new_words, headings = review.emerging(journal, rule_set)
+            buried, _seen = review.inside_words(journal, rule_set)
     except Exception:                        # noqa: BLE001
         return                               # no ledger yet: nothing to say
     dead = [use for use in uses if use.dead]
@@ -325,6 +326,23 @@ def _report_dead_rules(rule_set, state=None):
         print("  often the company that sent them rather than what they are.")
         print("  `auto-sort propose` writes an updated rules file; nothing")
         print("  here changes yours.")
+    if buried:
+        print()
+        print("  %s only ever matched inside longer words:"
+              % ("1 word has" if len(buried) == 1
+                 else "%d words have" % len(buried)))
+        for report in buried:
+            examples = ", ".join(word for word, _count
+                                 in report.hosts.most_common(2))
+            print("    %-20s %d file(s), always inside: %s"
+                  % (report.word[:20], report.inside, examples))
+        print()
+        print("  Matching inside a word is deliberate -- it is what lets a")
+        print("  learnt Vertrag catch Mietvertrag -- so this may be exactly")
+        print("  right. It is listed because a word that has never once")
+        print("  turned up on its own is the shape a wrong one takes, and")
+        print("  because there is one rule per word so you can delete one.")
+        print()
     if not files:
         return
     if not dead:

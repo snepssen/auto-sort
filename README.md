@@ -624,6 +624,21 @@ A catch-all is never named this way, however often it loses — it exists to
 be last, and the day it fires is the day it earns its keep. Neither is a rule
 that has simply never matched anything: silence is not evidence.
 
+**A word that only ever matched inside other words.** A learnt word matches
+inside longer ones on purpose — that is what lets `Vertrag` catch
+`Mietvertrag`, and it is why a German household's post files itself with no
+list of German words anywhere in this program. Nothing can tell that apart
+from `art` catching `Chart`, because it is the same operation. What the
+record can say is that a word has never once turned up on its own:
+
+```
+  1 word has only ever matched inside longer words:
+    art                  4 file(s), always inside: chart, cartography
+```
+
+One appearance as a word of its own clears it. There is one rule per word so
+that deleting one is a single line, and auto-sort never deletes it for you.
+
 **And the reverse.** A kind of letter that did not exist when the rules were
 written has no rule of its own, so it gets claimed by whatever else happens
 to match — often the company that sent it, because that word is on the page

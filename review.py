@@ -107,6 +107,94 @@ def usage(journal, rule_set, limit=20000):
     return list(usages.values()), files
 
 
+class InsideWords(object):
+    """A learnt word that only ever matched inside longer words."""
+
+    def __init__(self, rule, fact, word):
+        self.rule = rule
+        self.fact = fact
+        self.word = word
+        self.whole = 0           # files where it was a word of its own
+        self.inside = 0          # files where it was buried in another word
+        self.hosts = collections.Counter()
+
+    def __repr__(self):
+        return "InsideWords(%s, %r, %d/%d)" % (
+            self.rule.name, self.word, self.inside, self.inside + self.whole)
+
+
+_WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def _hosts_of(word, text):
+    """`(whole, [longer words it was found inside])` for one value."""
+    folded = str(word).lower()
+    whole = False
+    hosts = []
+    for match in _WORD.finditer(str(text).lower()):
+        token = match.group(0)
+        if token == folded:
+            whole = True
+        elif folded in token:
+            hosts.append(token)
+    return whole, hosts
+
+
+def inside_words(journal, rule_set, limit=20000):
+    """Learnt words that have never once matched a word of their own.
+
+    `contains` matching inside words is deliberate and load-bearing: it is
+    what lets a learnt `Vertrag` catch `Mietvertrag`, which is the whole
+    reason a German household's post files itself without anybody writing a
+    list of German words. The collision between two *learnt* words is
+    already handled -- the shorter one is asked for as a word of its own.
+
+    What is not handled is a short word matching inside an unrelated long
+    one, and the honest position is that nothing here can tell the two
+    apart: `Vertrag` inside `Mietvertrag` and `art` inside `Chart` are the
+    same operation. What can be said is what the record shows, which is that
+    this word has never once turned up on its own -- every file it claimed,
+    it claimed from inside something else. That is worth pointing at.
+
+    One rule per word exists precisely so that a person can delete one.
+    Nothing here does it for them.
+    """
+    by_rule = collections.OrderedDict()
+    for rule in rule_set.rules:
+        for comparison in rule.condition.comparisons():
+            if comparison.operator == "contains" and comparison.value:
+                key = (rule.name, comparison.fact, str(comparison.value))
+                by_rule.setdefault(
+                    key, InsideWords(rule, comparison.fact,
+                                     str(comparison.value)))
+    if not by_rule:
+        return [], 0
+
+    files = 0
+    for row in journal.placed_moves(None, limit):
+        facts = _facts_of(row)
+        if not facts:
+            continue
+        files += 1
+        for (name, fact, word), report in by_rule.items():
+            if row["rule_name"] != name:
+                continue
+            value = facts.get(fact)
+            if value is None:
+                continue
+            whole, hosts = _hosts_of(word, value)
+            if whole:
+                report.whole += 1
+            elif hosts:
+                report.inside += 1
+                report.hosts.update(hosts)
+    # Only the ones the record has actually judged. A word that has placed
+    # two files has not yet said anything; three is this project's threshold
+    # for calling something a pattern and it is the threshold here too.
+    return [report for report in by_rule.values()
+            if report.inside >= MIN_TRIALS and report.whole == 0], files
+
+
 def dead_rules(journal, rule_set, limit=20000):
     """Only the ones the record has already judged."""
     usages, files = usage(journal, rule_set, limit)

@@ -155,6 +155,15 @@ class Node(object):
     def facts_used(self):
         return set()
 
+    def comparisons(self):
+        """Every `fact operator value` in this condition, in written order.
+
+        A condition knows what it is made of; asking it is better than a
+        report elsewhere taking the tree apart by guessing at attribute
+        names, which would go quietly wrong the first time a node grew one.
+        """
+        return []
+
 
 class And(Node):
     def __init__(self, left, right):
@@ -169,6 +178,9 @@ class And(Node):
 
     def facts_used(self):
         return self.left.facts_used() | self.right.facts_used()
+
+    def comparisons(self):
+        return self.left.comparisons() + self.right.comparisons()
 
     def __str__(self):
         return "%s and %s" % (self.left, self.right)
@@ -191,6 +203,9 @@ class Or(Node):
     def facts_used(self):
         return self.left.facts_used() | self.right.facts_used()
 
+    def comparisons(self):
+        return self.left.comparisons() + self.right.comparisons()
+
     def __str__(self):
         return "(%s or %s)" % (self.left, self.right)
 
@@ -205,6 +220,9 @@ class Not(Node):
 
     def facts_used(self):
         return self.inner.facts_used()
+
+    def comparisons(self):
+        return self.inner.comparisons()
 
     def __str__(self):
         return "not %s" % self.inner
@@ -228,6 +246,9 @@ class Compare(Node):
 
     def facts_used(self):
         return {self.fact}
+
+    def comparisons(self):
+        return [self]
 
     def evaluate(self, facts, trace=None):
         present = self.fact in facts and facts[self.fact] is not None

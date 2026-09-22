@@ -248,16 +248,6 @@ is listed somewhere.
 
 ---
 
-## 5. Smaller, known, and worth doing
-
-**`contains` matches inside words.** Deliberate — it is what lets a learnt
-`Vertrag` catch `Mietvertrag` — and the collision between two *learnt* words
-is handled (the shorter one is asked for as a word of its own). What is not
-handled is a short learnt word matching inside an unrelated one. One rule per
-word exists so a person can delete those, but nothing points them out.
-
----
-
 ## Not planned
 
 Unchanged from [DESIGN.md](DESIGN.md#deliberately-not-here): no content
