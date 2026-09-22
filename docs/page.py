@@ -155,6 +155,40 @@ PAGE = {
                     "into    = ~/Pictures/furaffinity/{group}"),
                  "caption": "Written by the survey, not by a person — and "
                             "readable, editable and arguable because of it."},
+                {"kind": "heading", "text": "What a document says"},
+                {"kind": "prose", "text": [
+                    "A PDF called <span class=\"mono\">scan0001.pdf</span> "
+                    "tells a sorter nothing, and its metadata usually agrees. "
+                    "The words on the page do not — reading them needs "
+                    "nothing but <span class=\"mono\">zlib</span>, since PDF "
+                    "content is Flate-compressed drawing operators underneath.",
+                    "There is no table of document types here either, in any "
+                    "language. A word heading three or more of somebody's "
+                    "files, and not nearly all of them, is a category those "
+                    "files chose; a word on nearly every one is the "
+                    "letterhead and is dropped. Counted this way, a folder of "
+                    "German and Belgian paperwork sorts itself under "
+                    "<span class=\"mono\">Rechnung</span>, "
+                    "<span class=\"mono\">Kontoauszug</span>, "
+                    "<span class=\"mono\">Steuerbescheid</span> and "
+                    "<span class=\"mono\">Mietvertrag</span> — words that do "
+                    "not appear anywhere in this project's code."]},
+                {
+                    "kind": "figure",
+                    "light": "screens/rules.png",
+                    "width": 2000, "height": 1133, "loading": "lazy",
+                    "alt": ("The Auto-Sort rules view, showing rules learnt "
+                            "from a folder's own documents — 'what the page "
+                            "calls itself: Rechnung', 'Kontoauszug', "
+                            "'Steuerbescheid' and 'Mietvertrag' — beside the "
+                            "condition each matches and the folder it "
+                            "writes to."),
+                    "caption": ("Every rule here came from counting words on "
+                                "the folder's own pages. Nothing was typed "
+                                "in advance, and the page shows exactly the "
+                                "condition and destination each rule uses, "
+                                "not a summary of them."),
+                },
                 {"kind": "heading", "text": "What you correct"},
                 {"kind": "prose", "text": [
                     "The ledger says where each file was put; the disk says "
@@ -215,6 +249,31 @@ PAGE = {
                     "There is nothing to sign up for, no telemetry and no "
                     "crash reporter — which is also why a failure has no way "
                     "of reaching anybody on its own."]},
+                {"kind": "heading", "text": "A second copy, off by default"},
+                {"kind": "prose", "text": [
+                    "One switch on the log page keeps a mirror of everything "
+                    "on another disk, laid out exactly like the first so it "
+                    "reads without this program. Off until asked for, because "
+                    "out of the box auto-sort should touch nothing but the "
+                    "folders the computer already has.",
+                    "The disk being unplugged, asleep or full is the ordinary "
+                    "case, not the exception, so sorting never waits on it and "
+                    "never fails because of it — the copy is queued the "
+                    "instant a file is filed and made whenever the disk is "
+                    "actually there."]},
+                {
+                    "kind": "figure",
+                    "light": "screens/backup.png",
+                    "width": 1060, "height": 409, "loading": "lazy",
+                    "alt": ("The backup panel on the log page: off by "
+                            "default, one button to choose a disk, and a "
+                            "sentence explaining that sorting never waits "
+                            "on it."),
+                    "caption": ("Same page, same click depth as everything "
+                                "else here. Turning it on protects what is "
+                                "already on disk, not only what arrives "
+                                "next."),
+                },
             ],
         },
         {
@@ -231,6 +290,23 @@ PAGE = {
                     "about to watch, points out that dry run is on, and then "
                     "runs — leaving an icon in the menu bar and a log page "
                     "behind it. None of that requires knowing what Python is."]},
+                {
+                    "kind": "figure",
+                    "light": "screens/ledger.png",
+                    "width": 2000, "height": 1082, "loading": "lazy",
+                    "alt": ("The log page auto-sort leaves behind: a ledger "
+                            "of every file it has moved, newest first, with "
+                            "the destination, the rule that placed it and "
+                            "the status. A search box asks the whole "
+                            "history, not just the page on screen, and each "
+                            "row can be revealed, restored, or sent to the "
+                            "system bin."),
+                    "caption": ("This is the whole interface. There is no "
+                                "install wizard and no settings screen to "
+                                "learn — the icon opens this page, and this "
+                                "page is where a file that has gone missing "
+                                "is found again."),
+                },
                 {"kind": "report", "text": (
                     "auto-sort propose ~/Downloads --out my-rules.ini "
                     '<span class="muted">what this folder needs</span>\n'

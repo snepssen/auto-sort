@@ -191,6 +191,17 @@ extract = stem re ^\d{10}\.(?P&lt;group&gt;[a-z0-9-]+)_.*
 into    = ~/Pictures/furaffinity/{group}</pre>
 <p class="caption">Written by the survey, not by a person — and readable, editable and arguable because of it.</p>
 </div>
+  <h3>What a document says</h3>
+  <p>A PDF called <span class="mono">scan0001.pdf</span> tells a sorter nothing, and its metadata usually agrees. The words on the page do not — reading them needs nothing but <span class="mono">zlib</span>, since PDF content is Flate-compressed drawing operators underneath.</p>
+  <p>There is no table of document types here either, in any language. A word heading three or more of somebody's files, and not nearly all of them, is a category those files chose; a word on nearly every one is the letterhead and is dropped. Counted this way, a folder of German and Belgian paperwork sorts itself under <span class="mono">Rechnung</span>, <span class="mono">Kontoauszug</span>, <span class="mono">Steuerbescheid</span> and <span class="mono">Mietvertrag</span> — words that do not appear anywhere in this project's code.</p>
+  <figure class="shot">
+    <picture>
+      <img src="screens/rules.png" alt="The Auto-Sort rules view, showing rules learnt from a folder's own documents — 'what the page calls itself: Rechnung', 'Kontoauszug', 'Steuerbescheid' and 'Mietvertrag' — beside the condition each matches and the folder it writes to." width="2000"
+           height="1133" loading="lazy"
+           decoding="async">
+    </picture>
+    <figcaption>Every rule here came from counting words on the folder's own pages. Nothing was typed in advance, and the page shows exactly the condition and destination each rule uses, not a summary of them.</figcaption>
+  </figure>
   <h3>What you correct</h3>
   <p>The ledger says where each file was put; the disk says where it is. Any difference is you disagreeing, and where you moved it to is the answer. auto-sort reports which rules you kept overriding — often more useful than any guess — and proposes a rule when enough corrections agree. It proposes; it never silently adjusts.</p>
   <h3>What it filed too early</h3>
@@ -208,12 +219,31 @@ into    = ~/Pictures/furaffinity/{group}</pre>
     <div class="card"><h3>Never overwrites</h3><p class="mono">collisions get a suffix</p><p>A cross-volume move copies, verifies by hash, then removes — never the other order. An external drive is sorted in place.</p></div>
   </div>
   <p>Nothing here touches the network, and it is not a service. There is nothing to sign up for, no telemetry and no crash reporter — which is also why a failure has no way of reaching anybody on its own.</p>
+  <h3>A second copy, off by default</h3>
+  <p>One switch on the log page keeps a mirror of everything on another disk, laid out exactly like the first so it reads without this program. Off until asked for, because out of the box auto-sort should touch nothing but the folders the computer already has.</p>
+  <p>The disk being unplugged, asleep or full is the ordinary case, not the exception, so sorting never waits on it and never fails because of it — the copy is queued the instant a file is filed and made whenever the disk is actually there.</p>
+  <figure class="shot">
+    <picture>
+      <img src="screens/backup.png" alt="The backup panel on the log page: off by default, one button to choose a disk, and a sentence explaining that sorting never waits on it." width="1060"
+           height="409" loading="lazy"
+           decoding="async">
+    </picture>
+    <figcaption>Same page, same click depth as everything else here. Turning it on protects what is already on disk, not only what arrives next.</figcaption>
+  </figure>
 </section>
 
 <section id="running">
   <p class="eyebrow">Getting started</p>
   <h2>It runs itself, from an icon</h2>
   <p class="lede">Double-click <b>Start auto-sort.command</b> on macOS, <span class="mono">start.sh</span> on Linux or <span class="mono">start.bat</span> on Windows. It writes a rules file if there is not one, says what it is about to watch, points out that dry run is on, and then runs — leaving an icon in the menu bar and a log page behind it. None of that requires knowing what Python is.</p>
+  <figure class="shot">
+    <picture>
+      <img src="screens/ledger.png" alt="The log page auto-sort leaves behind: a ledger of every file it has moved, newest first, with the destination, the rule that placed it and the status. A search box asks the whole history, not just the page on screen, and each row can be revealed, restored, or sent to the system bin." width="2000"
+           height="1082" loading="lazy"
+           decoding="async">
+    </picture>
+    <figcaption>This is the whole interface. There is no install wizard and no settings screen to learn — the icon opens this page, and this page is where a file that has gone missing is found again.</figcaption>
+  </figure>
   <div class="figure">
 <pre class="report mono">auto-sort propose ~/Downloads --out my-rules.ini <span class="muted">what this folder needs</span>
 auto-sort sort ~/Downloads --rules my-rules.ini  <span class="muted">see what it would do</span>
