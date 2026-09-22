@@ -792,3 +792,6 @@ its own specification at test time.
 
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.
+[ROADMAP.md](ROADMAP.md) covers what is not built: the job manager that would
+stop one pathological file freezing everything, OCR for the 56% of real
+scanned paperwork that has no text layer, and a Linux tray.

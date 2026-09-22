@@ -1,0 +1,227 @@
+# What is not built yet
+
+Everything here is either measured or marked as a guess. The numbers come
+from running the thing on real machines during development, and where a
+number is missing it is missing because nobody has measured it, not because
+it is small.
+
+Done is in [DESIGN.md](DESIGN.md#build-order). This is the other list.
+
+---
+
+## 1. The job manager
+
+The one that matters, because it is the only item here whose absence is
+invisible until it happens to somebody.
+
+### What breaks today
+
+auto-sort identifies files, serves its log page, and pumps its tray icon on
+**one thread**. Any of those three can stop the other two, and when it
+happens the only symptom a person gets is that the menu bar icon disappears.
+It has happened twice in development, both times from a file rather than a
+bug in the loop:
+
+| What | Measured |
+| --- | --- |
+| A regex that was quadratic on digits | 8,000 digits took 0.4s, every doubling quadrupled it — four megabytes was about **a day**, on the main thread |
+| A 0.91 MB PDF whose streams inflated without a cap | grew the process by **171 MB**, about a hundred and ninety fold |
+
+Both are fixed. Both were found by accident. The next one will be a file
+nobody has thought of, and it will present identically: the icon vanishes,
+sorting stops, the log page stops answering, and there is no telemetry and
+no crash reporter to say so — by design.
+
+### Why threads do not fix it
+
+Tested, not assumed. A catastrophic regex was run on a worker thread while
+the main loop tried to tick every 10ms:
+
+```
+worker regex took : 22.99s
+main loop ticks   : 1 over 23.00s     (it wanted 2,300)
+```
+
+CPython's regex engine does not release the GIL, so a "background" worker
+starves the foreground completely. `asyncio` is worse, not better: a
+coroutine that never awaits never yields, and a spinning regex never awaits.
+
+**The property needed is not concurrency. It is preemption** — and the only
+thing that can be preempted here is a process.
+
+### The three stages
+
+They are separated because they **fail differently**, not merely to spread
+load. Their names are the ones that describe them:
+
+**folder-discovery** — walks trees, finds candidates.
+Fails on: permissions, dead network mounts, symlink loops, a volume that
+disappears mid-walk. Cheap, restartable, holds no state worth protecting.
+Correct response to a hang: kill and retry later.
+
+**identify-catalogue** — reads bytes and works out what a file is.
+Fails on: adversarial or merely strange file contents. This is the only
+stage whose input is effectively untrusted, and both production hangs came
+from here. Needs a hard per-file timeout and a real memory ceiling.
+Correct response to a hang: kill the worker, record the file as unread, move
+on. Losing one file's facts is not losing the file.
+
+**sort-job** — moves files and journals them.
+Fails on: the filesystem. Must be transactional, and **must never be killed
+mid-move**. This stage is why "just add timeouts everywhere" is wrong: the
+correct timeout for identify is five seconds and the correct timeout for a
+cross-volume move of a 40 GB video is not.
+
+That asymmetry is the argument for the split. One supervisor, three kinds of
+worker, three different policies.
+
+### Budget, and why it is not a wall
+
+100 MB is the target for auto-sort's own footprint. Today, measured:
+
+| | |
+| --- | --- |
+| Program on disk | **788 KB** of Python, ~910 KB with the log page and docs |
+| Installed dependencies | **none** |
+| Daemon at rest | **35 MB** |
+| Reading 336 real PDFs | **62 MB** (was 230 MB before the decompression cap) |
+
+**The budget must not be enforced by killing.** A file that genuinely needs
+more memory should get it — and because there is no telemetry, a silent kill
+would be invisible to everybody including the person it happened to. So:
+
+- **Soft budget (100 MB)** — a tripwire. Crossing it is *recorded*, not
+  punished: "this file needed 340 MB to read".
+- **Hard ceiling** — a fuse, set far higher, existing only so one file
+  cannot take the machine down. `resource.setrlimit(RLIMIT_AS)` on a worker
+  process, stdlib, and a breach kills that worker and nothing else.
+- The file is then **set aside**, exactly as the mirror queue already sets
+  aside a file it cannot copy — a status and a reason, not a silence.
+
+### The reporting is the point
+
+There is no crash reporter and there never will be, so the ledger has to be
+the telemetry. It is already local, already durable, and already records
+every move with its facts.
+
+What is missing is one view: **files that were expensive**. Somebody whose
+fan is spinning opens the log page, sees one absurd file, and can say what it
+was. That closes the only feedback loop this project is allowed to have.
+
+The 171 MB PDF was invisible until someone went looking with `ps`. Had
+auto-sort simply written down "this file cost 171 MB", it would have been a
+bug report on day one.
+
+### Open questions
+
+- Process pool or one worker spawned per batch? Spawn cost on Windows is
+  significantly worse than on Unix and has never been measured here.
+- How facts cross the process boundary. They are already JSON in the ledger,
+  so `json` over a pipe is the obvious answer and probably the right one.
+- Whether folder-discovery is worth its own process at all, or whether it
+  belongs in the supervisor. It is the cheapest stage and the least
+  dangerous.
+
+---
+
+## 2. OCR for scanned paperwork
+
+**197 of 352** real PDFs on the machine this was developed against have no
+text layer — **56%**. auto-sort detects them correctly, marks them
+`needs_ocr`, and holds them rather than guessing, which is honest and not
+useful.
+
+The shape is already decided: an **optional external program**, found at
+runtime exactly like `ffprobe` and `exiftool`, never a dependency. Absent, a
+scan stays held; present, it gets read and the existing induction does the
+rest with no new vocabulary.
+
+- `tesseract` via `brew` / `apt` / `winget` — the portable answer.
+- macOS has far better OCR built into the system (the Vision framework),
+  reachable through `ctypes` the same way the tray is. Worth doing **after**
+  tesseract, not instead of it — it is one platform only, and the target
+  machine for this tool is more often a Windows box.
+
+Nothing about this changes the classification path. It produces text; the
+existing heading induction already knows what to do with text.
+
+---
+
+## 3. A Linux tray
+
+macOS and Windows have one. Linux gets `UnavailableTray` and a desktop entry
+in the applications menu, which is enough to open the log page but is not an
+icon.
+
+The honest blocker: a native tray means **StatusNotifierItem over D-Bus**,
+which from the standard library means speaking the wire protocol — SASL
+handshake, binary marshalling, exporting an object with properties, plus
+`com.canonical.dbusmenu` for the menu itself. That is several hundred lines
+of exactly the kind of code that ships broken when it cannot be tested on
+the desktop it targets.
+
+KDE hosts SNI, and a Steam Deck in Desktop Mode is a real KDE machine that
+has now run this program. So it is testable. It is just not small, and the
+desktop entry already solves the actual problem, which was "there is no way
+in but a terminal".
+
+---
+
+## 4. Windows
+
+Code-reviewed, never executed. Not once.
+
+What is known to be right by reading: `paths.state_dir()` resolves
+`%APPDATA%`, the kind folders map to `Videos` rather than macOS's `Movies`,
+`$RECYCLE.BIN` is recognised as a wastebasket.
+
+What cannot be known without a machine: the Startup-folder shortcut (needs
+PowerShell), the tray (`Shell_NotifyIcon` through `ctypes`), whether
+`Zone.Identifier` provenance survives real browsers, and how badly process
+spawn cost hurts item 1.
+
+The decision on record is to **ship and wait for complaints through approved
+channels** rather than guess. That remains sensible. It is listed here so it
+is listed somewhere.
+
+---
+
+## 5. Smaller, known, and worth doing
+
+**Expensive-file reporting** — see item 1. Cheap on its own, and worth
+building before the job manager rather than after, because it is what will
+find the next pathological file.
+
+**Installer version parsing.** `firefox-1.5.0.12.installer.exe` yields
+`product = "firefox 1 5 0 12"` and no version at all. A folder with eleven
+years of Firefox installers in it is the canonical case this tool exists
+for, and it currently files them by date rather than by what they are.
+
+**`contains` matches inside words.** Deliberate — it is what lets a learnt
+`Vertrag` catch `Mietvertrag` — and the collision between two *learnt* words
+is handled (the shorter one is asked for as a word of its own). What is not
+handled is a short learnt word matching inside an unrelated one. One rule per
+word exists so a person can delete those, but nothing points them out.
+
+**A progress indicator.** 463 files took over two minutes, almost all of it
+reading PDFs. On a twenty-year folder that is real time with no feedback.
+
+**Stale state files.** Development left ~4.6 MB of abandoned databases in the
+state directory. Nothing creates them any more and nothing cleans them up.
+A fresh install has none, so this is a one-line tidy, not a feature.
+
+---
+
+## Not planned
+
+Unchanged from [DESIGN.md](DESIGN.md#deliberately-not-here): no content
+recognition beyond structural reads, nothing cloud, no telemetry, no
+deleting, and no becoming a media library manager.
+
+One addition worth stating explicitly, because it came up: **no rewriting
+the rules ordering model.** First-match-wins on a readable ordered list is
+why a non-programmer can open that file and understand it. It has a real
+cost — every bug about a rule that never fires traces back to it — but the
+three reports that now catch those (`check-rules` naming unreachable rules,
+rules that never win, and categories with no rule) are the right compensation.
+A scoring model would be harder to predict and impossible to explain.
