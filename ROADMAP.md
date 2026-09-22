@@ -121,7 +121,7 @@ worker, three different policies.
 
 | | |
 | --- | --- |
-| Program on disk | **828 KB** of Python, ~956 KB with the log page and docs |
+| Program on disk | **856 KB** of Python, ~980 KB with the log page and docs |
 | Installed dependencies | **none** |
 | Daemon at rest | **35 MB** |
 | Reading 336 real PDFs | **62 MB** (was 230 MB before the decompression cap) |
