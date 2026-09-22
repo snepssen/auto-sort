@@ -409,3 +409,8 @@ duplication is three files and it buys each tool the ability to stand alone.
     in the ledger and a page of their own in the log. There is no crash
     reporter and there never will be, so a file that makes the machine go
     quiet has to leave its own note or nobody ever learns which file it was.
+11. Identification in its own process. The stage that reads what somebody
+    else wrote is the stage that hangs, and a thread cannot be taken away
+    from work it refuses to stop doing. A worker that stops answering is
+    killed, the file is set aside with a reason, and the tray icon, the log
+    page and the nineteen thousand files behind it carry on.

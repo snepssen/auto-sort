@@ -337,6 +337,20 @@ frozen this program during development and neither of them said so, and
 because there is no telemetry here to say so on their behalf. The same list
 is the **Slow & heavy files** page in the log.
 
+**One file cannot stop the rest.** Working out what a file is means reading
+bytes somebody else wrote, with parsers that have twice been sent into a
+spin by an ordinary file — so that reading happens in a separate process.
+If it stops answering for thirty seconds it is killed, the file is set aside
+with a reason, and the tray icon, the log page and everything queued behind
+it carry on. A thread could not do this: a thread stuck in a runaway regular
+expression never lets go, and when that was measured the main loop managed
+one tick in twenty-three seconds. With the worker in its own process it
+manages 97% of its idle rate while one spins. The cost is 0.19 ms a file.
+
+Where a worker cannot be started at all, reading happens in the main process
+exactly as it used to. A safety net that stopped the tool working when the
+net was unavailable would be worse than no net.
+
 The daemon re-reads its rules whenever the file changes, but it cannot reload
 *itself* — a change to auto-sort's own code only takes effect in a new
 process, and it is needed at exactly the moment it is least obvious: right
@@ -800,9 +814,14 @@ its own specification at test time.
     drives — a native folder picker for a one-time sort or a new intake,
     and ledger search and compaction so the database that remembers
     everything does not need a disk of its own.
+11. **One file can no longer freeze the program** ✓
+    Every reading is timed and written down when it was expensive, and
+    identification — the one stage that reads what somebody else wrote —
+    happens in a process that is killed if it stops answering. The file is
+    then set aside with a reason and everything behind it carries on.
 
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.
-[ROADMAP.md](ROADMAP.md) covers what is not built: the job manager that would
-stop one pathological file freezing everything, OCR for the 56% of real
-scanned paperwork that has no text layer, and a Linux tray.
+[ROADMAP.md](ROADMAP.md) covers what is not built: the rest of the job
+manager, OCR for the 56% of real scanned paperwork that has no text layer,
+and a Linux tray.

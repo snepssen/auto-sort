@@ -21,6 +21,7 @@ import time
 import webbrowser
 
 import bundles
+import jobs
 import ledger as ledger_module
 import mover
 import logpage
@@ -124,9 +125,17 @@ class PollingDaemon(object):
         # answering. "Something is listening" is not the same question as
         # "the thing I asked to be replaced has been".
         self.journal.set_state("daemon_pid", str(os.getpid()))
+        # Identification runs in a separate process, so that a file which
+        # sends a reader into a spin costs that file's facts rather than
+        # the tray icon, the log page and the sorting of everything behind
+        # it. One reader serves the daemon's whole life; it restarts its
+        # worker itself when one has to be stopped.
+        self.reader = jobs.Reader()
+        self._workers_stopped = 0
         self.web = logpage.LogPage(self.journal, self.lock.port, self.token,
                                    rules_getter=self._reload_rules,
-                                   rule_path=self.rule_path)
+                                   rule_path=self.rule_path,
+                                   reader=self.reader)
         self.rule_set = None
         self._rule_identity = None
         self._quit_requested = False
@@ -134,6 +143,7 @@ class PollingDaemon(object):
         self.output("Log: %s" % self.web.url)
 
     def close(self):
+        self.reader.close()
         self.lock.close()
         self.journal.close()
 
@@ -355,6 +365,21 @@ class PollingDaemon(object):
                waiting, moves, "" if moves == 1 else "s",
                " (preview only)" if rule_set.settings.dry_run else ""))
 
+    def _report_supervision(self):
+        """Say out loud when a worker had to be stopped.
+
+        The log is the only place this can be said. There is no crash
+        reporter, and the person watching the tray icon would otherwise see
+        nothing at all -- which was the original complaint: the icon
+        vanished and nothing anywhere explained why.
+        """
+        killed = self.reader.killed
+        if killed > self._workers_stopped:
+            self.output("Reader stopped %d time(s) for not answering; the "
+                        "files are listed under 'auto-sort costs'."
+                        % (killed - self._workers_stopped))
+            self._workers_stopped = killed
+
     def cycle(self, now_value=None):
         now_value = time.time() if now_value is None else float(now_value)
         rule_set = self._reload_rules()
@@ -371,6 +396,14 @@ class PollingDaemon(object):
             self.output("Recovered: %s" % message)
 
         results = []
+        try:
+            return self._sweep(rule_set, queue_fingerprint, plan_fingerprint,
+                               requested_dry, now_value, results)
+        finally:
+            self._report_supervision()
+
+    def _sweep(self, rule_set, queue_fingerprint, plan_fingerprint,
+               requested_dry, now_value, results):
         for root in rule_set.watch.folders:
             root = os.path.abspath(root)
             if not _root_available(root):
@@ -472,7 +505,8 @@ class PollingDaemon(object):
         if requested_dry or not has_preview:
             plan = sorter.build_plan(
                 root, rule_set, exclude=self._protected_paths(rule_set),
-                items=[item for _row, item in valid], journal=self.journal)
+                items=[item for _row, item in valid], journal=self.journal,
+                reader=self.reader)
             if not plan.items:
                 reasons = dict((sorter._collision_key(path), reason)
                                for path, reason in plan.skipped)
@@ -526,7 +560,7 @@ class PollingDaemon(object):
             self.journal.set_queue_status(row["id"], "processing")
             plan = sorter.build_plan(
                 root, rule_set, exclude=self._protected_paths(rule_set),
-                items=[item], journal=self.journal)
+                items=[item], journal=self.journal, reader=self.reader)
             if not plan.items:
                 reason = plan.skipped[0][1] if plan.skipped else "nothing to do"
                 if _retryable_skip(reason):

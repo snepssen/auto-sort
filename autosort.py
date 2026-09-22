@@ -21,6 +21,7 @@ import autostart
 import daemon as daemon_module
 import evidence
 import identify
+import jobs
 import ledger as ledger_module
 import logpage
 import paths
@@ -354,7 +355,11 @@ def sort_folders(roots, rule_set, state_file=None, dry_run=None,
                  as_json=False):
     reports = []
     worst = 0
-    with ledger_module.Ledger(state_file) as journal:
+    # A one-shot sort of a folder twenty years deep is exactly where a file
+    # that will not finish being read does the most damage, so the same
+    # supervised reading the daemon uses applies here. Opened once for all
+    # the folders: it is a process, and one is enough.
+    with ledger_module.Ledger(state_file) as journal, jobs.Reader() as reader:
         recovery = sorter.reconcile(journal)
         for root in roots:
             if not os.path.isdir(root):
@@ -364,7 +369,7 @@ def sort_folders(roots, rule_set, state_file=None, dry_run=None,
             protected = (rule_set.source, journal.filename,
                          journal.filename + "-wal", journal.filename + "-shm")
             plan = sorter.build_plan(root, rule_set, exclude=protected,
-                                     journal=journal)
+                                     journal=journal, reader=reader)
             result = sorter.execute(plan, rule_set, journal, dry_run)
             reports.append((plan, result))
             if result.failed:

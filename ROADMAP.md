@@ -14,13 +14,18 @@ Done is in [DESIGN.md](DESIGN.md#build-order). This is the other list.
 The one that matters, because it is the only item here whose absence is
 invisible until it happens to somebody.
 
-### What breaks today
+> **Part of this is now built.** The identify-catalogue stage runs in its
+> own process and is killed if it stops answering. Folder-discovery and
+> sort-job still run in the main loop. The argument below is kept in full
+> because it is what the rest of the work is measured against.
 
-auto-sort identifies files, serves its log page, and pumps its tray icon on
-**one thread**. Any of those three can stop the other two, and when it
-happens the only symptom a person gets is that the menu bar icon disappears.
-It has happened twice in development, both times from a file rather than a
-bug in the loop:
+### What broke, and what it cost
+
+auto-sort identified files, served its log page, and pumped its tray icon on
+**one thread**. Any of those three could stop the other two, and when it
+happened the only symptom a person got was that the menu bar icon
+disappeared. It happened twice in development, both times from a file rather
+than a bug in the loop:
 
 | What | Measured |
 | --- | --- |
@@ -49,24 +54,59 @@ coroutine that never awaits never yields, and a spinning regex never awaits.
 **The property needed is not concurrency. It is preemption** — and the only
 thing that can be preempted here is a process.
 
+Measured again after the change, with a real catastrophic backtrack burning
+a core inside a worker and the parent ticking every 10ms:
+
+```
+worker spun for   : 5.01s
+main loop ticks   : 407 over 5.01s     (an idle loop manages 420)
+verdict           : stopped after 5 seconds without an answer
+```
+
+97% of idle, against one tick in twenty-three seconds before. The worker was
+killed, the file was set aside with a reason, and the next file was read by
+a fresh worker.
+
+One thing that is still a thread, deliberately: the parent reads replies on
+a thread that does nothing but block on a pipe. A thread blocked on I/O has
+released the lock. The rule was never "threads are bad" — it is that a
+thread cannot be taken away from work it refuses to stop doing.
+
 ### The three stages
 
 They are separated because they **fail differently**, not merely to spread
 load. Their names are the ones that describe them:
 
-**folder-discovery** — walks trees, finds candidates.
+**folder-discovery** — walks trees, finds candidates. *Not built.*
 Fails on: permissions, dead network mounts, symlink loops, a volume that
 disappears mid-walk. Cheap, restartable, holds no state worth protecting.
 Correct response to a hang: kill and retry later.
 
-**identify-catalogue** — reads bytes and works out what a file is.
+**identify-catalogue** — reads bytes and works out what a file is. **Built**
+(`jobs.py`, `identify_worker.py`).
 Fails on: adversarial or merely strange file contents. This is the only
 stage whose input is effectively untrusted, and both production hangs came
-from here. Needs a hard per-file timeout and a real memory ceiling.
-Correct response to a hang: kill the worker, record the file as unread, move
-on. Losing one file's facts is not losing the file.
+from here. It now runs in a process with a 30-second per-file timeout and a
+2 GB address-space fuse, one worker serving many files, and a killed worker
+costs that file's facts rather than the file: it is reported unread, with a
+reason, and the sort carries on. Facts cross the pipe as JSON carrying their
+source and confidence, so a rule decides on exactly what it would have
+decided on in-process.
 
-**sort-job** — moves files and journals them.
+Three things it will not do. It will not fail closed — where a worker cannot
+be started at all, reading happens in the main process exactly as before,
+because a supervisor that stops the tool working has made things worse. It
+will not enforce the memory budget; the ceiling is a fuse set far above it.
+And it does not help a file that hangs the *main* process, because there is
+no longer a path for one to.
+
+Cost, measured: **0.19 ms per file** of pipe overhead, against the ~260 ms a
+real PDF takes to read. On twenty thousand files that is four seconds.
+
+Still open here: Windows has no `resource` module, so there the timeout is
+the only guard — the memory fuse is Unix-only and that is a real gap.
+
+**sort-job** — moves files and journals them. *Not built.*
 Fails on: the filesystem. Must be transactional, and **must never be killed
 mid-move**. This stage is why "just add timeouts everywhere" is wrong: the
 correct timeout for identify is five seconds and the correct timeout for a
@@ -81,7 +121,7 @@ worker, three different policies.
 
 | | |
 | --- | --- |
-| Program on disk | **804 KB** of Python, ~924 KB with the log page and docs |
+| Program on disk | **828 KB** of Python, ~956 KB with the log page and docs |
 | Installed dependencies | **none** |
 | Daemon at rest | **35 MB** |
 | Reading 336 real PDFs | **62 MB** (was 230 MB before the decompression cap) |
@@ -129,13 +169,20 @@ this section.
 
 ### Open questions
 
-- Process pool or one worker spawned per batch? Spawn cost on Windows is
-  significantly worse than on Unix and has never been measured here.
-- How facts cross the process boundary. They are already JSON in the ledger,
-  so `json` over a pipe is the obvious answer and probably the right one.
+- ~~How facts cross the process boundary.~~ Answered: JSON over a pipe,
+  one object per line, carrying value, source and confidence.
+- ~~Process pool or one worker per file?~~ Answered: one long-lived worker,
+  restarted when it has to be killed. Spawn cost on Windows is still
+  unmeasured, which is now an argument *for* the long-lived worker rather
+  than a question.
 - Whether folder-discovery is worth its own process at all, or whether it
   belongs in the supervisor. It is the cheapest stage and the least
-  dangerous.
+  dangerous, and after the identify split it may not be worth it.
+- Whether sort-job needs to move out at all. It cannot be killed mid-move by
+  definition, so what a supervisor would add there is a question rather than
+  an answer.
+- A memory fuse on Windows. A Job Object through `ctypes` is the only
+  stdlib-reachable route and nobody has tried it.
 
 ---
 

@@ -94,7 +94,20 @@ def rules_hash(rule_set):
     return digest.hexdigest()
 
 
-def _note_cost(journal, path, watch):
+def _read(reader, item):
+    """Facts about one item, from wherever it is safe to read them.
+
+    Without a `reader` this is a plain call, which is what the one-shot
+    commands and the tests do. With one, the reading happens in a process
+    that can be killed if it stops answering -- the difference between a
+    file nobody can read and a program nobody can quit.
+    """
+    if reader is None:
+        return identify.identify(item), ""
+    return reader.read(item)
+
+
+def _note_cost(journal, path, watch, note=""):
     """File away a reading, but only the ones worth a person's attention.
 
     Silent about everything ordinary, and silent about everything if there
@@ -107,15 +120,19 @@ def _note_cost(journal, path, watch):
         size = os.path.getsize(path)
     except OSError:
         size = 0
+    reason = watch.reason()
+    if note:
+        reason = "%s (%s)" % (reason, note)
     try:
         journal.record_cost(path, os.path.basename(path), size,
                             watch.seconds, watch.growth, watch.peak,
-                            watch.reason())
+                            reason)
     except Exception:                        # noqa: BLE001
         pass
 
 
-def build_plan(root, rule_set, exclude=(), items=None, journal=None):
+def build_plan(root, rule_set, exclude=(), items=None, journal=None,
+               reader=None):
     """Plan a sort. `journal` lets it recognise files it has filed before.
 
     The ledger is optional here on purpose: a plan is still a plan without
@@ -158,12 +175,13 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None):
         watch = costs.Watch()
         try:
             with watch:
-                record = identify.identify(item)
+                record, failure = _read(reader, item)
         except (OSError, ValueError) as error:
-            _note_cost(journal, item.primary, watch)
-            skipped.append((item.primary, "identification failed: %s" % error))
+            record, failure = None, "identification failed: %s" % error
+        _note_cost(journal, item.primary, watch, failure)
+        if failure:
+            skipped.append((item.primary, failure))
             continue
-        _note_cost(journal, item.primary, watch)
         if record.value("dataless"):
             skipped.append((item.primary,
                             "cloud placeholder is not present on this device"))

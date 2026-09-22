@@ -32,7 +32,7 @@ class LogPage(object):
     """Small HTTP application hosted by the daemon's already-locked socket."""
 
     def __init__(self, journal, port, token, rules_getter=None,
-                 rule_path=None):
+                 rule_path=None, reader=None):
         self.journal = journal
         self.port = int(port)
         self.token = str(token)
@@ -41,6 +41,12 @@ class LogPage(object):
         # loaded at boot would quietly go stale.
         self.rules_getter = rules_getter
         self.rule_path = rule_path
+        # The daemon's supervised reader, where there is one. A one-time
+        # sort started from this page runs on the same thread that serves
+        # the page, so an unreadable file in the chosen folder would
+        # otherwise take the page down with it -- and the page is where
+        # somebody would go to find out why nothing is happening.
+        self.reader = reader
 
     @property
     def url(self):
@@ -293,7 +299,8 @@ class LogPage(object):
                     "error": "that folder is already watched; it is sorted "
                              "on its own"})
         try:
-            plan = sorter.build_plan(folder, rule_set, journal=self.journal)
+            plan = sorter.build_plan(folder, rule_set, journal=self.journal,
+                                     reader=self.reader)
         except (OSError, ValueError) as error:
             return _json_response(400, {"error": str(error)})
 

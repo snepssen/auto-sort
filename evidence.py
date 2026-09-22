@@ -23,6 +23,8 @@ missing ffprobe narrows what can fire instead of making it fire wrongly.
 
 from __future__ import annotations
 
+import base64
+
 # Confidence bands. Named because a bare 0.7 in a reader tells nobody anything,
 # and because the bands are what `min_confidence` in a rules file is choosing
 # between.
@@ -180,6 +182,34 @@ class Record(object):
         """Plain values, for a rules engine or a log row."""
         return dict((name, self._facts[name].value) for name in self._order)
 
+    # -- crossing a process boundary --------------------------------------
+
+    def as_wire(self):
+        """The whole record as JSON-safe data, losing nothing that matters.
+
+        Identification happens in a separate process, because a file that
+        sends a reader into a spin can only be stopped by killing something
+        and a thread cannot be killed. So a record has to survive a pipe.
+
+        `as_dict` is not enough for that: it drops the source and the
+        confidence, and a rule with its own `min_confidence` would then be
+        deciding on values whose strength had been quietly thrown away.
+        Everything a rule or an `explain` can read is carried.
+        """
+        return {
+            "path": self.path,
+            "facts": [[name, _encode(self._facts[name].value),
+                       self._facts[name].source,
+                       self._facts[name].confidence,
+                       list(self._facts[name].corroborated_by)]
+                      for name in self._order],
+            "conflicts": [[c.name, _encode(c.kept.value), c.kept.source,
+                           c.kept.confidence, _encode(c.rejected),
+                           c.rejected_source] for c in self.conflicts],
+            "notes": list(self.notes),
+            "readers": [list(pair) for pair in self.readers],
+        }
+
     def __contains__(self, name):
         return name in self._facts
 
@@ -188,6 +218,61 @@ class Record(object):
 
     def __repr__(self):
         return "Record(%s, %d facts)" % (self.path, len(self._facts))
+
+
+def from_wire(payload):
+    """Rebuild a record that was identified in another process.
+
+    Built by assignment rather than by replaying `set`, deliberately. `set`
+    would re-run the conflict and corroboration rules over facts that have
+    already been through them once, and a value that was corroborated in the
+    worker would be corroborated a second time here -- the same evidence
+    counted twice because it crossed a pipe.
+    """
+    record = Record(payload.get("path"))
+    for name, value, source, confidence, corroborated in payload.get("facts", []):
+        fact = Fact(name, _decode(value), source, confidence)
+        fact.corroborated_by = list(corroborated)
+        record._facts[name] = fact
+        record._order.append(name)
+    for entry in payload.get("conflicts", []):
+        name, value, source, confidence, rejected, rejected_source = entry
+        record.conflicts.append(
+            Conflict(name, Fact(name, _decode(value), source, confidence),
+                     _decode(rejected), rejected_source))
+    record.notes = list(payload.get("notes", []))
+    record.readers = [tuple(pair) for pair in payload.get("readers", [])]
+    return record
+
+
+# JSON carries strings, numbers, booleans, null and lists. Everything else a
+# reader can produce is tagged so that it comes back as what it was: a fact
+# that left as bytes and returned as a string would be a rule silently
+# changing its mind about a file because of how it travelled.
+def _encode(value):
+    if isinstance(value, bytes):
+        return {"~": "bytes", "v": base64.b64encode(value).decode("ascii")}
+    if isinstance(value, tuple):
+        return {"~": "tuple", "v": [_encode(item) for item in value]}
+    if isinstance(value, list):
+        return [_encode(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    # Nothing else is expected. Rendering it rather than dropping it keeps
+    # the fact visible in `explain`, where a person can see what arrived.
+    return {"~": "text", "v": str(value)}
+
+
+def _decode(value):
+    if isinstance(value, list):
+        return [_decode(item) for item in value]
+    if isinstance(value, dict) and "~" in value:
+        if value["~"] == "bytes":
+            return base64.b64decode(value["v"])
+        if value["~"] == "tuple":
+            return tuple(_decode(item) for item in value["v"])
+        return value["v"]
+    return value
 
 
 def _same(a, b):
