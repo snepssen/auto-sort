@@ -35,6 +35,7 @@ from evidence import CERTAIN, STRONG, LIKELY, WEAK
 TIER_STAT = 0        # stat, extension, path
 TIER_SIGNATURE = 1   # magic numbers and the text sniffer
 TIER_HEADER = 2      # format headers: EXIF, ID3, moov, PDF info
+TIER_PROGRAMS = 3    # ffprobe and exiftool, where they exist and are needed
 TIER_ALL = 3
 
 
@@ -191,6 +192,10 @@ def _bytes(path, record, tier):
         if tier >= TIER_HEADER:
             readers.read_with_fallback(peek, record.value("kind"),
                                        record.value("format"), record)
+        if tier >= TIER_PROGRAMS:
+            # Only for the files that still have a gap. `--tier header` is
+            # therefore also the way to say "do not start any processes".
+            readers.enrich(path, record)
     finally:
         peek.close()
 

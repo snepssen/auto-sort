@@ -62,9 +62,11 @@ model, nothing that looks at the pixels or listens to the audio, which is
 what keeps this tier and the deferred one below apart.
 
 **Tier 2 — external programs, if they happen to exist.** ffprobe for containers
-Tier 1 declines, exiftool for exotic RAW. Found at runtime the way siphon finds
-things; absent, skipped silently, and the rule that wanted `duration` simply
-does not match.
+Tier 1 declines, exiftool for exotic RAW, tesseract for a page that was scanned
+rather than typed. Found at runtime the way siphon finds things; absent, skipped
+silently, and the rule that wanted `duration` simply does not match. Asked only
+about the files that came back with a gap they could fill, so a folder that
+parsed cleanly starts no processes at all.
 
 **Tier 3 — content classification.** Not built. The seam is a `Classifier`
 protocol — given a path and the Tier 0–2 record, return labels with
@@ -425,3 +427,8 @@ duplication is three files and it buys each tool the ability to stand alone.
     of the PDF rather than rendered. What it returns is text, which the
     induction already knows what to do with, recorded a band weaker than a
     text layer because it is a machine's reading of a picture of the words.
+14. Tier 2, connected. ffprobe and exiftool had been offered by the
+    installer and described in this document for months without a line of
+    code calling either one. They now fill gaps and never argue: a fact the
+    built-in reader established is left exactly as it was, and a file that
+    parsed cleanly never launches anything.

@@ -121,6 +121,32 @@ def version(key):
     return lines[0].strip() if lines else None
 
 
+def output(key, arguments, timeout=20):
+    """Run an optional program and return what it printed, or None.
+
+    None means "no answer", for every reason there is: the program is not
+    installed, it failed, it took too long, the machine refused to start it.
+    A caller that has to tell those apart does not exist -- the whole point
+    of an optional program is that its absence and its failure lead to the
+    same place, which is a file with fewer facts.
+
+    Never raises, never inherits this process's stdin, and never waits
+    forever. These are other people's programs reading other people's files.
+    """
+    path = find(key)
+    if not path:
+        return None
+    try:
+        done = subprocess.run([path] + list(arguments),
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return (done.stdout or b"").decode("utf-8", "replace")
+
+
 def missing():
     return [program for key, program in PROGRAMS.items() if not find(key)]
 

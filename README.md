@@ -94,7 +94,8 @@ login unless `install` is explicitly requested.
 ## How it decides
 
 Four readers, cheapest first, each allowed to overrule the one before it when
-it has better evidence.
+it has better evidence — and then, only for what is still missing, a program
+somebody may or may not have installed.
 
 **The extension.** Six hundred of them, mapped to thirteen kinds and two
 hundred canonical formats. Right most of the time, free, and never trusted
@@ -127,6 +128,22 @@ stream on Windows, `user.xdg.origin.url` on Linux. That last one is the
 sharpest evidence in the record and almost nothing uses it — it is the
 difference between a PDF that came from Mail and the same PDF downloaded from
 a bank.
+
+**And whatever is still missing, if a program on this machine knows it.** A
+video whose container this program could not parse is handed to `ffprobe`; a
+picture whose header it could not read at all is handed to `exiftool`. Only
+the files with a gap, so a folder that parsed cleanly starts no processes:
+measured across 600 real files, 0.3 seconds became 0.5, and eight of the nine
+videos with no duration got one. These fill gaps and never argue — a fact the
+built-in reader established stays exactly as it was, because the file's own
+header is the better authority about itself. With neither program installed
+the facts are simply absent, and `auto-sort sort --tier header` is how to say
+"start no processes" on a machine that has them.
+
+A scanner's metadata arriving this way goes through the same test as metadata
+read directly, so a flatbed still lands under `scanner` and not `camera`.
+Skipping that would put twenty years of paperwork in Pictures, in folders
+named after an Epson.
 
 Nothing is decided by looking at an image, listening to audio, or asking a
 model. See the [constraints](DESIGN.md#the-machine-it-has-to-run-on): this has
@@ -895,6 +912,11 @@ its own specification at test time.
     what it says; without it, nothing changes and the page is held. The
     image comes out of the PDF byte for byte, so no rasteriser and no
     library is involved.
+
+14. **The optional programs, actually called** ✓
+    `ffprobe` and `exiftool` were offered by the installer and named in this
+    file for months with no code calling either. They are now asked about
+    the files that came back with a gap, and only those.
 
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.
