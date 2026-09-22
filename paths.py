@@ -90,6 +90,69 @@ def ensure(directory):
     return directory
 
 
+def trim_file(path, keep_bytes=256 * 1024):
+    """Keep the tail of a log file and drop the rest. Returns bytes freed.
+
+    In place, and deliberately: the daemon's own stdout is this file, and
+    under launchd so is the service manager's. Renaming it would leave both
+    of them writing to a file nobody can find any more, so the same inode
+    keeps its last quarter of a megabyte and loses the beginning.
+
+    Only acts once the file is well past the limit, so that a daemon which
+    restarts often does not rewrite its log every time it starts.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return 0
+    if size <= keep_bytes * 2:
+        return 0
+    try:
+        with open(path, "r+b") as handle:
+            handle.seek(size - keep_bytes)
+            tail = handle.read()
+            # Start at a line boundary, or the first line read as half a
+            # sentence from a sentence nobody can see the start of.
+            cut = tail.find(b"\n")
+            tail = tail[cut + 1:] if cut >= 0 else tail
+            handle.seek(0)
+            handle.write(b"[earlier entries trimmed]\n" + tail)
+            handle.truncate()
+    except OSError:
+        return 0
+    return size - len(tail)
+
+
+def strays(directory, keep):
+    """Database files in a folder that nothing here is using any more.
+
+    Development, and anybody who has ever run with `--state`, leaves these
+    behind. They are never deleted by this program -- deleting is not
+    something it does -- but a few megabytes of abandoned databases sitting
+    beside the live one deserve to be mentioned rather than to sit there
+    being mysterious.
+    """
+    keep = set(os.path.abspath(name) for name in keep if name)
+    for name in list(keep):
+        keep.update((name + "-wal", name + "-shm"))
+    found = []
+    try:
+        entries = sorted(os.listdir(directory))
+    except OSError:
+        return found
+    for entry in entries:
+        if not entry.endswith((".db", ".db-wal", ".db-shm")):
+            continue
+        full = os.path.join(directory, entry)
+        if full in keep:
+            continue
+        try:
+            found.append((full, os.path.getsize(full)))
+        except OSError:
+            continue
+    return found
+
+
 _CASE_CACHE = {}
 
 

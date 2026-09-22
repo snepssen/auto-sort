@@ -540,8 +540,13 @@ def daemon_control(command, state_file=None, as_json=False):
         port = int(journal.get_state("daemon_port",
                                      daemon_module.DEFAULT_PORT))
     running = daemon_module.wake(state_file, "status")
+    directory = os.path.dirname(os.path.abspath(state_file or
+                                                paths.ledger_file()))
+    abandoned = paths.strays(directory, [state_file or paths.ledger_file()])
     report = {"running": running, "paused": paused, "port": port,
-              "queue": counts}
+              "queue": counts,
+              "unused_state_files": [{"path": path, "bytes": size}
+                                     for path, size in abandoned]}
     if as_json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
@@ -551,6 +556,13 @@ def daemon_control(command, state_file=None, as_json=False):
         print("Queue: %s" % (", ".join(
             "%s %d" % (name, count)
             for name, count in sorted(counts.items())) or "empty"))
+        if abandoned:
+            # Not deleted, and not offered to be: deleting is not something
+            # this program does. Said because a few megabytes of abandoned
+            # databases beside the live one are otherwise a mystery.
+            print("Unused: %d old database file(s), %.1f MB, in %s"
+                  % (len(abandoned),
+                     sum(size for _p, size in abandoned) / 1e6, directory))
     return 0
 
 

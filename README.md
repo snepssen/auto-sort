@@ -334,6 +334,13 @@ overwrites itself, appears only when a terminal is actually watching, and is
 erased when the work is done, so piping any of these commands into a file
 still gives you exactly what it always gave you.
 
+`status` also names any old database files sitting in the state folder that
+nothing uses any more — a run that named its own `--state` leaves one behind.
+They are mentioned and left exactly where they are; deleting is not something
+this program does. The daemon's log keeps its recent quarter of a megabyte
+and loses its beginning, in place, because that file is also what the service
+manager is writing to.
+
 `costs` is the nearest thing to a crash report this program has, and on a
 healthy machine it prints one line saying there is nothing to show. auto-sort
 times every file it identifies and notes how much memory the reading needed;

@@ -26,6 +26,7 @@ import ledger as ledger_module
 import mover
 import logpage
 import mirror
+import paths
 import rules
 import corrections as corrections_module
 import regroup as regroup_module
@@ -225,6 +226,10 @@ class PollingDaemon(object):
     LEDGER_SIZE_LIMIT = 64 * 1024 * 1024        # big enough to bother
     LEDGER_YEAR_LIMIT = 256 * 1024 * 1024       # or heading there fast
     LEDGER_CHECK_INTERVAL = 86400               # once a day is plenty
+    # A quarter of a megabyte is a few thousand lines: enough to see what a
+    # daemon has been doing for weeks, and small enough that nobody's state
+    # folder quietly becomes a log archive.
+    LOG_KEEP_BYTES = 256 * 1024
 
     def _tidy_ledger(self, now_value):
         """Shed old evidence when the ledger is big, or getting big quickly.
@@ -255,6 +260,39 @@ class PollingDaemon(object):
                     % (result["bytes_before"] / 1e6,
                        result["bytes_after"] / 1e6,
                        result["previews_removed"], result["rows_thinned"]))
+
+    def _tidy_state_dir(self, now_value):
+        """Two things in the state folder that grow and nothing shrinks.
+
+        The log, which is now the only account of what a daemon nobody
+        started from a terminal has been doing, and so grows forever. And
+        databases left behind by a run that named its own `--state`, which
+        are not deleted -- deleting is not something this program does --
+        but are worth saying out loud rather than leaving to be discovered.
+        """
+        last = self.journal.get_state("state_dir_checked_at")
+        if last and now_value - float(last) < self.LEDGER_CHECK_INTERVAL:
+            return
+        self.journal.set_state("state_dir_checked_at", str(now_value))
+        directory = os.path.dirname(self.journal.filename)
+        freed = paths.trim_file(os.path.join(directory, "daemon.log"),
+                                self.LOG_KEEP_BYTES)
+        if freed:
+            self.output("Trimmed the log by %.1f MB; the recent entries are "
+                        "kept." % (freed / 1e6))
+        abandoned = paths.strays(directory, [self.journal.filename])
+        if not abandoned:
+            return
+        total = sum(size for _path, size in abandoned)
+        # Said once per set of files rather than every hour: it is a
+        # remark, and a remark repeated hourly is a complaint.
+        signature = "%d:%d" % (len(abandoned), total)
+        if self.journal.get_state("strays_reported") == signature:
+            return
+        self.journal.set_state("strays_reported", signature)
+        self.output("%d unused database file(s) (%.1f MB) are sitting in %s. "
+                    "Nothing here uses them; they are yours to remove."
+                    % (len(abandoned), total / 1e6, directory))
 
     def _drain_mirror(self):
         """Copy whatever is waiting for the second disk, if it is there.
@@ -433,6 +471,7 @@ class PollingDaemon(object):
             self._check_regroup(rule_set, now_value, requested_dry)
             self._drain_mirror()
             self._tidy_ledger(now_value)
+            self._tidy_state_dir(now_value)
         return results
 
     def _observe_root(self, root, rule_set, fingerprint, now_value):
