@@ -132,7 +132,7 @@ def _note_cost(journal, path, watch, note=""):
 
 
 def build_plan(root, rule_set, exclude=(), items=None, journal=None,
-               reader=None):
+               reader=None, progress=None):
     """Plan a sort. `journal` lets it recognise files it has filed before.
 
     The ledger is optional here on purpose: a plan is still a plan without
@@ -151,7 +151,13 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None,
     supplied_items = items is not None
     items = list(bundles.walk(root, max_depth=rule_set.watch.depth)) \
         if items is None else list(items)
+    seen_count = 0
     for item in items:
+        # Before the reading rather than after it: the name on screen should
+        # be the file being worked on, not the last one that finished.
+        seen_count += 1
+        if progress is not None:
+            progress(seen_count, len(items), os.path.basename(item.primary))
         if any(_collision_key(member) in excluded for member in item.members):
             skipped.append((item.primary, "auto-sort's active configuration "
                             "or state file"))

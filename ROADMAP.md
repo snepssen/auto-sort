@@ -256,9 +256,6 @@ is handled (the shorter one is asked for as a word of its own). What is not
 handled is a short learnt word matching inside an unrelated one. One rule per
 word exists so a person can delete those, but nothing points them out.
 
-**A progress indicator.** 463 files took over two minutes, almost all of it
-reading PDFs. On a twenty-year folder that is real time with no feedback.
-
 **Stale state files.** Development left ~4.6 MB of abandoned databases in the
 state directory. Nothing creates them any more and nothing cleans them up.
 A fresh install has none, so this is a one-line tidy, not a feature.

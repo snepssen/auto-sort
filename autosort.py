@@ -25,6 +25,7 @@ import jobs
 import ledger as ledger_module
 import logpage
 import paths
+import progress as progress_module
 import propose as propose_module
 import duplicates as duplicates_module
 import regroup as regroup_module
@@ -368,8 +369,14 @@ def sort_folders(roots, rule_set, state_file=None, dry_run=None,
                 continue
             protected = (rule_set.source, journal.filename,
                          journal.filename + "-wal", journal.filename + "-shm")
-            plan = sorter.build_plan(root, rule_set, exclude=protected,
-                                     journal=journal, reader=reader)
+            ticker = progress_module.none() if as_json \
+                else progress_module.Ticker(label="Reading")
+            try:
+                plan = sorter.build_plan(
+                    root, rule_set, exclude=protected, journal=journal,
+                    reader=reader, progress=ticker.tick)
+            finally:
+                ticker.close()
             result = sorter.execute(plan, rule_set, journal, dry_run)
             reports.append((plan, result))
             if result.failed:
@@ -1375,14 +1382,17 @@ def propose(root=".", tier=identify.TIER_HEADER, depth=3, out=None,
         print("Not a folder: %s" % root, file=sys.stderr)
         return 1
 
-    def progress(count):
-        sys.stderr.write("\r  surveyed %s items..." % "{:,}".format(count))
-        sys.stderr.flush()
-
-    found = propose_module.survey(root, tier=tier, depth=depth, limit=limit,
-                                  on_progress=None if as_json else progress)
-    if not as_json:
-        sys.stderr.write("\r" + " " * 40 + "\r")
+    # A survey does not know how many items it is going to find until it
+    # has found them, so this counts up rather than towards anything.
+    ticker = progress_module.none() if as_json \
+        else progress_module.Ticker(label="Surveyed")
+    try:
+        found = propose_module.survey(
+            root, tier=tier, depth=depth, limit=limit,
+            on_progress=None if as_json else
+            (lambda count: ticker.step(done=count)))
+    finally:
+        ticker.close()
     proposals = propose_module.assess(found)
     body = propose_module.render(found, proposals)
 

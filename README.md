@@ -327,6 +327,13 @@ auto-sort costs            # which files were expensive to read, and why
 auto-sort pause / resume
 ```
 
+A long sort says how far along it is while it runs — 463 files took over two
+minutes on this machine, almost all of it reading PDFs, and a program that
+has gone quiet is indistinguishable from one that has gone wrong. The line
+overwrites itself, appears only when a terminal is actually watching, and is
+erased when the work is done, so piping any of these commands into a file
+still gives you exactly what it always gave you.
+
 `costs` is the nearest thing to a crash report this program has, and on a
 healthy machine it prints one line saying there is nothing to show. auto-sort
 times every file it identifies and notes how much memory the reading needed;
