@@ -404,3 +404,8 @@ duplication is three files and it buys each tool the ability to stand alone.
 9. Duplicate detection on-disk, the optional off-by-default mirror, and
    ledger compaction — everything a machine accumulates over years now has
    an answer for not accumulating forever.
+10. Cost reporting. Every identification is timed and its memory high-water
+    mark taken, and the few files that were expensive get a row of their own
+    in the ledger and a page of their own in the log. There is no crash
+    reporter and there never will be, so a file that makes the machine go
+    quiet has to leave its own note or nobody ever learns which file it was.

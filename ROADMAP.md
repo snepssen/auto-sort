@@ -81,7 +81,7 @@ worker, three different policies.
 
 | | |
 | --- | --- |
-| Program on disk | **788 KB** of Python, ~910 KB with the log page and docs |
+| Program on disk | **804 KB** of Python, ~924 KB with the log page and docs |
 | Installed dependencies | **none** |
 | Daemon at rest | **35 MB** |
 | Reading 336 real PDFs | **62 MB** (was 230 MB before the decompression cap) |
@@ -98,19 +98,34 @@ would be invisible to everybody including the person it happened to. So:
 - The file is then **set aside**, exactly as the mirror queue already sets
   aside a file it cannot copy — a status and a reason, not a silence.
 
-### The reporting is the point
+### The reporting is the point — **built**
 
 There is no crash reporter and there never will be, so the ledger has to be
 the telemetry. It is already local, already durable, and already records
 every move with its facts.
 
-What is missing is one view: **files that were expensive**. Somebody whose
-fan is spinning opens the log page, sees one absurd file, and can say what it
-was. That closes the only feedback loop this project is allowed to have.
+It now also records what reading a file cost. Every identification is timed
+and its memory high-water mark taken; anything over a second, or over 16 MB
+of growth, keeps a row in a `costs` table, and the log page has a **Slow &
+heavy files** view listing them worst first. `auto-sort costs` prints the
+same thing. One row per file rather than one per reading, keeping the
+*worst* reading rather than the latest — the second pass over a folder reads
+from the page cache and looks innocent.
 
-The 171 MB PDF was invisible until someone went looking with `ps`. Had
-auto-sort simply written down "this file cost 171 MB", it would have been a
-bug report on day one.
+Nothing is refused or skipped because of a reading. A file that genuinely
+needs 340 MB gets 340 MB and a line saying so.
+
+This was built first, before the job manager, because it is what will find
+the next pathological file. The 171 MB PDF was invisible until someone went
+looking with `ps`; had auto-sort written down "this file cost 171 MB", it
+would have been a bug report on day one.
+
+Two limits worth stating. The memory figure is a high-water mark, so the
+first bad file is measured in full and an identical one read a minute later
+looks free — the right bias for finding an outlier and the wrong one for an
+average. And a file that hangs *forever* still never finishes, so it never
+writes its row. Only the job manager can fix that one, which is the rest of
+this section.
 
 ### Open questions
 
@@ -187,10 +202,6 @@ is listed somewhere.
 ---
 
 ## 5. Smaller, known, and worth doing
-
-**Expensive-file reporting** — see item 1. Cheap on its own, and worth
-building before the job manager rather than after, because it is what will
-find the next pathological file.
 
 **Installer version parsing.** `firefox-1.5.0.12.installer.exe` yields
 `product = "firefox 1 5 0 12"` and no version at all. A folder with eleven

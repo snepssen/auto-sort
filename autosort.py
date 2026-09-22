@@ -16,6 +16,7 @@ import time
 
 import bundles
 import corrections as corrections_module
+import costs
 import autostart
 import daemon as daemon_module
 import evidence
@@ -533,6 +534,44 @@ def daemon_control(command, state_file=None, as_json=False):
         print("Queue: %s" % (", ".join(
             "%s %d" % (name, count)
             for name, count in sorted(counts.items())) or "empty"))
+    return 0
+
+
+def expensive_files(state_file=None, limit=None, as_json=False):
+    """Which files cost the most to read.
+
+    The whole feedback loop this program has. Nothing is sent anywhere and
+    nothing is counted; one table, on this machine, naming the files that
+    made the fan spin. A machine where sorting feels instant prints nothing
+    here, and that is the expected result.
+    """
+    with ledger_module.Ledger(state_file) as journal:
+        rows = journal.expensive(limit or 20, costs.SLOW_SECONDS,
+                                 costs.GREEDY_BYTES)
+        listed = [{"path": row["path"], "name": row["file_name"],
+                   "size": row["size"], "seconds": round(row["seconds"], 2),
+                   "growth": row["growth"], "peak": row["peak"],
+                   "reason": row["reason"], "readings": row["readings"],
+                   "last_seen": row["last_seen"]} for row in rows]
+    if as_json:
+        print(json.dumps({"expensive": listed}, indent=2))
+        return 0
+    if not listed:
+        print("Nothing has been expensive to read. This is the good answer.")
+        return 0
+    print("Files that cost the most to identify, worst first.")
+    print("Nothing was skipped or refused because of this -- it is a record,")
+    print("not a limit.\n")
+    for entry in listed:
+        print("  %s" % entry["name"])
+        print("    %s" % entry["path"])
+        print("    %s" % entry["reason"])
+        print("    %.2fs, memory %s, file %s%s" % (
+            entry["seconds"], costs.human(entry["growth"]),
+            costs.human(entry["size"]),
+            "" if entry["readings"] < 2
+            else ", seen %d times" % entry["readings"]))
+        print("")
     return 0
 
 
@@ -1435,6 +1474,7 @@ USAGE = """auto-sort %s
   auto-sort watch               run the persistent polling sorter
   auto-sort pause|resume        persistently pause or resume background sorting
   auto-sort status              show daemon and queue state
+  auto-sort costs               which files were expensive to read, and why
   auto-sort open-log            open the live loopback log page
   auto-sort sort-now            wake the daemon for an immediate scan
   auto-sort autostart [ACTION]  show, install, or remove login launch (default status)
@@ -1584,6 +1624,11 @@ def main(argv=None):
                   file=sys.stderr)
             return 2
         return watch(rule_path, state_file, dry_run, port, once)
+    if command == "costs":
+        if targets:
+            print("costs takes no arguments", file=sys.stderr)
+            return 2
+        return expensive_files(state_file, limit, as_json)
     if command in ("pause", "resume", "status", "open-log", "sort-now"):
         if targets:
             print("%s takes no arguments" % command, file=sys.stderr)

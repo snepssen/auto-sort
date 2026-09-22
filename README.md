@@ -323,8 +323,19 @@ simply whether the folder is on the home volume.
 ```sh
 auto-sort restart          # stop it and start it again on the current code
 auto-sort status           # is it running, is it paused, what is queued
+auto-sort costs            # which files were expensive to read, and why
 auto-sort pause / resume
 ```
+
+`costs` is the nearest thing to a crash report this program has, and on a
+healthy machine it prints one line saying there is nothing to show. auto-sort
+times every file it identifies and notes how much memory the reading needed;
+anything over a second, or over 16 MB of growth, gets a row. Nothing is
+skipped, refused or truncated because of it — a file that genuinely needs
+340 MB to read is given 340 MB and listed. It exists because two files have
+frozen this program during development and neither of them said so, and
+because there is no telemetry here to say so on their behalf. The same list
+is the **Slow & heavy files** page in the log.
 
 The daemon re-reads its rules whenever the file changes, but it cannot reload
 *itself* — a change to auto-sort's own code only takes effect in a new

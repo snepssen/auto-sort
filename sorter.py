@@ -17,6 +17,7 @@ import stat
 import time
 
 import bundles
+import costs
 import duplicates
 import identify
 import mirror
@@ -93,6 +94,27 @@ def rules_hash(rule_set):
     return digest.hexdigest()
 
 
+def _note_cost(journal, path, watch):
+    """File away a reading, but only the ones worth a person's attention.
+
+    Silent about everything ordinary, and silent about everything if there
+    is no ledger to write to. It must also never be the reason a sort
+    fails: a measurement is a courtesy and the file is the job.
+    """
+    if journal is None or not watch.notable():
+        return
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0
+    try:
+        journal.record_cost(path, os.path.basename(path), size,
+                            watch.seconds, watch.growth, watch.peak,
+                            watch.reason())
+    except Exception:                        # noqa: BLE001
+        pass
+
+
 def build_plan(root, rule_set, exclude=(), items=None, journal=None):
     """Plan a sort. `journal` lets it recognise files it has filed before.
 
@@ -127,11 +149,21 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None):
             skipped.append((item.primary, reason))
             continue
 
+        # Timed, because identification is the stage that reads bytes
+        # somebody else wrote and is therefore the stage that hangs. The
+        # `with` wraps the `try` rather than the other way round so that a
+        # file which failed is still measured: a file that took four
+        # minutes and then raised is the single most interesting row this
+        # table can hold.
+        watch = costs.Watch()
         try:
-            record = identify.identify(item)
+            with watch:
+                record = identify.identify(item)
         except (OSError, ValueError) as error:
+            _note_cost(journal, item.primary, watch)
             skipped.append((item.primary, "identification failed: %s" % error))
             continue
+        _note_cost(journal, item.primary, watch)
         if record.value("dataless"):
             skipped.append((item.primary,
                             "cloud placeholder is not present on this device"))

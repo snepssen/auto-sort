@@ -9,6 +9,7 @@ import subprocess
 import sys
 import urllib.parse
 
+import costs
 import mirror
 import mover
 import sorter
@@ -101,6 +102,18 @@ class LogPage(object):
             return _json_response(200, self._rules())
         if parsed.path == "/api/folders" and method == "GET":
             return _json_response(200, self._folders())
+        if parsed.path == "/api/costs" and method == "GET":
+            return _json_response(200, self._costs())
+        if method == "POST" and parsed.path.startswith("/api/costs/forget/"):
+            if not self._same_origin(headers):
+                return _json_response(403,
+                                      {"error": "cross-origin request refused"})
+            try:
+                cost_id = int(parsed.path.rsplit("/", 1)[-1])
+            except ValueError:
+                return _json_response(400, {"error": "not a row number"})
+            self.journal.forget_cost(cost_id)
+            return _json_response(200, self._costs())
         if parsed.path == "/api/backup" and method == "GET":
             return _json_response(200, self._backup())
         if parsed.path == "/api/backup" and method == "POST":
@@ -193,6 +206,25 @@ class LogPage(object):
             "queue": dict((row["status"], row["count"])
                           for row in self.journal.queue_counts()),
         }
+
+    def _costs(self):
+        """The files that were expensive to read.
+
+        This is the closest thing to a crash report that will ever exist
+        here, and it is deliberately shaped like a list of files rather
+        than like a diagnostic: the person reading it owns these files and
+        can act on them, and would not know what to do with a stack trace.
+        """
+        rows = self.journal.expensive(50, costs.SLOW_SECONDS,
+                                      costs.GREEDY_BYTES)
+        return {"files": [{"id": row["id"], "path": row["path"],
+                           "name": row["file_name"], "size": row["size"],
+                           "seconds": round(row["seconds"], 2),
+                           "growth": row["growth"], "peak": row["peak"],
+                           "reason": row["reason"],
+                           "readings": row["readings"],
+                           "last_seen": row["last_seen"]} for row in rows],
+                "budget": costs.SOFT_BUDGET}
 
     def _backup(self):
         """Whether a second copy is being kept, where, and how far behind."""

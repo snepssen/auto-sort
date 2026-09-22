@@ -18,7 +18,7 @@ import time
 import paths
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def _days_ago(days):
@@ -29,6 +29,20 @@ def _days_ago(days):
 def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(
         timespec="seconds")
+
+
+def _larger(fresh, kept):
+    """The bigger of two readings, where either may be absent.
+
+    Absent is not zero. A platform that could not measure memory last week
+    and can this week should end up with this week's number, not with a
+    comparison against a nought that nobody ever observed.
+    """
+    if fresh is None:
+        return kept
+    if kept is None:
+        return fresh
+    return max(fresh, kept)
 
 
 class Ledger(object):
@@ -221,6 +235,37 @@ class Ledger(object):
                         ON mirror(status);
 
                     PRAGMA user_version = 7;
+                """)
+            version = 7
+        if version == 7:
+            with self.connection:
+                # The only feedback loop this program is allowed to have.
+                # There is no crash reporter, so a file that costs an absurd
+                # amount to read has to leave its own note or nobody -- the
+                # person it happened to least of all -- ever finds out.
+                #
+                # One row per path rather than one per reading. The question
+                # is "which file is doing this", not "how often", and a log
+                # of every pass over the same twenty-year folder would grow
+                # faster than the thing it is reporting on.
+                self.connection.executescript("""
+                    CREATE TABLE IF NOT EXISTS costs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        path TEXT NOT NULL UNIQUE,
+                        file_name TEXT NOT NULL,
+                        size INTEGER NOT NULL DEFAULT 0,
+                        seconds REAL NOT NULL DEFAULT 0,
+                        growth INTEGER,
+                        peak INTEGER,
+                        reason TEXT NOT NULL DEFAULT '',
+                        readings INTEGER NOT NULL DEFAULT 1,
+                        first_seen TEXT NOT NULL,
+                        last_seen TEXT NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS costs_seconds
+                        ON costs(seconds DESC);
+
+                    PRAGMA user_version = 8;
                 """)
 
     def record_directories(self, run_id, directories):
@@ -431,6 +476,65 @@ class Ledger(object):
         return dict((row["status"], {"files": row["c"], "bytes": row["bytes"]})
                     for row in rows)
 
+    def record_cost(self, path, file_name, size, seconds,
+                    growth=None, peak=None, reason=""):
+        """Remember that one file was expensive to read.
+
+        A path already listed keeps its *worst* reading rather than its
+        latest. The second pass over a folder usually reads from the page
+        cache and looks innocent, and the reading that matters is the one
+        taken on the day somebody's machine went quiet.
+
+        `growth` and `peak` are None on a platform that cannot measure them,
+        and stay None: a nullable column rather than a zero, because zero is
+        a measurement and this is the absence of one.
+        """
+        stamp = now()
+        existing = self.connection.execute(
+            "SELECT id, seconds, growth, peak FROM costs WHERE path = ?",
+            (path,)).fetchone()
+        with self.connection:
+            if existing is None:
+                self.connection.execute(
+                    "INSERT INTO costs (path, file_name, size, seconds, "
+                    "growth, peak, reason, readings, first_seen, last_seen) "
+                    "VALUES (?,?,?,?,?,?,?,1,?,?)",
+                    (path, file_name, size, seconds, growth, peak,
+                     reason, stamp, stamp))
+                return
+            worst_seconds = max(seconds, existing["seconds"] or 0.0)
+            worst_growth = _larger(growth, existing["growth"])
+            worst_peak = _larger(peak, existing["peak"])
+            keep_reason = reason if seconds >= (existing["seconds"] or 0.0) \
+                else None
+            self.connection.execute(
+                "UPDATE costs SET size=?, seconds=?, growth=?, peak=?, "
+                "reason=COALESCE(?, reason), readings=readings+1, "
+                "last_seen=? WHERE id=?",
+                (size, worst_seconds, worst_growth, worst_peak,
+                 keep_reason, stamp, existing["id"]))
+
+    def expensive(self, limit=50, slow_seconds=1.0,
+                  greedy_bytes=16 * 1024 * 1024):
+        """The files that cost the most, worst first.
+
+        Sorted by how far past the threshold each one went rather than by
+        either column, so that a PDF which inflated to 171 MB in a third of
+        a second is not buried under everything that merely took a while.
+        """
+        return self.connection.execute(
+            "SELECT * FROM costs "
+            "ORDER BY MAX(seconds / ?, COALESCE(growth, 0) / ?) DESC, "
+            "         seconds DESC LIMIT ?",
+            (float(slow_seconds), float(greedy_bytes),
+             max(1, min(int(limit), 500)))).fetchall()
+
+    def forget_cost(self, cost_id):
+        """Drop one row, for a file the person has dealt with."""
+        with self.connection:
+            return self.connection.execute(
+                "DELETE FROM costs WHERE id = ?", (cost_id,)).rowcount
+
     def usage(self):
         """How big the ledger is, and how fast it got that way.
 
@@ -501,6 +605,11 @@ class Ledger(object):
                 " WHERE facts_json IS NOT NULL AND created_at < ? "
                 "   AND NOT (holding = 1 AND undone_at IS NULL)",
                 (cutoff,)).rowcount
+            # A file that was expensive once and has not been seen since is
+            # usually a file somebody dealt with. Keeping it forever turns a
+            # short list worth reading into a long one nobody does.
+            stale = self.connection.execute(
+                "DELETE FROM costs WHERE last_seen < ?", (cutoff,)).rowcount
         # Outside the transaction: VACUUM cannot run inside one. And the
         # checkpoint afterwards is not optional -- VACUUM rewrites the whole
         # database through the write-ahead log, so without collapsing it the
@@ -510,6 +619,7 @@ class Ledger(object):
         self.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self.set_state("last_compacted", now())
         return {"previews_removed": dropped, "rows_thinned": thinned,
+                "costs_forgotten": stale,
                 "bytes_before": before, "bytes_after": self.usage()["bytes"]}
 
     def extra_watch_folders(self):
