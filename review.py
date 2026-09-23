@@ -303,6 +303,55 @@ def _would_match(comparison, value):
         return False
 
 
+# The facts that come from *reading* a file, which is to say the ones a
+# better reader changes. Everything else in a record describes where the file
+# was, how it arrived and when -- true at the source, and not something that
+# can be read back off the file where it sits now.
+READ_FACTS = frozenset((
+    "heading", "words_read", "text_layer", "needs_ocr", "read_by",
+    "scan_pixels", "scan_of", "doc_title", "author", "producer", "pages",
+))
+
+
+def refresh_held(journal, limit=5000, tier=None):
+    """Read the files in holding folders again, with the reader as it is now.
+
+    Facts are recorded when a file is filed and never looked at again, which
+    is right for a file that has been placed and wrong for one that is
+    waiting: waiting is exactly what these files are doing, and they are
+    being judged on what an older reader said about them. On a real machine
+    a series of 171 documents was remembered with glyph numbers for headings
+    after the reader stopped producing them, so the report that could have
+    named the series could not see what it said.
+
+    Only holding files, only files still where they were put, and only the
+    facts that come from reading. Returns how many records changed.
+    """
+    import identify
+    changed = 0
+    tier = identify.TIER_HEADER if tier is None else tier
+    for row in journal.held_moves(limit):
+        path = row["destination"]
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            fresh = identify.identify(path, tier=tier)
+        except (OSError, ValueError):
+            continue
+        stored = _facts_of(row)
+        updated = dict(stored)
+        for name in READ_FACTS:
+            value = fresh.value(name)
+            if value is None:
+                updated.pop(name, None)
+            else:
+                updated[name] = value
+        if updated != stored:
+            journal.set_facts(row["id"], updated)
+            changed += 1
+    return changed
+
+
 def dead_rules(journal, rule_set, limit=20000):
     """Only the ones the record has already judged."""
     usages, files = usage(journal, rule_set, limit)

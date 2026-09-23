@@ -285,9 +285,29 @@ def _read_the_page(peek, record):
         return
     record.set("text_layer", True, "pdf-text", CERTAIN)
     record.set("words_read", len(text.split()), "pdf-text", CERTAIN)
-    heading = " ".join(text[:LETTERHEAD].split()[:HEADING_WORDS])
+    heading = heading_of(text)
     if heading:
         record.set("heading", heading[:80], "pdf-text", STRONG)
+
+
+_HAS_A_WORD = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
+
+
+def heading_of(text):
+    """What the top of a page calls itself: its first few *words*.
+
+    Words, not tokens. A payslip or a statement often opens with a band of
+    dates, account numbers and reference codes, and taking the first six
+    tokens of one real series gave `31.12.2019 94112559131 0001202000 ...`
+    for 171 documents -- a heading with nothing in it for the induction to
+    count, so a series of 171 letters from one sender could never name its
+    own folder. The same window is kept, five hundred characters, because
+    that is where a document says what it is; within it, the numbers are
+    stepped over rather than taken.
+    """
+    words = [token for token in text[:LETTERHEAD].split()
+             if _HAS_A_WORD.search(token)]
+    return " ".join(words[:HEADING_WORDS])
 
 
 def _stamp(value):

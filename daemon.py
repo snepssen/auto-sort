@@ -30,6 +30,7 @@ import paths
 import rules
 import corrections as corrections_module
 import regroup as regroup_module
+import review
 import sorter
 import tray
 
@@ -362,6 +363,12 @@ class PollingDaemon(object):
         if now_value - last_value < self.CORRECTION_INTERVAL:
             return
         self.journal.set_state("regroup_checked_at", repr(now_value))
+        # What is waiting is judged on what was read when it arrived, and
+        # the reader may have got better since. See `review.refresh_held`.
+        try:
+            review.refresh_held(self.journal)
+        except Exception as error:           # noqa: BLE001
+            self.output("Could not re-read waiting files: %s" % error)
         try:
             plans = regroup_module.build(self.journal, rule_set)
         except (OSError, ValueError) as error:

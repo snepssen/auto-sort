@@ -528,6 +528,20 @@ class Ledger(object):
             return self.connection.execute(
                 "DELETE FROM readings WHERE path = ?", (path,)).rowcount
 
+    def held_moves(self, limit=5000):
+        """Files sitting in holding folders, newest first, with their facts."""
+        return self.connection.execute(
+            "SELECT id, destination, facts_json FROM moves "
+            " WHERE holding = 1 AND status IN ('done','copied') "
+            "   AND undone_at IS NULL "
+            " ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+
+    def set_facts(self, move_id, facts):
+        with self.connection:
+            self.connection.execute(
+                "UPDATE moves SET facts_json = ? WHERE id = ?",
+                (json.dumps(facts, sort_keys=True, default=str), move_id))
+
     def waiting_for_reading(self, limit=20000):
         """How many filed items are still waiting to be read, and where.
 

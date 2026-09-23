@@ -300,6 +300,7 @@ def _report_dead_rules(rule_set, state=None):
     """
     try:
         with ledger_module.Ledger(state) as journal:
+            review.refresh_held(journal)
             uses, files = review.usage(journal, rule_set)
             new_words, headings = review.emerging(journal, rule_set)
             buried, _seen = review.inside_words(journal, rule_set)
@@ -1067,6 +1068,7 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
         return 1
 
     with ledger_module.Ledger(state) as journal:
+        review.refresh_held(journal)
         plans = regroup_module.build(journal, rule_set,
                                      os.path.abspath(root) if root else None)
         total, by_rule, by_destination = regroup_module.summarise(plans)
@@ -1342,6 +1344,7 @@ def adopt_categories(rule_path=None, state=None, apply_changes=False,
 
     try:
         with ledger_module.Ledger(state) as journal:
+            review.refresh_held(journal)
             found, headings = review.emerging(journal, rule_set)
     except Exception as error:               # noqa: BLE001
         print("No ledger to learn from yet: %s" % error, file=sys.stderr)

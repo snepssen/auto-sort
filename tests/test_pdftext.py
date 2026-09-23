@@ -273,6 +273,32 @@ class Classification(unittest.TestCase):
         self.assertEqual(record.value("scan_of"), "page")
 
 
+class WhatTheTopOfAPageSays(unittest.TestCase):
+    """Words, not tokens."""
+
+    def test_a_page_that_starts_with_words_is_unchanged(self):
+        from readers import document
+        self.assertEqual(document.heading_of(INVOICE),
+                         "RECHNUNG Nr Stadtwerke Muenchen GmbH Betrag:")
+
+    def test_a_band_of_numbers_is_stepped_over(self):
+        """One real series opened every page with dates and account
+        numbers, and six tokens of it had no word in them at all."""
+        from readers import document
+        page = ("31.12.2019 94112559131 0001202000 1 20200113 0000 "
+                "RBU Loonstrook Individuele rekening Periode")
+        self.assertEqual(document.heading_of(page),
+                         "RBU Loonstrook Individuele rekening Periode")
+
+    def test_the_window_still_ends_where_it_ended(self):
+        """A document says what it is at the top; a word mentioned further
+        down must not become its heading just because the top was numbers.
+        """
+        from readers import document
+        page = "4711 " * 200 + "Certificate"
+        self.assertEqual(document.heading_of(page), "")
+
+
 if __name__ == "__main__":
     unittest.main()
 

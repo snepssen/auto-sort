@@ -135,7 +135,8 @@ def read(path, record):
     record.drop("needs_ocr")
     record.set("read_by", "ocr", "ocr", CERTAIN)
     record.set("words_read", len(text.split()), "ocr", CERTAIN)
-    heading = " ".join(text[:LETTERHEAD].split()[:HEADING_WORDS])
+    from .document import heading_of
+    heading = heading_of(text)
     if heading:
         record.set("heading", heading[:80], "ocr", LIKELY)
     record.reader_ran("ocr", "%d words from a %s" % (len(text.split()), detail))

@@ -215,6 +215,83 @@ class RulesThatJustMiss(unittest.TestCase):
         self.assertFalse(review._nearly("a", "audio"))
 
 
+class ReadingWaitingFilesAgain(unittest.TestCase):
+    """What is waiting is judged on what was read when it arrived."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-refresh-")
+        self.journal = ledger.Ledger(os.path.join(self.dir, "state.db"))
+        self.run = self.journal.start_run("sort", source_root=self.dir,
+                                          dry_run=False)
+        self.path = os.path.join(self.dir, "held.txt")
+        with open(self.path, "w") as handle:
+            handle.write("hello")
+
+    def tearDown(self):
+        self.journal.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def file(self, facts, holding=True, destination=None):
+        move = self.journal.add_move(
+            self.run, 1, 1, "move", "waiting", "/src/held.txt",
+            destination or self.path, 5, "", "done", facts=facts,
+            holding=holding)
+        self.journal.update_move(move, "done")
+        return move
+
+    def stored(self, move):
+        return review._facts_of(self.journal.move(move))
+
+    def test_a_reading_fact_is_brought_up_to_date(self):
+        from unittest import mock
+        import evidence
+        move = self.file({"kind": "document", "heading": "ÍäÎá garbled"})
+        fresh = evidence.Record(self.path)
+        fresh.set("heading", "RBU Loonstrook", "pdf-text", evidence.STRONG)
+        with mock.patch("identify.identify", return_value=fresh):
+            self.assertEqual(review.refresh_held(self.journal), 1)
+        self.assertEqual(self.stored(move)["heading"], "RBU Loonstrook")
+
+    def test_a_fact_that_is_no_longer_true_goes(self):
+        from unittest import mock
+        import evidence
+        move = self.file({"kind": "document", "needs_ocr": True})
+        with mock.patch("identify.identify",
+                        return_value=evidence.Record(self.path)):
+            review.refresh_held(self.journal)
+        self.assertNotIn("needs_ocr", self.stored(move))
+
+    def test_where_it_came_from_is_left_as_it_was(self):
+        """True at the source, and not readable off the file where it sits
+        now."""
+        from unittest import mock
+        import evidence
+        move = self.file({"kind": "document", "from_host": "example.com",
+                          "added": "2023-09-01", "heading": "old"})
+        fresh = evidence.Record(self.path)
+        fresh.set("heading", "new", "pdf-text", evidence.STRONG)
+        with mock.patch("identify.identify", return_value=fresh):
+            review.refresh_held(self.journal)
+        facts = self.stored(move)
+        self.assertEqual(facts["from_host"], "example.com")
+        self.assertEqual(facts["added"], "2023-09-01")
+
+    def test_a_placed_file_is_not_its_business(self):
+        from unittest import mock
+        self.file({"kind": "document"}, holding=False)
+        with mock.patch("identify.identify") as reread:
+            review.refresh_held(self.journal)
+        reread.assert_not_called()
+
+    def test_a_file_that_is_not_there_any_more_is_skipped(self):
+        from unittest import mock
+        self.file({"kind": "document"},
+                  destination=os.path.join(self.dir, "gone.txt"))
+        with mock.patch("identify.identify") as reread:
+            self.assertEqual(review.refresh_held(self.journal), 0)
+        reread.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
 
