@@ -242,6 +242,89 @@ def missing_ancestors(directory):
     return missing
 
 
+# What an operating system leaves in a folder on its own account. A folder
+# holding nothing else is empty to the person looking at it.
+_LITTER = frozenset((".ds_store", "thumbs.db", "desktop.ini", ".localized",
+                     "icon\r", ".directory"))
+
+
+def _is_litter(name):
+    lowered = name.lower()
+    return lowered in _LITTER or lowered.startswith("._")
+
+
+def hollow(directory):
+    """True if a folder holds nothing but more folders and OS litter."""
+    try:
+        for current, _folders, names in os.walk(directory):
+            if any(not _is_litter(name) for name in names):
+                return False
+            # A symlink to a folder is something somebody made; leave it.
+            if any(os.path.islink(os.path.join(current, name))
+                   for name in _folders):
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def emptied(sources, stop_at):
+    """The highest folders under `stop_at` that moving `sources` left hollow.
+
+    Sorting a file out of `Downloads/UK/Payslips` leaves `Payslips` behind,
+    and then `UK` -- the wrapping, lying where the sweet was. Only the
+    topmost hollow folder of each chain is returned, so a whole emptied
+    tree goes as one, and `stop_at` itself never does: the watched folder
+    is where things arrive, not a thing.
+    """
+    stop_at = os.path.realpath(stop_at)
+    tops = set()
+    for source in sources:
+        current = os.path.realpath(os.path.dirname(os.path.abspath(source)))
+        highest = None
+        while current != stop_at and inside(stop_at, current):
+            if not os.path.isdir(current) or not hollow(current):
+                break
+            highest = current
+            current = os.path.dirname(current)
+        if highest:
+            tops.add(highest)
+    # A top inside another top is already covered by it.
+    return sorted(top for top in tops
+                  if not any(top != other and inside(other, top)
+                             for other in tops))
+
+
+def clear_away(directory, bin_send=None):
+    """Remove one hollow folder, without deleting anything in it.
+
+    Nothing inside it but more folders: removed, deepest first, which
+    deletes nothing because there is nothing. Litter inside it: the whole
+    folder goes to the wastebasket as one entry, recoverable, because this
+    program does not delete files -- not even `.DS_Store`.
+
+    Returns "removed", "binned" or "" when it was left alone.
+    """
+    if not os.path.isdir(directory) or not hollow(directory):
+        return ""
+    has_litter = any(names for _root, _folders, names in os.walk(directory))
+    if not has_litter:
+        try:
+            for current, _folders, _names in os.walk(directory,
+                                                     topdown=False):
+                os.rmdir(current)
+            return "removed"
+        except OSError:
+            return ""
+    if bin_send is None:
+        return ""
+    try:
+        bin_send(directory)
+        return "binned"
+    except Exception:                        # noqa: BLE001
+        return ""
+
+
 def prune_empty(directories):
     """Remove directories that this run created and that are now empty.
 

@@ -111,6 +111,11 @@ def _read(reader, item, ocr_mode="auto", tools="auto"):
     return reader.read(item, ocr=ocr_mode)
 
 
+def _to_the_bin(path):
+    import trash
+    return trash.send(path, files_only=False)
+
+
 def _note_cost(journal, path, watch, note="", record=None):
     """File away a reading, but only the ones worth a person's attention.
 
@@ -419,6 +424,23 @@ def execute(plan, rule_set, ledger, dry_run=None):
     # an undo that may never be asked for.
     if failed:
         paths.prune_empty(created_directories)
+
+    # The folders the files came out of. Sorting everything out of
+    # `Downloads/UK/Payslips` leaves `Payslips` standing, and then `UK`,
+    # like the wrapping left lying where the sweet was -- and a funnel with
+    # the skeleton of its old contents still in it is not empty to anybody
+    # looking at it. Only folders left holding nothing but OS litter, only
+    # below the folder being sorted, and never by deleting: an empty folder
+    # is removed, one with a `.DS_Store` in it goes to the wastebasket.
+    moved_out = [member.source for planned_item in plan.items
+                 for member in planned_item.members
+                 if planned_item.operation == "move"
+                 and not os.path.exists(member.source)]
+    for folder in paths.emptied(moved_out, plan.root):
+        outcome = paths.clear_away(folder, _to_the_bin)
+        if outcome:
+            messages.append("cleared away %s (%s)"
+                            % (os.path.relpath(folder, plan.root), outcome))
 
     status = "partial" if failed else "completed"
     summary = "%d items completed, %d failed, %d skipped" % (
