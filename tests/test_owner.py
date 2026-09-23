@@ -100,7 +100,7 @@ class WhatItChanges(unittest.TestCase):
         self.assertIn("Tamás", self.terms())
 
     def test_told_whose_computer_it_is_it_is_not(self):
-        found = self.terms(owner={"tamás", "török"})
+        found = self.terms(person={"tamás", "török"})
         self.assertNotIn("Tamás", found)
         self.assertIn("Rechnung", found)
         self.assertIn("Loonbrief", found)
@@ -108,11 +108,23 @@ class WhatItChanges(unittest.TestCase):
     def test_an_accented_name_still_matches_its_own_word(self):
         """`Tamás` folds to `tamas` in the counting and must fold on both
         sides of the comparison, or the name never matches itself."""
-        self.assertNotIn("Tamás", self.terms(owner={"Tamás"}))
+        self.assertNotIn("Tamás", self.terms(person={"Tamás"}))
 
-    def test_a_surname_that_is_also_a_word_keeps_its_chance(self):
-        """`Koch` is a cook, `Baker` is a baker, `Bill` is a bill. Below
-        the lower ceiling it is the language, not the letterhead."""
+    def test_a_real_name_is_never_a_category_however_rare(self):
+        """The allowance a surname used to get let the owner's own name
+        through twice on a real machine. It is gone."""
+        headings = (["Török statement %d" % n for n in range(23)]
+                    + ["Rechnung Stadtwerke %d" % n for n in range(100)]
+                    + ["Mietvertrag Wohnung %d" % n for n in range(100)]
+                    + ["Steuerbescheid Finanzamt %d" % n for n in range(74)])
+        found = [word for word, _count
+                 in shapes.learn_terms(headings, person={"török"})]
+        self.assertNotIn("Török", found)
+
+    def test_a_login_that_is_also_a_word_keeps_its_chance(self):
+        """`Koch` is a cook, `Baker` is a baker, `Bill` is a bill. For an
+        account name -- not the real name -- below the lower ceiling it is
+        the language, not the letterhead."""
         headings = (["Bill from the garage %d" % n for n in range(4)]
                     + ["Rechnung Stadtwerke %d" % n for n in range(40)]
                     + ["Mietvertrag Wohnung %d" % n for n in range(30)]

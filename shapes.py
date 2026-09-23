@@ -319,7 +319,7 @@ def _best_spelling(counter):
 
 def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
                 max_share=MAX_CATEGORY_RATIO, cap=40, owner=(),
-                owner_share=None):
+                owner_share=None, person=()):
     """Words that enough documents lead with to be a category they chose.
 
     This is deliberately not `learn`. That one groups files by the shape of
@@ -384,6 +384,13 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     # matches the word it is being compared with: `Tamás` folds to `tamas`
     # on one side of the comparison and not the other.
     owner = set(_fold(word) for word in (owner or ()))
+    # The owner's real name gets no allowance at all. It was given one at
+    # first, so that a surname which is also a word -- Koch, Baker, Bill --
+    # could still become a folder, and on a real machine that allowance let
+    # the owner's own name through twice: from how they name their CVs, and
+    # from 23 documents with their surname at the top. The case it protected
+    # was hypothetical and the case it let through was not.
+    person = set(_fold(word) for word in (person or ()))
     share = OWNER_NAME_RATIO if owner_share is None else owner_share
     # A share of nothing means no allowance at all: see `propose`, which
     # asks for that for filenames, because a filename is written by the
@@ -391,7 +398,8 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     own_ceiling = max(min_occurrences, total * share) if share > 0 else -1
     terms = [(_best_spelling(spellings[key]), count)
              for key, count in frequency.items()
-             if bare[key] >= min_occurrences
+             if key not in person
+             and bare[key] >= min_occurrences
              and min_occurrences <= count
              <= (own_ceiling if key in owner else ceiling)
              and _is_a_word(_best_spelling(spellings[key]))

@@ -284,8 +284,9 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
     # has to have heard of it.
     # The one word this program is allowed to know without counting it:
     # the name of whoever this computer belongs to.
-    mine = owner.names() | owner.account()
-    found.heading_terms = shapes.learn_terms(found.headings, owner=mine)
+    mine, person = owner.account(), owner.names()
+    found.heading_terms = shapes.learn_terms(found.headings, owner=mine,
+                                             person=person)
     # Filenames are held to a stricter rule than headings, for two reasons
     # that are both about who wrote them. A heading is written by whoever
     # sent the document, so the owner's surname there might be the sender's
@@ -296,7 +297,7 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
     # container; that is taken out as each name is collected, see
     # `_without_own_format`.
     found.stem_terms = shapes.learn_terms(
-        found.document_stems, owner=mine, owner_share=0)
+        found.document_stems, owner=mine, owner_share=0, person=person)
     return found
 
 
