@@ -181,7 +181,7 @@ class Survey(object):
             self.headings.append(heading)
         stem = record.value("stem")
         if stem and record.value("kind") in ("document", "archive"):
-            self.document_stems.append(stem)
+            self.document_stems.append(_without_own_format(stem, record))
         if stem and record.value("kind") in ("image", "video", "audio"):
             self.stems.append(stem)
             source = record.value("source")
@@ -242,6 +242,26 @@ _NOT_A_CATEGORY = {
 }
 
 
+def _without_own_format(stem, record):
+    """A filename with its own file type taken out of it.
+
+    `pdf_export.pdf` and `scan.pdf.pdf` say what container they are in,
+    which is already known and divides nothing -- three of them in a real
+    folder were enough to propose a category called `pdf`. Only the file's
+    *own* format goes, and that restraint is the point: `backup`, `project`,
+    `calendar`, `contact` and `note` are all names of file formats too, and
+    every one of them is a perfectly good thing for a folder to be called
+    when it is not the thing the file is.
+    """
+    own = set(str(value).lower() for value in
+              (record.value("ext"), record.value("format")) if value)
+    if not own:
+        return stem
+    kept = [word for word in re.split(r"([^\w]+|_)", stem)
+            if word.lower() not in own]
+    return "".join(kept).strip(" _-.") or stem
+
+
 def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
            on_progress=None):
     """Walk a folder and count what is in it. Reads nothing twice."""
@@ -266,7 +286,17 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
     # the name of whoever this computer belongs to.
     mine = owner.names() | owner.account()
     found.heading_terms = shapes.learn_terms(found.headings, owner=mine)
-    found.stem_terms = shapes.learn_terms(found.document_stems, owner=mine)
+    # Filenames are held to a stricter rule than headings, for two reasons
+    # that are both about who wrote them. A heading is written by whoever
+    # sent the document, so the owner's surname there might be the sender's
+    # word and keeps a small allowance. A filename is almost always written
+    # by the owner, and nobody names a file after themselves to say what
+    # kind of file it is: `Tamas_Torok_CV.pdf` is a CV. And a word that is
+    # a file's own format -- `pdf_export.pdf` -- is the file describing its
+    # container; that is taken out as each name is collected, see
+    # `_without_own_format`.
+    found.stem_terms = shapes.learn_terms(
+        found.document_stems, owner=mine, owner_share=0)
     return found
 
 

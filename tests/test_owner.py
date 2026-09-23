@@ -149,5 +149,57 @@ class WhatItChanges(unittest.TestCase):
         self.assertEqual(self.terms(owner=set()), self.terms())
 
 
+class InFilenamesTheNameGetsNoAllowance(unittest.TestCase):
+    """A heading is written by the sender; a filename by the owner.
+
+    Nobody names a file after themselves to say what kind of file it is:
+    `Tamas_Torok_CV.pdf` is a CV. On a real Downloads folder the owner's
+    name was in 26 of 398 document filenames -- under the allowance a
+    surname keeps in headings, and proposed as a category because of it.
+    """
+
+    def stems(self):
+        return (["Tamas_Torok_CV_%d" % n for n in range(26)]
+                + ["Payslip_%d" % n for n in range(40)]
+                + ["CoverLetter_%d" % n for n in range(10)]
+                + ["Contract_%d" % n for n in range(8)]
+                + ["misc_%d_%s" % (n, "x" * (n % 5)) for n in range(300)])
+
+    def test_with_the_heading_allowance_it_survives(self):
+        found = [w for w, _c in shapes.learn_terms(self.stems(),
+                                                   owner={"tamas"})]
+        self.assertIn("Tamas", found)
+
+    def test_with_none_it_does_not(self):
+        found = [w for w, _c in shapes.learn_terms(self.stems(),
+                                                   owner={"tamas"},
+                                                   owner_share=0)]
+        self.assertNotIn("Tamas", found)
+        self.assertIn("Payslip", found)
+
+
+class AFileNamedAfterItsOwnFormat(unittest.TestCase):
+
+    def record(self, ext, fmt):
+        import evidence
+        record = evidence.Record("/x")
+        record.set("ext", ext, "stat", evidence.CERTAIN)
+        record.set("format", fmt, "signature", evidence.CERTAIN)
+        return record
+
+    def test_its_own_format_is_taken_out(self):
+        import propose
+        self.assertEqual(propose._without_own_format(
+            "pdf_export", self.record("pdf", "pdf")), "export")
+
+    def test_other_format_names_are_ordinary_words(self):
+        """`backup`, `project`, `calendar` and `note` are file formats too,
+        and good names for a folder when they are not what the file is."""
+        import propose
+        for stem in ("Project_plan", "Backup 2019", "Calendar export"):
+            self.assertEqual(propose._without_own_format(
+                stem, self.record("pdf", "pdf")), stem)
+
+
 if __name__ == "__main__":
     unittest.main()

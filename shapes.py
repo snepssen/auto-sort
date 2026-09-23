@@ -318,7 +318,8 @@ def _best_spelling(counter):
 
 
 def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
-                max_share=MAX_CATEGORY_RATIO, cap=40, owner=()):
+                max_share=MAX_CATEGORY_RATIO, cap=40, owner=(),
+                owner_share=None):
     """Words that enough documents lead with to be a category they chose.
 
     This is deliberately not `learn`. That one groups files by the shape of
@@ -383,7 +384,11 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     # matches the word it is being compared with: `Tamás` folds to `tamas`
     # on one side of the comparison and not the other.
     owner = set(_fold(word) for word in (owner or ()))
-    own_ceiling = max(min_occurrences, total * OWNER_NAME_RATIO)
+    share = OWNER_NAME_RATIO if owner_share is None else owner_share
+    # A share of nothing means no allowance at all: see `propose`, which
+    # asks for that for filenames, because a filename is written by the
+    # owner and nobody names a file after themselves to say what it is.
+    own_ceiling = max(min_occurrences, total * share) if share > 0 else -1
     terms = [(_best_spelling(spellings[key]), count)
              for key, count in frequency.items()
              if bare[key] >= min_occurrences
