@@ -414,7 +414,8 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
         return (sum(where) / float(len(where)), -pair[1], key)
 
     terms.sort(key=rank)
-    return _without_boilerplate(terms, documents)[:cap]
+    return _without_boilerplate(terms, documents,
+                                positions=positions)[:cap]
 
 
 # How deep into a heading a word may usually sit and still be what the
@@ -512,7 +513,7 @@ def _is_a_word(word):
     return plain > 0 if written_in_latin else True
 
 
-def _without_boilerplate(terms, documents, overlap=0.9):
+def _without_boilerplate(terms, documents, overlap=0.9, positions=None):
     """Drop a word that only ever appears alongside an earlier one.
 
     A payslip says `Loonbrief` at the top and then `Kantoor`, `afhaling`
@@ -525,6 +526,40 @@ def _without_boilerplate(terms, documents, overlap=0.9):
     This is the same judgement `check-rules` makes after a few hundred files
     have moved, made here before any of them move.
     """
+    # A word yields to one that heads every document it heads *and more*.
+    # German payslips open with `Programmversion: zvoove Payroll ...` -- the
+    # payroll software stamping its own version on the page -- and the
+    # earlier word won for being earlier, so four payslips got a folder
+    # named after the software. `Payroll` heads those four and every other
+    # payslip besides. The name of the program that printed a document
+    # belongs to one series; the kind of document spans several, which is
+    # the whole difference between them and does not need a vocabulary.
+    #
+    # But only to a wider word that sits at least as near the front. The
+    # town a pile of letters was posted from is wider than every kind of
+    # letter in the pile -- `Muenchen` heads the bills *and* the tax
+    # assessments -- and it sits at the end of the heading every time. A
+    # kind of document leads; `Payroll` leads the other payslips it heads.
+    positions = positions or {}
+
+    def middle(word):
+        where = positions.get(_fold(word)) or [0]
+        return sorted(where)[len(where) // 2]
+
+    wider = set()
+    for word, _count in terms:
+        mine = documents[_fold(word)]
+        for other, _other_count in terms:
+            if other == word:
+                continue
+            theirs = documents[_fold(other)]
+            if len(theirs) > len(mine) and \
+                    len(mine - theirs) <= (1 - overlap) * len(mine) and \
+                    middle(other) <= middle(word):
+                wider.add(word)
+                break
+    terms = [(word, count) for word, count in terms if word not in wider]
+
     kept = []
     claimed = []
     for word, count in terms:

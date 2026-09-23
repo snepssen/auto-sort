@@ -312,5 +312,32 @@ class WhatAFolderChoosesForItself(unittest.TestCase):
         self.assertNotIn("Service", words)
 
 
+class TheSoftwareIsNotTheDocument(unittest.TestCase):
+    """German payslips open `Programmversion: zvoove Payroll ...`: the
+    program that printed them, stamping its version on every page."""
+
+    def test_a_word_yields_to_a_wider_one_that_also_leads(self):
+        headings = (["Programmversion zvoove Payroll Lohn Abrechnung %d" % n
+                     for n in range(4)]
+                    + ["Payroll statement week %d" % n for n in range(15)]
+                    + ["Rechnung Stadtwerke %d" % n for n in range(20)]
+                    + ["Mietvertrag Wohnung %d" % n for n in range(20)])
+        found = [word for word, _count in shapes.learn_terms(headings)]
+        self.assertNotIn("Programmversion", found)
+        self.assertIn("Payroll", found)
+
+    def test_but_not_to_the_town_the_letters_came_from(self):
+        """`Muenchen` is wider than every kind of letter in the pile, and
+        sits at the end of the heading every time."""
+        headings = (["Steuerbescheid 2011 Finanzamt Muenchen %d" % n
+                     for n in range(3)]
+                    + ["Rechnung Stadtwerke Muenchen GmbH %d" % n
+                       for n in range(3)]
+                    + ["Mietvertrag Wohnung Hausverwaltung %d" % n
+                       for n in range(3)])
+        found = [word for word, _count in shapes.learn_terms(headings)]
+        self.assertIn("Steuerbescheid", found)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
