@@ -40,6 +40,7 @@ import re
 import bundles
 import identify
 import paths
+import owner
 import shapes
 import userdirs
 
@@ -261,8 +262,13 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
     # what they are named. A pile of bills teaches the word on its own
     # letterhead -- Rechnung, Factura, Invoice, Szamla -- and no table here
     # has to have heard of it.
-    found.heading_terms = shapes.learn_terms(found.headings)
-    found.stem_terms = shapes.learn_terms(found.document_stems)
+    # The one word this program is allowed to know without counting it:
+    # the name of whoever this computer belongs to.
+    mine, handle = owner.names(), owner.account()
+    found.heading_terms = shapes.learn_terms(found.headings, owner=mine,
+                                             never=handle)
+    found.stem_terms = shapes.learn_terms(found.document_stems, owner=mine,
+                                          never=handle)
     return found
 
 

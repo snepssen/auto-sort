@@ -446,3 +446,7 @@ duplication is three files and it buys each tool the ability to stand alone.
     dropped a string at a time, and again as candidate categories, by
     asking two questions that a page of Greek or Japanese answers
     differently from a page of glyph numbers.
+18. The owner's own name, from the account record. No table and no
+    vocabulary: the system was told it when the account was made. Held
+    to a much lower ceiling than other words rather than banned, because
+    a surname is often also a word.

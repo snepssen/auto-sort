@@ -29,6 +29,7 @@ import json
 import os
 import re
 
+import owner
 import rules
 import shapes
 
@@ -248,7 +249,12 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
         return [], 0
 
     # Candidates: words the documents themselves repeat, that no rule names.
-    candidates = [word for word, _count in shapes.learn_terms(headings)
+    # The same allowance the proposer makes for whoever this computer
+    # belongs to: their name heads half the post in the house and divides
+    # none of it.
+    candidates = [word for word, _count
+                  in shapes.learn_terms(headings, owner=owner.names(),
+                                        never=owner.account())
                   if not _named_by_a_rule(word, rule_set, fact)]
     if not candidates:
         return [], len(headings)

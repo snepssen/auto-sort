@@ -54,6 +54,10 @@ MIN_SUPPORT = MIN_OCCURRENCES
 # over occurrences, so 1.0 is "different every time" and 0.1 is "ten files
 # each".
 MAX_CATEGORY_RATIO = 0.6
+
+# The ceiling the computer owner's own name is held to instead. See
+# `owner.py`: a name at the top of a pile of post describes the pile.
+OWNER_NAME_RATIO = 0.1
 MIN_CONCENTRATION = 0.4         # of files, in values shared by MIN_OCCURRENCES
 MIN_CATEGORY_VALUES = 3
 MIN_CATEGORY_LENGTH = 3
@@ -314,7 +318,7 @@ def _best_spelling(counter):
 
 
 def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
-                max_share=MAX_CATEGORY_RATIO, cap=40):
+                max_share=MAX_CATEGORY_RATIO, cap=40, owner=(), never=()):
     """Words that enough documents lead with to be a category they chose.
 
     This is deliberately not `learn`. That one groups files by the shape of
@@ -362,9 +366,27 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
             documents[key].add(number)
 
     ceiling = max(min_occurrences, total * max_share)
+    # The owner's own name is at the top of their payslip, their tenancy
+    # agreement and their phone bill. It heads fifty documents and divides
+    # none of them, and the counting cannot see that -- fifty out of five
+    # hundred is the shape of a real category. So it is held to a much
+    # lower ceiling. Not banned: a surname is often also a word, and a
+    # `Bill` in three documents out of three hundred is the language rather
+    # than the letterhead.
+    # Folded the same way the headings are, or an accented name never
+    # matches the word it is being compared with: `Tamás` folds to `tamas`
+    # on one side of the comparison and not the other.
+    owner = set(_fold(word) for word in (owner or ()))
+    # A login name is not a word in any language, so it gets no allowance
+    # at all: `tamtor` is a handle somebody typed once when the machine was
+    # new, and no document has ever called itself that.
+    never = set(_fold(word) for word in (never or ()))
+    own_ceiling = max(min_occurrences, total * OWNER_NAME_RATIO)
     terms = [(_best_spelling(spellings[key]), count)
              for key, count in frequency.items()
-             if min_occurrences <= count <= ceiling
+             if key not in never
+             and min_occurrences <= count
+             <= (own_ceiling if key in owner else ceiling)
              and _is_a_word(_best_spelling(spellings[key]))
              and _near_the_front(positions[key])]
     if len(terms) < MIN_CATEGORY_VALUES:

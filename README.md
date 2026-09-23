@@ -223,6 +223,22 @@ nothing, correctly — their filenames already carried the answer, and a
 reader that stays quiet leaves better evidence standing rather than
 overruling it.
 
+**Your own name is not a category.** It is at the top of your payslip, your
+tenancy agreement, your tax assessment and your phone bill: it heads fifty
+documents and divides none of them, and a folder named after yourself inside
+your own home folder is a folder of everything. The counting cannot see that
+— fifty documents out of five hundred is exactly the shape of a real
+category — so auto-sort asks the operating system whose computer this is. It
+was told when the account was made. Nothing is sent anywhere and nothing is
+stored.
+
+It is not a ban, because a surname is often also a word: `Koch` is a cook,
+`Baker` is a baker, `Bill` is a bill. The name is held to a much lower
+ceiling than other words — above it the name is a letterhead, below it a
+word that happens to be somebody's name is far likelier to be the language.
+A *login* name gets no such allowance: `tamtor` is a handle somebody typed
+once when the machine was new, and no document has ever called itself that.
+
 **Glyph numbers are not words.** A font that ships only the characters it
 uses numbers them from scratch and explains them in a table. Without that
 table the numbers are all there is, and read as characters they pass every
@@ -995,6 +1011,11 @@ its own specification at test time.
     `propose` found what a folder's documents call themselves and then
     printed everything except that. It says so now, and refuses a
     "category" that is a font's glyph numbers or a word buried mid-sentence.
+
+18. **Knowing whose computer this is** ✓
+    The one word the program may know without counting it, because the
+    system was told it when the account was made — and the one word that
+    heads half the post in a house and divides none of it.
 
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.
