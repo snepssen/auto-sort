@@ -71,12 +71,12 @@ def identify(target, tier=TIER_ALL, record=None):
     _stat(item, record)
     if tier < TIER_SIGNATURE or record.value("dataless"):
         _name_and_provenance(item, record)
-        _derive(record)
+        derive(record)
         return record
 
     _bytes(path, record, tier)
     _name_and_provenance(item, record)
-    _derive(record)
+    derive(record)
     return record
 
 
@@ -223,7 +223,7 @@ _DURATION_BANDS = ((5, "clip"), (60, "short"), (600, "medium"),
 _FURAFFINITY_NAME = re.compile(r"^\d{10}\.([A-Za-z0-9-]+)_.+")
 
 
-def _derive(record):
+def derive(record):
     """Facts that follow from other facts, and nothing new from the disk."""
     host = str(record.value("from_host", "")).lower()
     if host == "furaffinity.net" or host.endswith(".furaffinity.net"):

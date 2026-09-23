@@ -139,6 +139,34 @@ class Watch(object):
             self.growth = max(0, self.peak - self._before)
         return False                         # never swallow the exception
 
+    def adopt(self, reading):
+        """Take in a measurement made where the work actually happened.
+
+        Since identification moved into a worker process, the memory this
+        process grew by says nothing about what reading a file cost: the
+        reading happens somewhere else. The worker measures itself the same
+        way and sends its numbers back with the facts, and the worst of the
+        two is what the file is charged -- "the most memory any one process
+        needed while reading this".
+
+        Without this the 171 MB PDF that started the whole cost report
+        would now be recorded as costing nothing at all.
+        """
+        if not reading:
+            return
+        growth = reading.get("growth")
+        peak = reading.get("peak")
+        if growth is not None:
+            self.growth = growth if self.growth is None \
+                else max(self.growth, growth)
+        if peak is not None:
+            self.peak = peak if self.peak is None else max(self.peak, peak)
+
+    def reading(self):
+        """This measurement, in the shape `adopt` takes."""
+        return {"seconds": self.seconds, "growth": self.growth,
+                "peak": self.peak}
+
     def notable(self, slow_seconds=None):
         """Whether this reading is worth a row in the ledger.
 

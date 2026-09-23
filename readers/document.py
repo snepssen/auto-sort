@@ -18,7 +18,7 @@ import re
 import zipfile
 
 from evidence import CERTAIN, STRONG, LIKELY, WEAK
-from . import ocr, pdftext
+from . import pdftext
 
 LETTERHEAD = 500                # characters of the top of the page to read
 HEADING_WORDS = 6               # of those, how many make up the heading
@@ -274,11 +274,10 @@ def _read_the_page(peek, record):
         # same holding rule cover a scanned JPEG and a scanned PDF.
         record.set("scan_of", "page", "pdf-text", STRONG)
         record.set("text_layer", False, "pdf-text", CERTAIN)
-        if _read_the_picture(peek, record):
-            return
         # Not "no keywords found": there was nothing to find. A page that
         # was photographed rather than typed needs eyes or OCR, and saying
-        # so is what lets it be held rather than guessed at.
+        # so is what lets it be held rather than guessed at -- and is what
+        # the OCR pass, which runs in a process of its own, looks for.
         record.set("needs_ocr", True, "pdf-text", STRONG)
         record.note("no text layer: this page is an image of a page")
         return
@@ -289,41 +288,6 @@ def _read_the_page(peek, record):
     heading = " ".join(text[:LETTERHEAD].split()[:HEADING_WORDS])
     if heading:
         record.set("heading", heading[:80], "pdf-text", STRONG)
-
-
-def _read_the_picture(peek, record):
-    """OCR the page, if there is a page in there and something to read it.
-
-    Returns True when it produced text. Everything about the result is
-    weaker than a text layer and is recorded that way: LIKELY rather than
-    STRONG, because this is a machine's reading of a photograph of the
-    words rather than the words.
-    """
-    if not ocr.available():
-        return False
-    try:
-        page = pdftext.page_image(peek.at(0, pdftext.MAX_BYTES * 4))
-    except (OSError, ValueError, MemoryError):
-        return False
-    if page is None:
-        # Every filter but JPEG, and the files whose only picture is the
-        # sender's logo. Held, and the note says which of the two it was.
-        record.note("no text layer, and no page-sized picture to read")
-        return False
-    image, width, height = page
-    text = ocr.read_image(image)
-    if not text:
-        record.note("a page was read by OCR and produced nothing")
-        return False
-    record.set("read_by", "ocr", "ocr", CERTAIN)
-    record.set("scan_pixels", width * height, "ocr", CERTAIN)
-    record.set("words_read", len(text.split()), "ocr", CERTAIN)
-    heading = " ".join(text[:LETTERHEAD].split()[:HEADING_WORDS])
-    if heading:
-        record.set("heading", heading[:80], "ocr", LIKELY)
-    record.reader_ran("ocr", "%d words from a %dx%d page"
-                      % (len(text.split()), width, height))
-    return True
 
 
 def _stamp(value):

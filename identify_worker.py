@@ -32,6 +32,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import bundles                                           # noqa: E402
+import costs                                             # noqa: E402
 import identify                                          # noqa: E402
 from readers import ocr                                   # noqa: E402
 
@@ -82,9 +83,14 @@ def handle(request):
                             is_dir=request.get("is_dir"),
                             reason=request.get("reason", ""),
                             sequence=request.get("sequence", 0))
-        record = identify.identify(item, tier=request.get("tier",
-                                                          identify.TIER_ALL))
-        return {"ok": True, "record": record.as_wire()}
+        # Measured here, where the reading happens. The supervisor's own
+        # memory says nothing about what this file cost.
+        watch = costs.Watch()
+        with watch:
+            record = identify.identify(item, tier=request.get(
+                "tier", identify.TIER_ALL))
+        return {"ok": True, "record": record.as_wire(),
+                "cost": watch.reading()}
     except MemoryError:
         # The fuse blew, or the machine is out. Either way this process is
         # now an unreliable narrator: it reports the one file and stops,

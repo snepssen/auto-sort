@@ -432,3 +432,8 @@ duplication is three files and it buys each tool the ability to stand alone.
     code calling either one. They now fill gaps and never argue: a fact the
     built-in reader established is left exactly as it was, and a file that
     parsed cleanly never launches anything.
+15. A process per optional program. The tools wait on somebody else's
+    program rather than reading bytes, so they fail differently and are
+    given their own patience, their own process and their own idle
+    timeout. What they find goes back to the supervisor, which merges it
+    under the same rule the tools follow in process: gaps, not arguments.

@@ -473,7 +473,7 @@ def parse(source):
 _SETTINGS_KEYS = {
     "dry_run", "unsorted", "unsorted_into", "on_collision",
     "min_confidence", "settle_seconds", "poll_seconds", "preserve_dates",
-    "ocr",
+    "ocr", "tools",
     "regroup",
 }
 _WATCH_KEYS = {"folders", "ignore", "depth"}
@@ -515,6 +515,14 @@ class Settings(object):
         # the install. `off` is for somebody who has one for other reasons
         # and does not want seconds of processor time spent on each page.
         self.ocr = _choice(values.get("ocr", "auto"), ("auto", "off"), "ocr")
+        # Where the optional programs run. `auto` gives each installed one a
+        # process of its own, started when a file first needs it and stopped
+        # again when it has been idle a while. `inline` runs them inside the
+        # worker that identified the file, which is one process fewer and
+        # one slow page away from that worker doing nothing else. `off`
+        # means no external program is ever run at all.
+        self.tools = _choice(values.get("tools", "auto"),
+                             ("auto", "inline", "off"), "tools")
 
 
 class Watch(object):

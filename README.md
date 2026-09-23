@@ -391,6 +391,25 @@ frozen this program during development and neither of them said so, and
 because there is no telemetry here to say so on their behalf. The same list
 is the **Slow & heavy files** page in the log.
 
+**Each optional program gets a process of its own.** `ffprobe`, `exiftool`
+and `tesseract` are other people's programs reading other people's files, and
+they are slow in ways that have nothing to do with anything going wrong — OCR
+is seconds a page by its nature. Run inside the worker that identified the
+file, one scanned page stops that worker reading anything else for as long as
+it takes, and a supervisor watching from outside cannot tell "wedged on a
+file" from "waiting for tesseract". So the file is handed off, and the answer
+comes back to the supervisor rather than to the worker that found the gap.
+
+Each tool gets its own patience — twenty-five seconds for ffprobe, sixty for
+OCR — and killing one costs only its own work. Nothing starts until a file
+needs it: a tool worker is about 20 MB, mostly interpreter, and one that has
+been idle for two minutes is let go again. On a folder that needs none, none
+is ever started.
+
+`tools = auto` in `[settings]` is that. `inline` runs them inside the identify
+worker, which is one process fewer and one slow page away from that worker
+doing nothing else. `off` runs no external program at all.
+
 **One file cannot stop the rest.** Working out what a file is means reading
 bytes somebody else wrote, with parsers that have twice been sent into a
 spin by an ordinary file — so that reading happens in a separate process.
@@ -917,6 +936,11 @@ its own specification at test time.
     `ffprobe` and `exiftool` were offered by the installer and named in this
     file for months with no code calling either. They are now asked about
     the files that came back with a gap, and only those.
+
+15. **A process per tool** ✓
+    Each installed program runs in a worker of its own, started on the
+    first file that needs it and let go when it has been idle. Its answer
+    goes back to the supervisor, not to the worker that found the gap.
 
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.

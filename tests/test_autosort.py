@@ -243,14 +243,14 @@ class DerivedFacts(unittest.TestCase):
         record.set("name", filename, "path", evidence.CERTAIN)
         record.set("from_host", "d.furaffinity.net", "wherefroms",
                    evidence.STRONG)
-        identify._derive(record)
+        identify.derive(record)
         self.assertEqual(record.value("creator"), "multyashka-sweet")
 
     def test_epoch_filename_alone_does_not_invent_a_creator(self):
         filename = "1497725735.multyashka-sweet_by_artist.jpg"
         record = evidence.Record(filename)
         record.set("name", filename, "path", evidence.CERTAIN)
-        identify._derive(record)
+        identify.derive(record)
         self.assertFalse(record.has("creator"))
 
     def test_pathological_names_do_not_raise(self):

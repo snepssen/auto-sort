@@ -44,6 +44,12 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import platform_support                                  # noqa: E402
+from evidence import CERTAIN, LIKELY                      # noqa: E402
+
+# The top of a page is what says what the page is; everything else is
+# mentioned further down. The same window the text-layer reader uses.
+LETTERHEAD = 500
+HEADING_WORDS = 6
 
 # One page at a time, and one page is all that is ever wanted: the heading
 # window is the first five hundred characters. Well inside the identify
@@ -77,6 +83,63 @@ def available():
     if _mode == "off":
         return None
     return platform_support.find("tesseract")
+
+
+def wanted(record):
+    """Whether this file is a page nobody has managed to read.
+
+    `needs_ocr` is set by whichever reader gave up: the PDF reader when a
+    document has no text layer, the image reader when a scanned page came
+    through a scanner. Both mean the same thing here.
+    """
+    if not available():
+        return False
+    return bool(record.value("needs_ocr"))
+
+
+def read(path, record):
+    """Read the page, whatever kind of file it arrived in.
+
+    Two shapes, one answer. A PDF holds its page as a picture inside it,
+    which is lifted out byte for byte; a scan that arrived as a JPEG or a
+    TIFF *is* the picture. Everything recorded afterwards is identical,
+    because by then it is text either way.
+    """
+    from . import pdftext                    # here, to keep the import cheap
+
+    text = ""
+    detail = ""
+    if record.value("format") == "pdf":
+        try:
+            with open(path, "rb") as handle:
+                page = pdftext.page_image(handle.read(pdftext.MAX_BYTES * 4))
+        except (OSError, ValueError, MemoryError):
+            page = None
+        if page is None:
+            record.note("no text layer, and no page-sized picture to read")
+            return False
+        image, width, height = page
+        text = read_image(image)
+        detail = "%dx%d page" % (width, height)
+        if text:
+            record.set("scan_pixels", width * height, "ocr", CERTAIN)
+    else:
+        text = read_file(path)
+        detail = "scanned page"
+
+    if not text:
+        record.note("a page was read by OCR and produced nothing")
+        return False
+
+    # It was read, so it is no longer waiting to be.
+    record.drop("needs_ocr")
+    record.set("read_by", "ocr", "ocr", CERTAIN)
+    record.set("words_read", len(text.split()), "ocr", CERTAIN)
+    heading = " ".join(text[:LETTERHEAD].split()[:HEADING_WORDS])
+    if heading:
+        record.set("heading", heading[:80], "ocr", LIKELY)
+    record.reader_ran("ocr", "%d words from a %s" % (len(text.split()), detail))
+    return True
 
 
 def read_image(data, suffix=".jpg", languages=""):

@@ -89,11 +89,12 @@ class WhenThereIsNothingInstalled(unittest.TestCase):
             self.assertEqual(ocr.languages_installed(), [])
 
     def test_a_scan_is_still_held(self):
+        """Nothing installed means the page is never even offered."""
         record = evidence.Record("/tmp/scan.pdf")
+        record.set("needs_ocr", True, "pdf-text", evidence.STRONG)
         with mock.patch.object(ocr, "available", return_value=None):
-            read = document._read_the_picture(mock.Mock(), record)
-        self.assertFalse(read)
-        self.assertFalse(record.has("read_by"))
+            self.assertFalse(ocr.wanted(record))
+        self.assertTrue(record.value("needs_ocr"))
 
     def test_off_means_off_even_where_it_is_installed(self):
         ocr.configure("off")
@@ -136,14 +137,25 @@ class WhatItRecords(unittest.TestCase):
     """OCR text is weaker evidence than a text layer, and says so."""
 
     def setUp(self):
-        self.record = evidence.Record("/tmp/scan.pdf")
-        self.peek = mock.Mock()
-        self.peek.at.return_value = pdf_with_image(1700, 2200)
+        self.dir = tempfile.mkdtemp(prefix="autosort-ocrrec-")
+        self.path = os.path.join(self.dir, "scan.pdf")
+        with open(self.path, "wb") as handle:
+            handle.write(pdf_with_image(1700, 2200))
+        self.record = evidence.Record(self.path)
+        self.record.set("format", "pdf", "signature", evidence.CERTAIN)
+        self.record.set("needs_ocr", True, "pdf-text", evidence.STRONG)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
 
     def read(self, text):
         with mock.patch.object(ocr, "available", return_value="/bin/echo"), \
                 mock.patch.object(ocr, "read_image", return_value=text):
-            return document._read_the_picture(self.peek, self.record)
+            return ocr.read(self.path, self.record)
+
+    def test_a_page_that_was_read_is_no_longer_waiting_to_be(self):
+        self.read("Rechnung Nr 4711")
+        self.assertFalse(self.record.has("needs_ocr"))
 
     def test_a_heading_from_ocr_is_likely_not_strong(self):
         self.assertTrue(self.read("Rechnung Nr 4711 vom 3. Mai 2019 "
@@ -160,6 +172,7 @@ class WhatItRecords(unittest.TestCase):
     def test_a_page_that_reads_as_nothing_is_still_held(self):
         self.assertFalse(self.read(""))
         self.assertFalse(self.record.has("read_by"))
+        self.assertTrue(self.record.value("needs_ocr"))
 
     def test_the_heading_is_the_top_of_the_page_only(self):
         self.read("First Second Third Fourth Fifth Sixth Seventh Eighth")

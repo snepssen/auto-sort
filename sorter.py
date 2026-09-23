@@ -95,7 +95,7 @@ def rules_hash(rule_set):
     return digest.hexdigest()
 
 
-def _read(reader, item, ocr_mode="auto"):
+def _read(reader, item, ocr_mode="auto", tools="auto"):
     """Facts about one item, from wherever it is safe to read them.
 
     Without a `reader` this is a plain call, which is what the one-shot
@@ -104,7 +104,10 @@ def _read(reader, item, ocr_mode="auto"):
     file nobody can read and a program nobody can quit.
     """
     if reader is None:
-        return identify.identify(item), ""
+        # No supervisor: the tiers do the gating, and `off` means the
+        # programs are not run at all.
+        tier = identify.TIER_HEADER if tools == "off" else identify.TIER_ALL
+        return identify.identify(item, tier=tier), ""
     return reader.read(item, ocr=ocr_mode)
 
 
@@ -149,6 +152,9 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None,
     # doing the reading and sent across with every request for the other.
     ocr_mode = getattr(rule_set.settings, "ocr", "auto")
     ocr.configure(ocr_mode)
+    tools_mode = getattr(rule_set.settings, "tools", "auto")
+    if reader is not None and hasattr(reader, "helpers"):
+        reader.helpers.mode = tools_mode
     seen = duplicates.Index(journal)
     planned = []
     skipped = []
@@ -191,9 +197,12 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None,
         watch = costs.Watch()
         try:
             with watch:
-                record, failure = _read(reader, item, ocr_mode)
+                record, failure = _read(reader, item, ocr_mode, tools_mode)
         except (OSError, ValueError) as error:
             record, failure = None, "identification failed: %s" % error
+        # The reading happened in another process, so the memory this one
+        # grew by is not the file's cost. The worker measured itself.
+        watch.adopt(getattr(reader, "last_reading", None))
         _note_cost(journal, item.primary, watch, failure, record)
         if failure:
             skipped.append((item.primary, failure))

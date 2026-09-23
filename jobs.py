@@ -48,6 +48,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 
 try:
     import queue
@@ -56,9 +57,11 @@ except ImportError:                          # pragma: no cover - Python 2
 
 import evidence
 import identify
+import readers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKER = os.path.join(HERE, "identify_worker.py")
+TOOL_WORKER = os.path.join(HERE, "tool_worker.py")
 
 # How long one file may take before the worker is assumed lost. Generous on
 # purpose: a header read from a sleeping external drive is slow and fine,
@@ -80,35 +83,38 @@ class Unavailable(Exception):
     """A worker could not be started at all."""
 
 
-class Reader(object):
-    """Identification, done somewhere it can be interrupted.
+class Channel(object):
+    """One worker process, spoken to a line of JSON at a time.
 
-    Used as a context manager, or closed explicitly. One worker serves many
-    files: spawning a process per file would be the obvious design and the
-    wrong one, because process spawn on Windows is expensive enough to
-    dominate the reading it is protecting.
+    The same machinery serves both kinds of worker, because the difference
+    between them is policy rather than plumbing: how long to wait, what to
+    do about a silence, and whether a dead one is worth starting again.
     """
 
-    def __init__(self, timeout=TIMEOUT_SECONDS, ceiling_mb=CEILING_MB,
-                 enabled=True):
+    def __init__(self, command, timeout, label, ceiling_mb=0):
+        # A callable, not a list, wherever the command names a file that
+        # might move: it is resolved at spawn time so that the worker a
+        # channel runs is whatever the module points at *now*.
+        self.command = command
         self.timeout = float(timeout)
+        self.label = label
         self.ceiling_mb = int(ceiling_mb)
-        self.enabled = bool(enabled) and queue is not None
         self.spawn_failures = 0
-        self.killed = 0              # workers stopped for not answering
+        self.killed = 0              # stopped for not answering
         self.restarts = 0
-        self.in_process = 0          # files read here instead, as a fallback
+        self.asked = 0
+        self.last_used = time.monotonic()
         self._process = None
         self._replies = None
-        self._pump = None
 
-    # -- the worker itself -------------------------------------------------
+    # -- the process -------------------------------------------------------
 
     def _spawn(self):
-        if not os.path.exists(WORKER) or not sys.executable:
+        command = list(self.command() if callable(self.command)
+                       else self.command)
+        script = command[2] if len(command) > 2 else ""
+        if not sys.executable or not os.path.exists(script):
             raise Unavailable("no worker to run")
-        command = [sys.executable, "-u", WORKER,
-                   "--ceiling-mb", str(self.ceiling_mb)]
         options = {"stdin": subprocess.PIPE, "stdout": subprocess.PIPE,
                    "stderr": subprocess.PIPE, "cwd": HERE}
         if os.name == "nt":
@@ -139,10 +145,9 @@ class Reader(object):
             finally:
                 sink.put(_STOPPED)
 
-        thread = threading.Thread(target=pump,
-                                  args=(process.stdout, replies))
-        thread.daemon = True
-        thread.start()
+        reader = threading.Thread(target=pump, args=(process.stdout, replies))
+        reader.daemon = True
+        reader.start()
 
         # stderr is drained too, or a worker that writes a lot of warnings
         # fills its pipe buffer and blocks forever -- a deadlock that would
@@ -153,12 +158,14 @@ class Reader(object):
 
         self._process = process
         self._replies = replies
-        self._pump = thread
 
-    def _ensure(self):
-        if self._process is not None and self._process.poll() is None:
+    def alive(self):
+        return self._process is not None and self._process.poll() is None
+
+    def ensure(self):
+        if self.alive():
             return True
-        if not self.enabled or self.spawn_failures >= GIVE_UP_AFTER:
+        if self.spawn_failures >= GIVE_UP_AFTER:
             return False
         try:
             self._spawn()
@@ -168,7 +175,10 @@ class Reader(object):
             return False
         return True
 
-    def _stop(self, kill=False):
+    def idle_seconds(self):
+        return time.monotonic() - self.last_used
+
+    def stop(self, kill=False):
         process = self._process
         self._process = None
         self._replies = None
@@ -194,71 +204,339 @@ class Reader(object):
             except Exception:                # noqa: BLE001
                 pass
 
+    # -- one exchange ------------------------------------------------------
+
+    def ask(self, request):
+        """`(reply, error)`. Exactly one of the two is ever meaningful.
+
+        The error is a sentence for the person who will read it in the log,
+        not for a developer.
+        """
+        self.last_used = time.monotonic()
+        if not self.ensure():
+            return None, "%s could not be started" % self.label
+        if not self._write(request):
+            # It died between the check and the write. Start again once; a
+            # second failure is the caller's to fall back from.
+            self.stop(kill=True)
+            self.restarts += 1
+            if not self.ensure() or not self._write(request):
+                return None, "%s could not be reached" % self.label
+
+        self.asked += 1
+        try:
+            line = self._replies.get(timeout=self.timeout)
+        except queue.Empty:
+            # This is the case the whole module is for.
+            self.stop(kill=True)
+            self.killed += 1
+            return None, ("stopped after %s without an answer; the file was "
+                          "left alone" % _duration(self.timeout))
+        finally:
+            self.last_used = time.monotonic()
+        if line is _STOPPED:
+            self.stop()
+            self.restarts += 1
+            return None, "%s stopped unexpectedly on this file" % self.label
+        try:
+            reply = json.loads(line.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self.stop(kill=True)
+            self.restarts += 1
+            return None, "%s answered with something unreadable" % self.label
+        if reply.get("fatal"):
+            # It took itself out of service after answering.
+            self.stop()
+            self.restarts += 1
+        if not reply.get("ok"):
+            return None, str(reply.get("error") or "could not be read")
+        return reply, ""
+
+    def _write(self, request):
+        try:
+            self._process.stdin.write(
+                (json.dumps(request) + "\n").encode("utf-8"))
+            self._process.stdin.flush()
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def report(self):
+        return {"asked": self.asked, "killed": self.killed,
+                "restarts": self.restarts,
+                "spawn_failures": self.spawn_failures,
+                "running": self.alive()}
+
+
+class Helpers(object):
+    """One process per optional program, started only when one is needed.
+
+    The tools are other people's programs reading other people's files, and
+    they are slow in ways that have nothing to do with anything going wrong:
+    OCR is seconds a page by its nature. Run inside the identify worker --
+    which is where they were -- a single scanned page stops that worker
+    reading anything else for as long as it takes, and a supervisor watching
+    it cannot tell "wedged on a file" from "waiting for tesseract".
+
+    So each tool gets a process of its own, and the answer comes back to the
+    supervisor rather than to the worker that found the gap. Three
+    consequences, all of them the point:
+
+    **Each tool can be given its own patience.** A hung `ffprobe` is a
+    problem after twenty-five seconds; OCR is not, at the same age.
+
+    **Killing one costs only its own work.** The identify worker keeps its
+    place, and the file it was reading is unaffected.
+
+    **Nothing starts until something needs it.** A tool worker costs about
+    20 MB, mostly the interpreter, and three of them at once would put this
+    program past the footprint it aims at. So they are started on the first
+    file that wants one and stopped again after a couple of minutes idle --
+    which on most folders means never started at all.
+    """
+
+    # How long each tool may take over one file before it is assumed lost.
+    PATIENCE = {"ffprobe": 25.0, "exiftool": 25.0, "tesseract": 60.0}
+    DEFAULT_PATIENCE = 30.0
+
+    # Idle time before a tool worker is stopped again. Long enough to serve
+    # a run of scanned pages without paying to start again for each.
+    IDLE_SECONDS = 120.0
+
+    def __init__(self, mode="auto", ocr="auto"):
+        self.mode = mode
+        self.ocr = ocr
+        self.channels = {}
+        self.in_process = 0
+        self.last_reading = {}       # what the tools said this file cost
+
+    @property
+    def where(self):
+        """Where the tools are to be run: `workers`, `inline` or `nowhere`.
+
+        One answer rather than a pair of booleans, because the three cases
+        are genuinely different and the interesting mistake is treating
+        "not in workers" as "inline" -- which is how `tools = off` ended up
+        running every tool inside the identify worker instead of nowhere.
+        """
+        if self.mode == "off":
+            return "nowhere"
+        if self.mode == "inline" or queue is None:
+            return "inline"
+        return "workers"
+
+    @property
+    def separate(self):
+        """Whether the tools run somewhere other than the identify worker."""
+        return self.where == "workers"
+
+    def enrich(self, path, record):
+        """Ask each tool that wants this file, in its own process.
+
+        Returns the number of tools that added something. Never raises: a
+        tool that cannot be reached leaves the facts absent, which is what
+        happens on a machine where it is not installed at all.
+        """
+        if self.mode == "off":
+            return 0
+        self.last_reading = {}
+        added = 0
+        for name, enricher in readers.enrichers():
+            try:
+                if not enricher.wanted(record):
+                    continue
+            except Exception:                # noqa: BLE001
+                continue
+            if self._ask(name, path, record):
+                added += 1
+        return added
+
+    def _ask(self, name, path, record):
+        if not self.separate:
+            return self._here(name, path, record)
+        channel = self.channels.get(name)
+        if channel is None:
+            channel = Channel(
+                lambda tool=name: [sys.executable, "-u", TOOL_WORKER,
+                                   "--tool", tool, "--ocr", self.ocr],
+                self.PATIENCE.get(name, self.DEFAULT_PATIENCE),
+                name)
+            self.channels[name] = channel
+        reply, error = channel.ask({"path": path,
+                                    "record": record.as_wire()})
+        if error:
+            record.note("%s: %s" % (name, error))
+            # A worker that cannot be started at all is not a reason to do
+            # without the facts on a machine that has the program.
+            if "could not be started" in error:
+                return self._here(name, path, record)
+            return False
+        _keep_worst(self.last_reading, reply.get("cost"))
+        try:
+            fresh = evidence.from_wire(reply["record"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return _merge(record, fresh)
+
+    def _here(self, name, path, record):
+        """The fallback: run the tool in this process, as it used to be."""
+        self.in_process += 1
+        enricher = dict(readers.enrichers()).get(name)
+        if enricher is None:
+            return False
+        try:
+            return bool(enricher.read(path, record))
+        except Exception as error:           # noqa: BLE001
+            record.note("%s declined: %s" % (name, error))
+            return False
+
+    def reap(self, idle_seconds=None):
+        """Stop the tool workers nobody has needed for a while."""
+        limit = self.IDLE_SECONDS if idle_seconds is None else idle_seconds
+        stopped = []
+        for name, channel in list(self.channels.items()):
+            if channel.alive() and channel.idle_seconds() >= limit:
+                channel.stop()
+                stopped.append(name)
+        return stopped
+
+    def report(self):
+        return dict((name, channel.report())
+                    for name, channel in self.channels.items())
+
+    def close(self):
+        for channel in self.channels.values():
+            channel.stop()
+        self.channels.clear()
+
+
+def _keep_worst(into, reading):
+    """The worst of several readings, so one file has one honest number."""
+    if not reading:
+        return into
+    for key in ("growth", "peak"):
+        value = reading.get(key)
+        if value is None:
+            continue
+        current = into.get(key)
+        into[key] = value if current is None else max(current, value)
+    return into
+
+
+def _merge(record, fresh):
+    """Take facts a tool worker found and the original record lacks.
+
+    Only the new ones, and this is the same rule the tool itself follows in
+    process: gaps, not arguments. The record that went out is the authority
+    on everything it already knew -- it was built by the reader that had the
+    file's own header in front of it.
+    """
+    added = 0
+    for name in fresh.names():
+        if record.has(name):
+            continue
+        fact = fresh.fact(name)
+        record.set(name, fact.value, fact.source, fact.confidence)
+        added += 1
+    # A fact the worker *dropped* has to cross the boundary too. The worker
+    # started from exactly this record, so anything it no longer holds it
+    # let go of on purpose -- `needs_ocr` on a page that has now been read.
+    # Without this the record comes back saying both that it was read by
+    # OCR and that it is still waiting to be.
+    for name in list(record.names()):
+        if not fresh.has(name):
+            record.drop(name)
+            added += 1
+    for sentence in fresh.notes:
+        if sentence not in record.notes:
+            record.note(sentence)
+    for reader_name, detail in fresh.readers:
+        if (reader_name, detail) not in record.readers:
+            record.reader_ran(reader_name, detail)
+    return added > 0
+
+
+class Reader(object):
+    """Identification, done somewhere it can be interrupted.
+
+    Used as a context manager, or closed explicitly. One worker serves many
+    files: spawning a process per file would be the obvious design and the
+    wrong one, because process spawn on Windows is expensive enough to
+    dominate the reading it is protecting.
+    """
+
+    def __init__(self, timeout=TIMEOUT_SECONDS, ceiling_mb=CEILING_MB,
+                 enabled=True, tools="auto", ocr="auto"):
+        self.ceiling_mb = int(ceiling_mb)
+        self.enabled = bool(enabled) and queue is not None
+        self.in_process = 0          # files read here instead, as a fallback
+        self.helpers = Helpers(tools if self.enabled else "inline", ocr)
+        # What the workers said the last file cost them. The supervisor's
+        # own memory says nothing about it: the reading happens elsewhere.
+        self.last_reading = {}
+        self.channel = Channel(
+            lambda: [sys.executable, "-u", WORKER,
+                     "--ceiling-mb", str(self.ceiling_mb)],
+            timeout, "the reader", ceiling_mb)
+
+    @property
+    def timeout(self):
+        return self.channel.timeout
+
+    @timeout.setter
+    def timeout(self, seconds):
+        self.channel.timeout = float(seconds)
+
     # -- the work ----------------------------------------------------------
 
     def read(self, item, tier=identify.TIER_ALL, ocr="auto"):
         """Facts about one item, as `(record, error)`.
 
         Exactly one of the two is ever meaningful: a record, or a sentence
-        saying why there is not one. The sentence is written for the person
-        who will read it in the log, not for a developer.
+        saying why there is not one.
         """
-        if not self._ensure():
-            return self._here(item, tier)
+        self.helpers.ocr = ocr
+        self.last_reading = {}
+        # With the tools in processes of their own, the identify worker is
+        # asked for everything *except* them -- which is exactly what the
+        # header tier already means -- and the supervisor does that pass
+        # itself. The answer comes back here rather than to the worker that
+        # found the gap.
+        where = self.helpers.where if tier >= identify.TIER_PROGRAMS \
+            else "nowhere"
+        # Only `inline` leaves the tools to the identify worker. Both of the
+        # others ask it for everything *except* them -- which is exactly
+        # what the header tier already means -- and then either run them
+        # here, in processes of their own, or not at all.
+        inner = tier if where == "inline" else identify.TIER_HEADER
 
-        request = {"primary": item.primary, "members": list(item.members),
-                   "is_dir": bool(item.is_dir), "reason": item.reason,
-                   "sequence": item.sequence, "tier": tier, "ocr": ocr}
-        try:
-            self._process.stdin.write(
-                (json.dumps(request) + "\n").encode("utf-8"))
-            self._process.stdin.flush()
-        except (OSError, ValueError):
-            # The worker died between the check and the write. Start again
-            # once; a second failure falls through to reading it here.
-            self._stop(kill=True)
-            self.restarts += 1
-            if not self._ensure():
-                return self._here(item, tier)
-            try:
-                self._process.stdin.write(
-                    (json.dumps(request) + "\n").encode("utf-8"))
-                self._process.stdin.flush()
-            except (OSError, ValueError):
-                return self._here(item, tier)
+        if not self.enabled or not self.channel.ensure():
+            record, error = self._here(item, inner, ocr)
+        else:
+            reply, error = self.channel.ask(
+                {"primary": item.primary, "members": list(item.members),
+                 "is_dir": bool(item.is_dir), "reason": item.reason,
+                 "sequence": item.sequence, "tier": inner, "ocr": ocr})
+            if error and "could not be" in error:
+                record, error = self._here(item, inner, ocr)
+            elif error:
+                return None, error
+            else:
+                _keep_worst(self.last_reading, reply.get("cost"))
+                try:
+                    record = evidence.from_wire(reply["record"])
+                except (KeyError, TypeError, ValueError) as problem:
+                    return None, ("the reader's answer did not make sense: %s"
+                                  % problem)
+        if record is None:
+            return None, error
+        if where == "workers":
+            self.helpers.enrich(item.primary, record)
+            _keep_worst(self.last_reading, self.helpers.last_reading)
+            identify.derive(record)
+        return record, ""
 
-        try:
-            line = self._replies.get(timeout=self.timeout)
-        except queue.Empty:
-            # This is the case the whole module is for.
-            self._stop(kill=True)
-            self.killed += 1
-            return None, ("stopped after %s without an answer; the file "
-                          "was left alone" % _duration(self.timeout))
-        if line is _STOPPED:
-            self._stop()
-            self.restarts += 1
-            return None, "the reader stopped unexpectedly on this file"
-
-        try:
-            reply = json.loads(line.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            self._stop(kill=True)
-            self.restarts += 1
-            return None, "the reader answered with something unreadable"
-
-        if reply.get("fatal"):
-            # The worker took itself out of service after answering.
-            self._stop()
-            self.restarts += 1
-        if not reply.get("ok"):
-            return None, str(reply.get("error") or "could not be read")
-        try:
-            return evidence.from_wire(reply["record"]), ""
-        except (KeyError, TypeError, ValueError) as error:
-            return None, "the reader's answer did not make sense: %s" % error
-
-    def _here(self, item, tier):
+    def _here(self, item, tier, ocr="auto"):
         """The fallback: read it in this process, as before."""
         self.in_process += 1
         try:
@@ -266,16 +544,41 @@ class Reader(object):
         except (OSError, ValueError) as error:
             return None, "identification failed: %s" % error
 
+    def reap(self):
+        """Let go of tool workers nobody has needed for a while."""
+        return self.helpers.reap()
+
+    @property
+    def killed(self):
+        return self.channel.killed + sum(
+            channel.killed for channel in self.helpers.channels.values())
+
+    @property
+    def restarts(self):
+        return self.channel.restarts + sum(
+            channel.restarts for channel in self.helpers.channels.values())
+
+    @property
+    def spawn_failures(self):
+        return self.channel.spawn_failures
+
+    @property
+    def _process(self):
+        """The reader's own process, for tests and for the daemon's log."""
+        return self.channel._process
+
     def report(self):
         """What supervision actually did, for the daemon's log."""
         return {"killed": self.killed, "restarts": self.restarts,
                 "read_in_process": self.in_process,
                 "spawn_failures": self.spawn_failures,
-                "supervised": self.enabled and self.spawn_failures
-                < GIVE_UP_AFTER}
+                "supervised": self.enabled
+                and self.channel.spawn_failures < GIVE_UP_AFTER,
+                "tools": self.helpers.report()}
 
     def close(self):
-        self._stop()
+        self.helpers.close()
+        self.channel.stop()
 
     def __enter__(self):
         return self

@@ -146,6 +146,19 @@ class Record(object):
         self.conflicts.append(Conflict(name, existing, value, source))
         return existing
 
+    def drop(self, name):
+        """Forget a fact, for the one case where that is honest.
+
+        `needs_ocr` means "nobody has read this page yet", and once
+        somebody has, leaving it set would be a record that contradicts
+        itself -- and a rule holding scans back would keep holding one that
+        has been read. Nothing else here removes facts: a fact is evidence,
+        and evidence does not stop having been true.
+        """
+        if name in self._facts:
+            del self._facts[name]
+            self._order.remove(name)
+
     def note(self, sentence):
         self.notes.append(sentence)
 
@@ -229,6 +242,12 @@ def from_wire(payload):
     worker would be corroborated a second time here -- the same evidence
     counted twice because it crossed a pipe.
     """
+    # Everything here came off a pipe, so nothing about its shape is
+    # promised. A clear refusal is better than an AttributeError three
+    # frames further in.
+    if not isinstance(payload, dict):
+        raise ValueError("a record is an object, not %s"
+                         % type(payload).__name__)
     record = Record(payload.get("path"))
     for name, value, source, confidence, corroborated in payload.get("facts", []):
         fact = Fact(name, _decode(value), source, confidence)

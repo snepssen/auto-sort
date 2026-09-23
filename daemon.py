@@ -465,6 +465,15 @@ class PollingDaemon(object):
                 requested_dry, now_value))
             if self.journal.paused():
                 break
+        # Tool workers are started on the first file that needs one and
+        # cost about 20 MB each while they live. A daemon that swept a
+        # folder of scans an hour ago should not still be holding an OCR
+        # process for it.
+        stopped = self.reader.reap()
+        if stopped:
+            self.output("Let go of %s; nothing has needed %s for a while."
+                        % (", ".join(sorted(stopped)),
+                           "it" if len(stopped) == 1 else "them"))
         self._heartbeat(rule_set, now_value)
         if not self.journal.paused():
             self._check_corrections(rule_set, now_value)

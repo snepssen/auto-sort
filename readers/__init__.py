@@ -10,7 +10,7 @@ not a sorting run that stops halfway through somebody's Downloads folder.
 
 from __future__ import annotations
 
-from . import audio, document, exiftool, image, probe, video
+from . import audio, document, exiftool, image, ocr, probe, video
 
 _BY_KIND = {
     "image": image.read,
@@ -38,7 +38,14 @@ def read(peek, kind, fmt, record):
 # it could fill, so a folder of files that parsed cleanly launches no
 # processes at all -- and a machine with neither program installed behaves
 # exactly as it did before they were offered.
-_ENRICHERS = (probe, exiftool)
+# Named, because the supervisor starts one process per tool and a process
+# needs to be told which one it is. The name is the program's own.
+_ENRICHERS = (("ffprobe", probe), ("exiftool", exiftool), ("tesseract", ocr))
+
+
+def enrichers():
+    """`(program name, module)` for every Tier 2 reader, in order."""
+    return _ENRICHERS
 
 
 def enrich(path, record):
@@ -49,13 +56,12 @@ def enrich(path, record):
     from one that found nothing, which is the point of the tier.
     """
     added = False
-    for enricher in _ENRICHERS:
+    for name, enricher in _ENRICHERS:
         try:
             if enricher.wanted(record) and enricher.read(path, record):
                 added = True
         except Exception as error:           # noqa: BLE001
-            record.note("%s declined: %s"
-                        % (enricher.__name__.rsplit(".", 1)[-1], error))
+            record.note("%s declined: %s" % (name, error))
     return added
 
 

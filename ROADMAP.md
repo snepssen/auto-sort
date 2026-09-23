@@ -83,7 +83,7 @@ disappears mid-walk. Cheap, restartable, holds no state worth protecting.
 Correct response to a hang: kill and retry later.
 
 **identify-catalogue** — reads bytes and works out what a file is. **Built**
-(`jobs.py`, `identify_worker.py`).
+(`jobs.py`, `identify_worker.py`, `tool_worker.py`).
 Fails on: adversarial or merely strange file contents. This is the only
 stage whose input is effectively untrusted, and both production hangs came
 from here. It now runs in a process with a 30-second per-file timeout and a
@@ -99,6 +99,21 @@ because a supervisor that stops the tool working has made things worse. It
 will not enforce the memory budget; the ceiling is a fuse set far above it.
 And it does not help a file that hangs the *main* process, because there is
 no longer a path for one to.
+
+The optional programs were then split out again, one process each. They do
+not read bytes; they wait for somebody else's program, and OCR is seconds a
+page by its nature — so inside the identify worker a single scanned page
+stopped it reading anything else, and a supervisor could not tell "wedged on
+a file" from "waiting for tesseract". Each now has its own patience
+(ffprobe 25s, OCR 60s), its own process, and its own idle timeout. A worker
+costs about **20 MB**, mostly interpreter, so they start on the first file
+that wants one and are let go after two minutes idle. Measured with a scan
+and a video in one folder: **4 processes and 107 MB at peak, 51 MB once the
+tool workers were reaped**. Over the target while it lasts, recorded rather
+than prevented, exactly as the budget section says.
+
+`tools = auto | inline | off` in `[settings]` chooses between a process per
+tool, the tools inside the identify worker, and no external program at all.
 
 Cost, measured: **0.19 ms per file** of pipe overhead, against the ~260 ms a
 real PDF takes to read. On twenty thousand files that is four seconds.
@@ -121,7 +136,7 @@ worker, three different policies.
 
 | | |
 | --- | --- |
-| Program on disk | **880 KB** of Python, ~1,016 KB with the log page and docs |
+| Program on disk | **908 KB** of Python, ~1,052 KB with the log page and docs |
 | Installed dependencies | **none** |
 | Daemon at rest | **35 MB** |
 | Reading 336 real PDFs | **62 MB** (was 230 MB before the decompression cap) |
