@@ -299,6 +299,42 @@ class WhatTheTopOfAPageSays(unittest.TestCase):
         self.assertEqual(document.heading_of(page), "")
 
 
+class OnlyWhatThePageDraws(unittest.TestCase):
+    """A PDF stores things that are not its page -- attached files, fonts,
+    pictures, metadata -- and some of them contain `BT` by chance."""
+
+    def stream(self, dictionary, body):
+        header = b"5 0 obj " + dictionary + b"\nstream\n"
+        data = b"%PDF-1.4\n" + header + body + b"\nendstream endobj\n"
+        return data, len(b"%PDF-1.4\n") + len(header) - len(b"stream\n") - 1
+
+    def test_an_attached_file_is_not_the_page(self):
+        """171 real payslips each carried a whole PDF attached inside, and
+        three bytes of its compressed insides were offered as the name the
+        series had chosen for itself."""
+        data, at = self.stream(b"<</Type/EmbeddedFile/Length 20>>",
+                               b"BT (x) Tj ET")
+        self.assertFalse(pdftext._is_page_content(data, at, b"BT (x) Tj ET"))
+
+    def test_a_picture_is_not_the_page(self):
+        data, at = self.stream(b"<</Subtype/Image/Width 9>>", b"BT")
+        self.assertFalse(pdftext._is_page_content(data, at, b"BT (x) Tj ET"))
+
+    def test_a_form_that_may_draw_images_is_still_a_page(self):
+        """`/ImageC` in the list of things a page may draw says nothing
+        about what the stream is -- matching it as a substring refused
+        every page of a real payslip."""
+        data, at = self.stream(
+            b"<</Subtype/Form/Resources<</ProcSet[/PDF/ImageC/Text]>>>>",
+            b"BT (x) Tj ET")
+        self.assertTrue(pdftext._is_page_content(data, at, b"BT (x) Tj ET"))
+
+    def test_bytes_that_are_mostly_not_instructions(self):
+        data, at = self.stream(b"<</Length 9>>", b"")
+        binary = bytes(range(256)) * 4 + b"BT"
+        self.assertFalse(pdftext._is_page_content(data, at, binary))
+
+
 if __name__ == "__main__":
     unittest.main()
 

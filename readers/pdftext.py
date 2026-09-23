@@ -538,6 +538,54 @@ def _keep_readable_fonts(runs):
     return "".join(kept)
 
 
+# What a stream's own dictionary says when it is something other than a
+# page's drawing instructions. None of these is text on a page, and several
+# of them contain the two bytes `BT` by chance.
+#
+# Matched as whole names on the keys that say what the stream *is*. The first
+# version matched substrings and refused every page of a real payslip,
+# because `/Image` is also the start of `/ImageC` in the list of things the
+# page is allowed to draw -- which says nothing about what the stream is.
+_NOT_PAGE_CONTENT = re.compile(
+    rb"/(?:Type|Subtype)\s*/(?:EmbeddedFile|Image|Metadata|ObjStm|XRef)"
+    rb"(?![A-Za-z0-9])"
+    rb"|/(?:Length[123]|FontFile[23]?)(?![A-Za-z0-9])"
+    rb"|/N\s+[134](?![0-9])\s*/Alternate")
+
+# Drawing instructions are text: operators, numbers, names and strings. A
+# stream that decompresses to mostly something else is not one, whatever its
+# dictionary claims.
+_MOSTLY_PRINTABLE = 0.9
+
+
+def _is_page_content(data, stream_start, body):
+    """Is this stream something a page draws with, rather than a thing
+    stored inside the file?
+
+    A real series of 171 payslips each carried a whole PDF attached inside
+    it -- `/Type/EmbeddedFile`, the original from before the file was
+    modified -- and its insides were read as though they were the page:
+    `endobj`, `FontDescriptor`, and forty thousand characters of compressed
+    binary taken as letters, against seven thousand of real text. Three
+    bytes of that binary, `RBU`, turned up in all 171 because they all
+    carried the same attachment, and were offered as the name the series
+    had chosen for itself.
+    """
+    head = data[max(0, stream_start - 600):stream_start]
+    # The dictionary belongs to this stream only from its object header on;
+    # anything before that is the tail of the previous object.
+    header = head.rfind(b" obj")
+    dictionary = head[header:] if header != -1 else head[-300:]
+    if _NOT_PAGE_CONTENT.search(dictionary):
+        return False
+    if not body:
+        return False
+    sample = body[:4096]
+    printable = sum(1 for byte in sample
+                    if 32 <= byte < 127 or byte in (9, 10, 13))
+    return printable >= len(sample) * _MOSTLY_PRINTABLE
+
+
 def extract(peek):
     """`(text, image_only)` for a PDF, without unpacking the document.
 
@@ -576,6 +624,8 @@ def extract(peek):
         if body is None:
             continue
         if b"BT" not in body:            # no text block: a picture or a path
+            continue
+        if not _is_page_content(data, match.start(), body):
             continue
         found, current = _page_runs(body, maps, current)
         runs.extend(found)
