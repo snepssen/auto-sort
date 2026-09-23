@@ -196,6 +196,113 @@ def inside_words(journal, rule_set, limit=20000):
             if report.inside >= MIN_TRIALS and report.whole == 0], files
 
 
+class NearMiss(object):
+    """A rule asking about a fact that is there, for a value that is not."""
+
+    def __init__(self, rule, fact, wanted, actual):
+        self.rule = rule
+        self.fact = fact
+        self.wanted = wanted            # what the rule asks for
+        self.actual = actual            # [(value, files)] that are there
+
+    @property
+    def files(self):
+        return sum(count for _value, count in self.actual)
+
+    def __repr__(self):
+        return "NearMiss(%s, %s)" % (self.rule.name, self.fact)
+
+
+def near_misses(journal, rule_set, limit=20000):
+    """Rules that have never placed a file, and the values they just miss.
+
+    The failure this is for looked like this, on a real machine. A rule
+    said `from_host ~ *.furaffinity.net`; forty-three pictures were filed
+    with `from_host = furaffinity.net`, because a host is recorded as its
+    registrable domain and `d.furaffinity.net` is stored as the site it
+    belongs to. A leading `*.` requires something in front of the dot, so
+    the rule matched none of them and they went to a holding folder --
+    where the person found them, moved them back, and watched it happen
+    again.
+
+    Every existing report was silent about it. "Never matched anything" is
+    not evidence of a mistake -- a rule for a kind of file you do not own
+    yet is supposed to match nothing -- so silence is the right default.
+    What is *not* silence is a rule asking about a fact that plenty of
+    files have, for a value that none of them has. That is the shape of a
+    typo, and it can be said out loud without guessing at anybody's
+    intent: here is what the rule wants, and here is what is actually
+    there.
+    """
+    usages, files = usage(journal, rule_set, limit)
+    never = set(use.rule.name for use in usages
+                if not use.placed and not use.shadowed)
+    if not never:
+        return [], files
+
+    values = collections.defaultdict(collections.Counter)
+    for row in journal.placed_moves(None, limit):
+        for name, value in _facts_of(row).items():
+            if isinstance(value, (str, int, float)) and value != "":
+                values[name][value] += 1
+
+    found = []
+    for rule in rule_set.rules:
+        if rule.name not in never:
+            continue
+        for comparison in rule.condition.comparisons():
+            if comparison.operator not in ("~", "=", "contains"):
+                continue
+            seen = values.get(comparison.fact)
+            if not seen or sum(seen.values()) < MIN_TRIALS:
+                continue
+            if any(_would_match(comparison, value) for value in seen):
+                continue
+            near = [(value, count) for value, count in seen.most_common()
+                    if _nearly(comparison.value, value)]
+            if not near:
+                # The rule wants something nothing here resembles, which is
+                # what a rule for a kind of file you do not own yet looks
+                # like, and it is supposed to match nothing.
+                continue
+            found.append(NearMiss(rule, comparison.fact,
+                                  "%s %s" % (comparison.operator,
+                                             comparison.value),
+                                  near[:3]))
+    return found, files
+
+
+_PUNCTUATION = re.compile(r"[^0-9a-z]+")
+
+
+def _nearly(wanted, value):
+    """Is this the value the rule was reaching for, spelt differently?
+
+    Reduced to letters and digits, so that `*.furaffinity.net` and
+    `furaffinity.net` are the same thing and `archive` and `document` are
+    not. Either may contain the other: a rule can ask for too much or too
+    little, and both mistakes read the same way from here.
+
+    The point of the test is to leave alone the rule that simply matches
+    nothing. Somebody who owns no 3D models has a rule for them that will
+    match nothing until the day they do, and saying anything about it
+    would be noise.
+    """
+    left = _PUNCTUATION.sub("", str(wanted).lower())
+    right = _PUNCTUATION.sub("", str(value).lower())
+    if len(left) < 3 or len(right) < 3:
+        return False
+    return left in right or right in left
+
+
+def _would_match(comparison, value):
+    """Whether this rule's test accepts a value that is really out there."""
+    try:
+        return bool(comparison._apply(value))
+    except Exception:                        # noqa: BLE001
+        return False
+
+
 def dead_rules(journal, rule_set, limit=20000):
     """Only the ones the record has already judged."""
     usages, files = usage(journal, rule_set, limit)

@@ -303,6 +303,7 @@ def _report_dead_rules(rule_set, state=None):
             uses, files = review.usage(journal, rule_set)
             new_words, headings = review.emerging(journal, rule_set)
             buried, _seen = review.inside_words(journal, rule_set)
+            misses, _files = review.near_misses(journal, rule_set)
     except Exception:                        # noqa: BLE001
         return                               # no ledger yet: nothing to say
     dead = [use for use in uses if use.dead]
@@ -327,6 +328,27 @@ def _report_dead_rules(rule_set, state=None):
         print("  often the company that sent them rather than what they are.")
         print("  `auto-sort propose` writes an updated rules file; nothing")
         print("  here changes yours.")
+    if misses:
+        print()
+        print("  %s never matched anything, and %s for a value close to"
+              % ("1 rule has" if len(misses) == 1
+                 else "%d rules have" % len(misses),
+                 "asks" if len(misses) == 1 else "ask"))
+        print("  one that your files really have:")
+        for miss in misses:
+            print("    %s" % miss.rule.name)
+            print("        asks for       %s %s" % (miss.fact, miss.wanted))
+            for value, count in miss.actual:
+                print("        what is there  %s = %s   (%d files)"
+                      % (miss.fact, value, count))
+        print()
+        print("  A leading `*.` needs something in front of the dot, and a")
+        print("  host is recorded as its registrable domain -- so a picture")
+        print("  from d.example.com is filed as example.com and a rule")
+        print("  asking for *.example.com never sees it. auto-sort does not")
+        print("  edit your rules; this is yours to change or ignore.")
+        print()
+
     if buried:
         print()
         print("  %s only ever matched inside longer words:"

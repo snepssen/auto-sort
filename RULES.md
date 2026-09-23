@@ -115,7 +115,7 @@ when = kind = document and format = pdf and producer ~ *Scan*
 into = ~/Documents/Scans/{added:%Y}
 
 [rule: bank statements]
-when = kind = document and name ~ *statement* and from_host ~ *.bank.example
+when = kind = document and name ~ *statement* and from_host = bank.example
 into = ~/Documents/Finance/{added:%Y}
 
 [rule: documents]
@@ -178,6 +178,19 @@ Present only when they could be established.
 `members` (count), `is_dir`.
 
 **Provenance** — `from_url`, `from_host`, `quarantined`, `downloaded`.
+
+`from_host` is the *registrable domain*, not the hostname the file came
+from: a picture delivered by `d.furaffinity.net` or `static1.e621.net` is
+recorded as `furaffinity.net` and `e621.net`, because the delivery network
+in front of a site is not the site. So match it with `=` and not with
+`~ *.example.com` — a leading `*.` needs something in front of the dot, and
+there is nothing there. `check-rules` says so if you do it anyway, and it
+does not guess: it prints what your rule asks for and what your files
+actually have.
+
+There is also `site`, which is the same answer with the suffix off —
+`furaffinity`, `e621`, `pinterest` — and is usually the one you want in a
+folder name.
 
 **Filename shape** — `looks_like`, one of `screenshot`, `scene-release`,
 `camera`, `phone-export`, `whatsapp`, `invoice`, `installer`, `sample`, or

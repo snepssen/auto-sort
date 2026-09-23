@@ -130,6 +130,91 @@ class WhatTheRecordShows(unittest.TestCase):
         self.assertEqual(dead, [])
 
 
+class RulesThatJustMiss(unittest.TestCase):
+    """A rule asking about a fact that is there, for a value that is not.
+
+    The failure this is for: `from_host ~ *.furaffinity.net` against
+    forty-three pictures recorded as `from_host = furaffinity.net`. A
+    leading `*.` needs something in front of the dot. They went to a
+    holding folder, the person moved them back, and it happened again.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-near-")
+        self.journal = ledger.Ledger(os.path.join(self.dir, "state.db"))
+        self.run = self.journal.start_run("sort", source_root=self.dir,
+                                          dry_run=False)
+        self.number = 0
+
+    def tearDown(self):
+        self.journal.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def filed(self, rule_name, facts, times=1):
+        for _ in range(times):
+            self.number += 1
+            move = self.journal.add_move(
+                self.run, self.number, 1, "move", rule_name,
+                os.path.join(self.dir, "f%d" % self.number),
+                os.path.join(self.dir, "out", "f%d" % self.number),
+                10, "", "done", facts=facts)
+            self.journal.update_move(move, "done")
+
+    def rules_for(self, body):
+        path = os.path.join(self.dir, "rules.ini")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("[watch]\nfolders = %s\n\n%s" % (self.dir, body))
+        return rules.load(path)
+
+    def test_a_glob_that_cannot_match_what_is_there(self):
+        rule_set = self.rules_for(
+            "[rule: artwork]\nwhen = from_host ~ *.furaffinity.net\n"
+            "into = %s/art\n\n"
+            "[rule: pictures]\nwhen = kind = image\ninto = %s/pics\n"
+            % (self.dir, self.dir))
+        self.filed("pictures", {"kind": "image",
+                                "from_host": "furaffinity.net"}, times=5)
+        misses, _files = review.near_misses(self.journal, rule_set)
+        self.assertEqual([miss.rule.name for miss in misses], ["artwork"])
+        self.assertEqual(misses[0].actual[0], ("furaffinity.net", 5))
+
+    def test_a_rule_for_something_you_do_not_own_is_left_alone(self):
+        """It is supposed to match nothing until the day it does."""
+        rule_set = self.rules_for(
+            "[rule: models]\nwhen = kind = model3d\ninto = %s/models\n\n"
+            "[rule: pictures]\nwhen = kind = image\ninto = %s/pics\n"
+            % (self.dir, self.dir))
+        self.filed("pictures", {"kind": "image"}, times=5)
+        misses, _files = review.near_misses(self.journal, rule_set)
+        self.assertEqual(misses, [])
+
+    def test_a_rule_that_works_is_not_reported(self):
+        rule_set = self.rules_for(
+            "[rule: artwork]\nwhen = from_host = furaffinity.net\n"
+            "into = %s/art\n" % self.dir)
+        self.filed("artwork", {"kind": "image",
+                               "from_host": "furaffinity.net"}, times=5)
+        misses, _files = review.near_misses(self.journal, rule_set)
+        self.assertEqual(misses, [])
+
+    def test_one_or_two_files_are_not_evidence_of_anything(self):
+        rule_set = self.rules_for(
+            "[rule: artwork]\nwhen = from_host ~ *.furaffinity.net\n"
+            "into = %s/art\n\n"
+            "[rule: pictures]\nwhen = kind = image\ninto = %s/pics\n"
+            % (self.dir, self.dir))
+        self.filed("pictures", {"kind": "image",
+                                "from_host": "furaffinity.net"}, times=2)
+        misses, _files = review.near_misses(self.journal, rule_set)
+        self.assertEqual(misses, [])
+
+    def test_what_counts_as_nearly(self):
+        self.assertTrue(review._nearly("*.furaffinity.net", "furaffinity.net"))
+        self.assertTrue(review._nearly("example.com", "www.example.com"))
+        self.assertFalse(review._nearly("archive", "document"))
+        self.assertFalse(review._nearly("a", "audio"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -746,6 +746,29 @@ A catch-all is never named this way, however often it loses — it exists to
 be last, and the day it fires is the day it earns its keep. Neither is a rule
 that has simply never matched anything: silence is not evidence.
 
+**A rule that asks for a value nothing has.** On the machine this was built
+on, a rule said `from_host ~ *.furaffinity.net` and forty-three pictures were
+recorded as `from_host = furaffinity.net` — because a host is kept as its
+registrable domain, so the delivery network in front of a site is not the
+site. A leading `*.` needs something in front of the dot. The rule matched
+none of them, they went to a holding folder, they were moved back by hand,
+and it happened again:
+
+```
+  5 rules have never matched anything, and ask for a value close to
+  one that your files really have:
+    fur affinity artwork
+        asks for       from_host ~ *.furaffinity.net
+        what is there  from_host = furaffinity.net   (43 files)
+```
+
+Every other report was silent about this, correctly: a rule that matches
+nothing is usually a rule for a kind of file you do not own yet, and saying
+anything about it would be noise. What is not noise is a rule asking about a
+fact that plenty of files *have*, for a value that none of them has. That is
+the shape of a typo, and it can be said without guessing at anybody's
+intent — here is what the rule wants, here is what is there.
+
 **A word that only ever matched inside other words.** A learnt word matches
 inside longer ones on purpose — that is what lets `Vertrag` catch
 `Mietvertrag`, and it is why a German household's post files itself with no
