@@ -143,14 +143,39 @@ class Extraction(unittest.TestCase):
                      "Számla sorszáma fizetési határidő"):
             self.assertFalse(pdftext._glyph_codes(line * 6), line)
 
-    def test_soup_is_dropped_one_stream_at_a_time(self):
-        """A German invoice whose bullets are drawn with ZapfDingbats has
-        2,565 readable words and several hundred characters of glyph
-        numbers. Refusing the file for the second throws away the first."""
-        codes = "".join(chr(0x80 + (index * 7) % 120) for index in range(300))
-        text, image_only = self.extract(text=INVOICE + "\n" + codes)
-        self.assertFalse(image_only)
+    def test_soup_is_dropped_a_font_at_a_time(self):
+        """A readable font and an unreadable one, interleaved in one stream.
+
+        That is how it arrives: a German invoice whose body is in Times and
+        whose bullets and rules come from a subset font with no character
+        map. Refusing the file for the second throws away the first.
+        """
+        # The real bytes, from the real series that prompted this.
+        codes = "ìª® êí0@Âè ï®ÞÍà\x9c€ì°"
+        runs = []
+        for word in INVOICE.split():
+            runs.append(("F1", word))
+            runs.append((None, " "))
+            runs.append(("F9", codes[:4]))       # three or four at a time
+            runs.append((None, " "))
+        text = pdftext._keep_readable_fonts(runs)
         self.assertIn("RECHNUNG", text)
+        self.assertIn("Stadtwerke", text)
+        self.assertFalse(any(ord(char) > 0x7f and char not in "üöäßÜÖÄ"
+                             for char in text), text)
+
+    def test_strings_too_short_to_judge_alone_are_judged_together(self):
+        """A real series of 172 documents drew its soup three characters at
+        a time, and each string on its own passed every test."""
+        pieces = ["ìª®", "êí0", "@Âè", "ï®Þ", "Íà\x9c", "€ì°"]
+        self.assertFalse(pdftext._glyph_codes("Íàx"))
+        runs = [("F9", piece) for piece in pieces * 10]
+        self.assertEqual(pdftext._keep_readable_fonts(runs).strip(), "")
+
+    def test_a_single_readable_font_is_all_kept(self):
+        runs = [("F1", word) for word in INVOICE.split()]
+        self.assertEqual(pdftext._keep_readable_fonts(runs),
+                         "".join(INVOICE.split()))
 
     def test_a_scan_with_a_stamp_on_it_still_asks_for_ocr(self):
         path = self.build("scan.pdf", text="Eingegangen 03 Mai",

@@ -28,6 +28,7 @@ paperwork keywords found" about it would be a lie -- the right answer is
 
 from __future__ import annotations
 
+import collections
 import re
 import unicodedata
 import zlib
@@ -390,6 +391,14 @@ _MOSTLY_HIGH = 0.4
 _SOME_ODD = 0.05
 
 
+def _not_in_a_word(char):
+    """A symbol, a mark, or a control character from the top half of the
+    byte range -- none of which any script puts inside a word. Tabs and
+    newlines are control characters too, and are left out of it."""
+    category = unicodedata.category(char)
+    return category in _NOT_IN_WORDS or (category == "Cc" and ord(char) >= 0x80)
+
+
 def _glyph_codes(text):
     """Is this a subset font's glyph numbers rather than anybody's words?
 
@@ -418,8 +427,7 @@ def _glyph_codes(text):
     above = sum(1 for char in sample if ord(char) > 127) / float(len(sample))
     if above <= _MOSTLY_HIGH:
         return False
-    odd = sum(1 for char in sample
-              if unicodedata.category(char) in _NOT_IN_WORDS)
+    odd = sum(1 for char in sample if _not_in_a_word(char))
     return odd / float(len(sample)) > _SOME_ODD
 
 
@@ -446,12 +454,23 @@ def _gap_is_a_space(gap):
     return False
 
 
-def _page_text(body, maps):
-    """The readable text of one content stream, font changes honoured."""
+# Marks a word gap in a list of runs, so that dropping a font's text later
+# does not glue its neighbours together. Not a font, and never judged.
+_GAP = object()
+
+
+def _page_runs(body, maps, current=None):
+    """One content stream as `([(font, text)], font in use at the end)`.
+
+    The font in use is passed in and handed back because a page's content
+    is often split across several streams and the font is set only in the
+    first. One real PDF writer did exactly that for every page of a series
+    of 172 documents, and reading each stream fresh made nine words in ten
+    look as though they had been drawn with no font at all.
+    """
     switches = [(match.start(), match.group(1).decode("latin-1"))
                 for match in _SET_FONT.finditer(body)]
-    pieces = []
-    current = None
+    runs = []
     position = 0
     previous_end = None
     for where, ends, raw in _strings(body):
@@ -459,7 +478,7 @@ def _page_text(body, maps):
             current = switches[position][1]
             position += 1
         if previous_end is not None and _gap_is_a_space(body[previous_end:where]):
-            pieces.append(" ")
+            runs.append((_GAP, " "))
         previous_end = ends
         entry = maps.get(current) if current else None
         if entry:
@@ -471,14 +490,52 @@ def _page_text(body, maps):
             # subsetting became universal -- and those are the old files
             # this exists for.
             drawn = _decode(raw)
-        # One string at a time, because one document routinely mixes a font
-        # that can be read with one that cannot, and they are not tidily
-        # separated into different streams. Refusing the file for the
-        # second would throw away the first -- on one real invoice, 1,106
-        # readable German words.
-        if drawn and not _glyph_codes(drawn):
-            pieces.append(drawn)
-    return "".join(pieces)
+        if drawn:
+            runs.append((current, drawn))
+    return runs, current
+
+
+def _page_text(body, maps, current=None):
+    """The readable text of one content stream, font changes honoured."""
+    runs, _current = _page_runs(body, maps, current)
+    return _keep_readable_fonts(runs)
+
+
+def _keep_readable_fonts(runs):
+    """Join the runs, leaving out every font whose text is glyph numbers.
+
+    Judged a *font* at a time, across everything it drew, because that is
+    the unit the problem comes in. A subset font shipped without its
+    character map produces glyph numbers wherever it is used, and a font
+    with one produces words wherever it is used; what varies is only how
+    much of it there is in one place.
+
+    The first version judged each drawn string on its own, and on a real
+    series of 172 documents the strings were three or four characters long
+    -- too short for any statistic to mean anything -- so the soup went
+    straight through into what the record said each page was called:
+    `êí0@Â ÍäÎá`. Pooled by font, the same text is thousands of characters
+    and the verdict is not close.
+    """
+    drawn = collections.defaultdict(list)
+    for font, text in runs:
+        if font is not _GAP and font is not None:
+            drawn[font].append(text)
+    unreadable = set(font for font, texts in drawn.items()
+                     if _glyph_codes("".join(texts)))
+    kept = []
+    for font, text in runs:
+        if font is _GAP:
+            kept.append(text)
+        elif font is None:
+            # Drawn before any font was set anywhere we could see. There is
+            # no font to pool it by, so it is judged a string at a time --
+            # weaker, and the best that can be done without one.
+            if not _glyph_codes(text):
+                kept.append(text)
+        elif font not in unreadable:
+            kept.append(text)
+    return "".join(kept)
 
 
 def extract(peek):
@@ -500,11 +557,13 @@ def extract(peek):
     except (re.error, ValueError, OverflowError, zlib.error):
         maps = {}
 
-    pieces = []
+    runs = []
     total = 0
     streams = 0
+    # Carried from stream to stream, as it is on the page. See `_page_runs`.
+    current = None
     for match in _STREAM.finditer(data):
-        if streams >= MAX_STREAMS or total >= MAX_CHARS:
+        if streams >= MAX_STREAMS or total >= MAX_CHARS * 4:
             break
         end = data.find(b"endstream", match.end())
         if end == -1:
@@ -518,12 +577,16 @@ def extract(peek):
             continue
         if b"BT" not in body:            # no text block: a picture or a path
             continue
-        piece = _page_text(body, maps)
-        if piece:
-            pieces.append(piece + " ")
-            total += len(piece)
+        found, current = _page_runs(body, maps, current)
+        runs.extend(found)
+        runs.append((_GAP, " "))
+        total += sum(len(text) for _font, text in found)
 
-    text = "".join(pieces)
+    # Judged once, over everything each font drew in the whole document --
+    # the more of a font there is to look at, the less the verdict is a
+    # guess. The collection runs further than the text kept, for the same
+    # reason.
+    text = _keep_readable_fonts(runs)
     # Unmapped codes come back as control characters; they are not words.
     text = "".join(char if char >= " " or char in "\t\n" else " "
                    for char in text)
