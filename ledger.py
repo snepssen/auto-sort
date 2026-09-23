@@ -18,7 +18,7 @@ import time
 import paths
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def _days_ago(days):
@@ -267,6 +267,26 @@ class Ledger(object):
 
                     PRAGMA user_version = 8;
                 """)
+            version = 8
+        if version == 8:
+            with self.connection:
+                # What an optional program said about a file, so that it is
+                # never asked twice about the same unchanged one. Reading a
+                # scanned page costs a second and a half and a process; the
+                # answer does not change until the file does.
+                self.connection.executescript("""
+                    CREATE TABLE IF NOT EXISTS readings (
+                        path TEXT NOT NULL,
+                        tool TEXT NOT NULL,
+                        fingerprint TEXT NOT NULL,
+                        delta_json TEXT NOT NULL,
+                        seconds REAL NOT NULL DEFAULT 0,
+                        made_at TEXT NOT NULL,
+                        PRIMARY KEY (path, tool)
+                    );
+
+                    PRAGMA user_version = 9;
+                """)
 
     def record_directories(self, run_id, directories):
         """Remember the folders a run had to create, so undo can remove them.
@@ -476,6 +496,38 @@ class Ledger(object):
         return dict((row["status"], {"files": row["c"], "bytes": row["bytes"]})
                     for row in rows)
 
+    def remember_reading(self, path, tool, fingerprint, delta, seconds=0.0):
+        """Keep what a tool found, against the file as it was when asked."""
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO readings (path, tool, fingerprint, delta_json, "
+                "seconds, made_at) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(path, tool) DO UPDATE SET "
+                "fingerprint=excluded.fingerprint, "
+                "delta_json=excluded.delta_json, seconds=excluded.seconds, "
+                "made_at=excluded.made_at",
+                (path, tool, fingerprint, json.dumps(delta), float(seconds),
+                 now()))
+
+    def recall_reading(self, path, tool, fingerprint):
+        """What that tool said last time, if the file is still that file."""
+        row = self.connection.execute(
+            "SELECT delta_json FROM readings "
+            " WHERE path = ? AND tool = ? AND fingerprint = ?",
+            (path, tool, fingerprint)).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["delta_json"])
+        except (TypeError, ValueError):
+            return None
+
+    def forget_readings(self, path):
+        """Everything remembered about one file, for when it moves away."""
+        with self.connection:
+            return self.connection.execute(
+                "DELETE FROM readings WHERE path = ?", (path,)).rowcount
+
     def record_cost(self, path, file_name, size, seconds,
                     growth=None, peak=None, reason=""):
         """Remember that one file was expensive to read.
@@ -610,6 +662,12 @@ class Ledger(object):
             # short list worth reading into a long one nobody does.
             stale = self.connection.execute(
                 "DELETE FROM costs WHERE last_seen < ?", (cutoff,)).rowcount
+            # A remembered reading is an optimisation, not history. Once it
+            # is this old the file has either been sorted and moved -- in
+            # which case the path is wrong anyway -- or nothing has looked
+            # at it in three months and reading it again costs one file.
+            self.connection.execute(
+                "DELETE FROM readings WHERE made_at < ?", (cutoff,))
         # Outside the transaction: VACUUM cannot run inside one. And the
         # checkpoint afterwards is not optional -- VACUUM rewrites the whole
         # database through the write-ahead log, so without collapsing it the

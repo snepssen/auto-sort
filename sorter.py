@@ -155,6 +155,12 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None,
     tools_mode = getattr(rule_set.settings, "tools", "auto")
     if reader is not None and hasattr(reader, "helpers"):
         reader.helpers.mode = tools_mode
+        # So that an expensive reading is paid for once. The first run
+        # against a new folder is forced to be a preview and the next one
+        # reads it all again; without this every scan is read twice before
+        # anything has even gone wrong.
+        if reader.helpers.journal is None:
+            reader.helpers.journal = journal
     seen = duplicates.Index(journal)
     planned = []
     skipped = []
@@ -369,6 +375,15 @@ def execute(plan, rule_set, ledger, dry_run=None):
             final_status = "copied" if result.copied \
                 and not result.source_removed else "done"
             ledger.update_move(member.ledger_id, final_status)
+            if result.source_removed:
+                # A remembered reading is keyed to where the file was, and
+                # it is not there any more. Left behind it would sit in the
+                # database until compaction, describing a path nothing will
+                # ever ask about again.
+                try:
+                    ledger.forget_readings(member.source)
+                except Exception:            # noqa: BLE001
+                    pass
             # The intention to keep a second copy is recorded now, while the
             # file is known to be here and its hash is in hand. Whether the
             # other disk is plugged in is a separate question, asked later by

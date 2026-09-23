@@ -406,6 +406,15 @@ needs it: a tool worker is about 20 MB, mostly interpreter, and one that has
 been idle for two minutes is let go again. On a folder that needs none, none
 is ever started.
 
+While that work is happening auto-sort is bigger than its usual self, and
+that is the intention. The reading is **paid for once**: what a tool said is
+kept against the file's size and modification time, so a second pass over the
+same folder asks nobody anything. Measured over eleven files, two of them
+scans: 4.14 seconds and two tool workers the first time, 0.37 seconds and
+none the second. That is not only about repeated runs — the *first* use of a
+new folder reads it twice by design, once for the preview you have to look at
+and once for the run that applies it.
+
 `tools = auto` in `[settings]` is that. `inline` runs them inside the identify
 worker, which is one process fewer and one slow page away from that worker
 doing nothing else. `off` runs no external program at all.

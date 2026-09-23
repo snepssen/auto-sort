@@ -132,7 +132,30 @@ worker, three different policies.
 
 ### Budget, and why it is not a wall
 
-100 MB is the target for auto-sort's own footprint. Today, measured:
+100 MB is the target for auto-sort's footprint **at rest**, and that is the
+number that matters, because at rest is what auto-sort mostly is. While it
+is actually working it expands, and it is supposed to: a folder with a
+scanned page and a video in it will hold four processes and 107 MB for a few
+seconds, and then let go of two of them.
+
+The reason that is acceptable rather than merely tolerated is that the work
+is **paid for once**. A file arrives, it is read, it is sorted, and it is
+never read again — so the expensive pass over somebody's twenty-year folder
+is a thing that happens on a Tuesday afternoon and then does not happen
+again. A tool's answer is kept against the file's size and modification
+time, so even a second run over the same folder costs nothing:
+
+```
+pass 1: 4.14s over 11 files, tool workers running=2, recalled=0
+pass 2: 0.37s over 11 files, tool workers running=0, recalled=3
+```
+
+That matters more than it looks, because the *normal* first use of a new
+folder reads it twice: the first run is forced to be a preview and the run
+that applies it reads everything again. Before this, every scanned page in
+the folder was read twice before anything had even gone wrong.
+
+Today, measured:
 
 | | |
 | --- | --- |

@@ -303,11 +303,13 @@ class Helpers(object):
     # a run of scanned pages without paying to start again for each.
     IDLE_SECONDS = 120.0
 
-    def __init__(self, mode="auto", ocr="auto"):
+    def __init__(self, mode="auto", ocr="auto", journal=None):
         self.mode = mode
         self.ocr = ocr
+        self.journal = journal
         self.channels = {}
         self.in_process = 0
+        self.recalled = 0            # files answered from what was kept
         self.last_reading = {}       # what the tools said this file cost
 
     @property
@@ -347,9 +349,69 @@ class Helpers(object):
                     continue
             except Exception:                # noqa: BLE001
                 continue
+            kept = self._remembered(name, path, record)
+            if kept is not None:
+                # Answered, whether or not the answer was anything. A tool
+                # that found nothing found nothing last time too, and the
+                # second pass should not pay to be told so again.
+                added += 1 if kept else 0
+                continue
+            before = set(record.names())
             if self._ask(name, path, record):
                 added += 1
+            self._remember(name, path, record, before)
         return added
+
+    # -- asking twice about the same file ----------------------------------
+
+    def _remembered(self, name, path, record):
+        """Use what this tool said last time, if the file has not changed.
+
+        Returns None when there is nothing kept -- which is not the same as
+        a kept answer of "nothing", and telling the two apart is the whole
+        saving on a folder of files the tools have no interest in.
+
+        A file passes through the funnel once, and reading a scanned page
+        costs a second and a half and a process. But it is read more than
+        once even so: the first run against a new folder is forced to be a
+        preview, and the run that follows it reads everything again. Twice
+        for every scan, before anything has gone wrong.
+
+        The answer cannot change while the file does not, so it is kept
+        against the file's size and modification time and used again.
+        """
+        if self.journal is None:
+            return None
+        mark = _fingerprint(path)
+        if not mark:
+            return None
+        try:
+            delta = self.journal.recall_reading(path, name, mark)
+        except Exception:                    # noqa: BLE001
+            return None
+        if delta is None:
+            return None                      # never asked, or asked about
+                                             # a file that has changed since
+        self.recalled += 1
+        record.reader_ran(name, "what it said last time, unchanged since")
+        return _apply(record, delta)
+
+    def _remember(self, name, path, record, before):
+        if self.journal is None:
+            return
+        mark = _fingerprint(path)
+        if not mark:
+            return
+        delta = _difference(record, before)
+        if not (delta["facts"] or delta["dropped"]):
+            # A tool that found nothing is worth remembering too: the
+            # second pass should not pay to be told nothing again.
+            delta = {"facts": [], "dropped": [], "notes": [], "readers": []}
+        try:
+            self.journal.remember_reading(path, name, mark, delta,
+                                          self.last_reading.get("seconds", 0))
+        except Exception:                    # noqa: BLE001
+            pass
 
     def _ask(self, name, path, record):
         if not self.separate:
@@ -410,6 +472,58 @@ class Helpers(object):
         self.channels.clear()
 
 
+def _fingerprint(path):
+    """Size and modification time, which is what everything else here uses.
+
+    Not a hash: hashing every file to avoid reading some of them would cost
+    more than the reading. A file edited within the same second and back to
+    the same size would be missed, and that is the same bet the settle
+    detector already makes.
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return ""
+    return "%d:%d" % (stat.st_size, stat.st_mtime_ns)
+
+
+def _difference(record, before):
+    """What a tool pass changed, in the shape that can be replayed later."""
+    facts = []
+    for name in record.names():
+        if name in before:
+            continue
+        fact = record.fact(name)
+        facts.append([name, evidence._encode(fact.value), fact.source,
+                      fact.confidence])
+    dropped = [name for name in before if not record.has(name)]
+    return {"facts": facts, "dropped": dropped,
+            "notes": list(record.notes[-4:]),
+            "readers": [list(pair) for pair in record.readers[-2:]]}
+
+
+def _apply(record, delta):
+    """Replay a kept reading onto a fresh record."""
+    changed = False
+    for entry in delta.get("facts", []):
+        try:
+            name, value, source, confidence = entry
+        except (TypeError, ValueError):
+            continue
+        if record.has(name):
+            continue
+        record.set(name, evidence._decode(value), source, confidence)
+        changed = True
+    for name in delta.get("dropped", []):
+        if record.has(name):
+            record.drop(name)
+            changed = True
+    for sentence in delta.get("notes", []):
+        if sentence not in record.notes:
+            record.note(sentence)
+    return changed
+
+
 def _keep_worst(into, reading):
     """The worst of several readings, so one file has one honest number."""
     if not reading:
@@ -466,11 +580,12 @@ class Reader(object):
     """
 
     def __init__(self, timeout=TIMEOUT_SECONDS, ceiling_mb=CEILING_MB,
-                 enabled=True, tools="auto", ocr="auto"):
+                 enabled=True, tools="auto", ocr="auto", journal=None):
         self.ceiling_mb = int(ceiling_mb)
         self.enabled = bool(enabled) and queue is not None
         self.in_process = 0          # files read here instead, as a fallback
-        self.helpers = Helpers(tools if self.enabled else "inline", ocr)
+        self.helpers = Helpers(tools if self.enabled else "inline", ocr,
+                               journal)
         # What the workers said the last file cost them. The supervisor's
         # own memory says nothing about it: the reading happens elsewhere.
         self.last_reading = {}
@@ -571,6 +686,7 @@ class Reader(object):
         """What supervision actually did, for the daemon's log."""
         return {"killed": self.killed, "restarts": self.restarts,
                 "read_in_process": self.in_process,
+                "recalled": self.helpers.recalled,
                 "spawn_failures": self.spawn_failures,
                 "supervised": self.enabled
                 and self.channel.spawn_failures < GIVE_UP_AFTER,
