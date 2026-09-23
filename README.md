@@ -223,6 +223,16 @@ nothing, correctly — their filenames already carried the answer, and a
 reader that stays quiet leaves better evidence standing rather than
 overruling it.
 
+**A page is judged by its words, not by its letters.** Whether a PDF has
+readable text used to be decided by asking whether letters made up 45% of the
+characters — a test that exists to reject the letter-soup a subset font with
+no character map produces. An invoice is amounts, dates, customer numbers and
+reference codes, and one real document came out at 36% letters and three
+thousand words of German, and was thrown away. Counting words instead took
+one folder from 151 documents read and 195 held, to **304 read and 22 held**
+— and of those 22, eight are real photographed pages and the rest are image
+formats nothing here can decode.
+
 A page that is a photograph of a page — no text layer, however hard it is
 looked at — is told apart from one that simply has nothing to say. It gets
 `needs_ocr` and is held rather than guessed at, because there was nothing to
@@ -951,8 +961,12 @@ its own specification at test time.
     first file that needs it and let go when it has been idle. Its answer
     goes back to the supervisor, not to the worker that found the gap.
 
+16. **Documents that were being read and discarded** ✓
+    A page is judged by its words rather than by what share of its
+    characters are letters, which is how a folder went from 151 documents
+    read to 304.
+
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.
 [ROADMAP.md](ROADMAP.md) covers what is not built: the rest of the job
-manager, a Linux tray, Windows, and the 185 documents in 195 that have real
-text in them which auto-sort currently reads and then discards.
+manager, a Linux tray, and Windows.

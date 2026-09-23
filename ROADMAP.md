@@ -320,41 +320,55 @@ is listed somewhere.
 
 ---
 
-## 5. The documents that are not scans
+## 5. The documents that are not scans — **fixed**
 
-Found while building item 2, and much bigger than item 2.
+Found while building item 2, and it was much bigger than item 2.
 
 **185 of 195** PDFs with no readable text layer, on the machine this was
-developed against, are not scans at all. They contain ordinary text, set in
-ordinary base-14 fonts with `WinAnsiEncoding` and no embedded font files —
-about as readable as a PDF gets. auto-sort extracts the words correctly and
-then throws them away.
+developed against, were not scans at all. They contained ordinary text, set
+in ordinary base-14 fonts with `WinAnsiEncoding` and no embedded font files
+— about as readable as a PDF gets. auto-sort extracted the words correctly
+and then threw them away.
 
-The thrower is `_readable()` in `readers/pdftext.py`, which asks whether
-letters make up 45% of the characters. It exists to reject the letter-soup
-that comes out of a subset-encoded CID font with no `ToUnicode` map, and
-that is a real thing it has to reject. But an invoice is full of amounts,
-dates, customer numbers and reference codes:
+The thrower was `_readable()` in `readers/pdftext.py`, which asked whether
+letters made up 45% of the *characters*. It exists to reject the letter-soup
+a subset-encoded CID font produces with no `ToUnicode` map, and that is a
+real thing it has to reject. But an invoice is amounts, dates, customer
+numbers and reference codes:
 
 ```
 chars: 62994   letters: 22425   ratio: 0.36   ->  rejected
 words with letters: 3035
 ```
 
-Three thousand words of German, thrown away for being 36% letters.
+Three thousand words of German, discarded for being 36% letters.
 
-The fix is to judge on **words rather than characters** — soup does not
-produce repeated alphabetic tokens — and the test has to be built against
-examples of both, which means finding a real subset-CID file to tune the
-rejection side against. Otherwise this trades a false negative for a false
-positive and the induction starts learning from noise.
+It now counts **words** rather than characters, and the threshold is eight —
+what the smallest real document says. Measured across the same 346 files:
 
-Worth noting for whoever does it: these files extract 3,035 words and still
-produce a useless *heading*, because the first five hundred characters of
-the extracted text are reference numbers rather than the letterhead. Text
-order in a content stream is drawing order, not reading order. Getting the
-words back is most of the job; getting the top of the page is the other
-half.
+| | before | after |
+| --- | --- | --- |
+| Read as text | 151 | **304** |
+| Held as an unreadable page | 195 | **22** |
+
+Of the 22 still held, 8 hold a real page-sized picture and are read by OCR;
+the other 14 are the fax-codec gap in item 2.
+
+Two things worth knowing about the fix. The threshold has a wide gap to sit
+in — of 334 files without a page-sized picture, 20 have no words at all, 13
+have fewer than eight, and 296 have more than twenty — so it is not balanced
+on a knife edge. And what it **cannot** tell apart is a one-byte subset font
+whose encoding is a substitution: the same words with the letters swapped.
+That is a cipher of real prose and has the shape of prose, so no test
+without a dictionary would catch it, and this one does not pretend to. If it
+happens the cost is a category named something nobody can read — visible in
+the log, listed by `check-rules`, one line to delete. The cost of the old
+test was 177 readable documents.
+
+The heading turned out to be fine, which contradicts what an earlier version
+of this file said. 175 of 177 recovered documents produce a word-shaped
+heading from the existing first-500-characters window; the earlier claim
+that they did not was a fault in how I measured it, not in the code.
 
 ---
 

@@ -87,6 +87,46 @@ class Extraction(unittest.TestCase):
             peek.close()
         self.assertEqual(text, "")
 
+    def test_a_page_full_of_numbers_is_still_a_page(self):
+        """The bug this replaced: judged on characters, not words.
+
+        An invoice is amounts, dates, customer numbers and reference codes.
+        One real document came out at 62,994 characters, 36% of them
+        letters, and 3,035 words -- and was thrown away for being 36%
+        letters. On one folder the old test discarded 177 readable
+        documents and then held every one of them as an unreadable scan.
+        """
+        numbers = " ".join("4711%03d 12,%02d EUR 2019-05-%02d" % (n, n, n % 28 + 1)
+                           for n in range(40))
+        text, image_only = self.extract(text=INVOICE + "\n" + numbers)
+        self.assertFalse(image_only)
+        self.assertIn("RECHNUNG", text)
+        letters = sum(1 for char in text if char.isalpha())
+        self.assertLess(letters, len(text) * 0.45, "the old test would pass")
+
+    def test_the_smallest_real_document(self):
+        """A one-line invoice is an ordinary thing for somebody to have."""
+        text, image_only = self.extract(text=INVOICE)
+        self.assertFalse(image_only)
+        self.assertIn("Stadtwerke", text)
+
+    def test_page_furniture_is_not_the_text_of_a_document(self):
+        """A stamp or a page number must not stop a scan being read."""
+        text, image_only = self.extract(text="Seite 1 von 3")
+        self.assertEqual(text, "")
+
+    def test_codes_that_decode_to_nothing_are_still_refused(self):
+        """A subset CID font with no table comes back as control bytes."""
+        soup = "".join(chr(index % 32) for index in range(400))
+        text, _image_only = self.extract(text=soup)
+        self.assertEqual(text, "")
+
+    def test_a_scan_with_a_stamp_on_it_still_asks_for_ocr(self):
+        path = self.build("scan.pdf", text="Eingegangen 03 Mai",
+                          image_only=True)
+        record = identify.identify(path, tier=identify.TIER_HEADER)
+        self.assertTrue(record.value("needs_ocr"))
+
     def test_words_are_separated(self):
         """PDF moves the pen between words rather than drawing a space.
 

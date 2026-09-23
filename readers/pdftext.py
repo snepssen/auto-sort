@@ -317,17 +317,57 @@ def _through(raw, codes, width):
     return "".join(out)
 
 
+# What the smallest real document says. A one-line invoice -- a heading, a
+# sender, an amount and a payment term -- is about a dozen words, and it is
+# a perfectly ordinary thing for somebody to have. Below this is page
+# furniture: "Seite 1 von 3", a stamp, the label a scanner writes in the
+# corner. Calling that "the text of this document" would stop a page that
+# really does need OCR from ever getting it.
+#
+# Checked against a real folder: of 334 files without a page-sized picture
+# in them, 20 have no words at all, 13 have fewer than eight, and 296 have
+# more than twenty. The threshold has a wide gap to sit in.
+MIN_WORDS = 8
+
+# Three letters or more, in any script. Two-letter tokens are mostly the
+# wreckage of hyphenation and abbreviations, and counting them makes noise
+# look more like prose than it is.
+_WORD = re.compile(r"[^\W\d_]{3,}", re.UNICODE)
+
+
 def _readable(text):
     """Is this words, or is it a font nobody can map without the font?
 
     Text drawn with a subset-encoded CID font comes back as byte pairs that
     decode to nothing in particular. It is not text and must not be offered
     as text, because a keyword search over noise eventually finds a keyword.
+
+    This used to ask whether letters made up 45% of the *characters*, and
+    that was wrong in a way that cost a great deal. An invoice is full of
+    amounts, dates, customer numbers and reference codes:
+
+        chars: 62994   letters: 22425   ratio: 0.36   ->  rejected
+        words with letters: 3035
+
+    Three thousand words of German, thrown away for being 36% letters. On
+    one real folder the test rejected 177 documents that had between them
+    twenty distinct heading words -- five of which headed 171 of the 177,
+    because they were all from the same sender and all said the same thing
+    at the top. Every one of those was then held as an unreadable scan.
+
+    So: count *words*, not characters. Two-byte CID codes come back as
+    control characters, which are turned into spaces before this is asked,
+    so they produce almost no words and are still refused.
+
+    What this cannot tell apart is a one-byte subset font whose encoding is
+    a substitution -- the same words with the letters swapped. That is a
+    cipher of real prose and has the same shape as prose, so no test
+    without a dictionary will catch it, and this one does not pretend to.
+    The cost if it happens is a category named something nobody can read,
+    which is visible in the log, listed by `check-rules`, and one line to
+    delete. The cost of the old test was 177 readable documents.
     """
-    if len(text) < 12:
-        return False
-    letters = sum(1 for char in text if char.isalpha())
-    return letters >= len(text) * 0.45
+    return len(_WORD.findall(text)) >= MIN_WORDS
 
 
 # Moving the pen, rather than drawing a space, is how PDF separates words.

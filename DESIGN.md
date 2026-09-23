@@ -437,3 +437,7 @@ duplication is three files and it buys each tool the ability to stand alone.
     given their own patience, their own process and their own idle
     timeout. What they find goes back to the supervisor, which merges it
     under the same rule the tools follow in process: gaps, not arguments.
+16. Judging a page by its words. The readability test counted letters as
+    a share of characters, which an invoice full of amounts and reference
+    numbers fails while being perfectly readable. Counting words instead
+    took one real folder from 151 documents read to 304.
