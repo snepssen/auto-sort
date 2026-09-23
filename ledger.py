@@ -747,6 +747,25 @@ class Ledger(object):
              ORDER BY m.id DESC LIMIT ?
         """, (like, like, like, limit)).fetchall()
 
+    def undoable_runs(self, actions=("sort",)):
+        """Every run that still has completed moves to put back, newest
+        first.
+
+        Newest first is not a preference. A file moved twice -- filed, then
+        promoted out of holding by a regroup -- has to be walked back in
+        the order it was walked forward, or the second undo looks for it
+        where the first one has already taken it from.
+        """
+        places = ",".join("?" for _ in actions)
+        return self.connection.execute(
+            "SELECT r.id, r.action, r.source_root, COUNT(m.id) AS moves "
+            "  FROM runs r JOIN moves m ON m.run_id = r.id "
+            " WHERE r.action IN (%s) AND r.dry_run = 0 "
+            "   AND m.status = 'done' AND m.operation = 'move' "
+            "   AND m.undone_at IS NULL "
+            " GROUP BY r.id ORDER BY r.id DESC" % places,
+            tuple(actions)).fetchall()
+
     def latest_undoable_run(self):
         return self.connection.execute("""
             SELECT DISTINCT r.*

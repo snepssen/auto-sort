@@ -428,6 +428,35 @@ def execute(plan, rule_set, ledger, dry_run=None):
                      messages=messages)
 
 
+def undo_everything(ledger, dry_run=False, actions=("sort",), on_run=None):
+    """Put back every run that still has anything to put back.
+
+    For the day the sorting itself got better. Somebody who has watched the
+    program learn something wants the whole folder tipped back into the
+    funnel so it can be filed again by rules that now know more -- and
+    doing that one run at a time is four hundred commands on a machine that
+    has been running for a fortnight.
+
+    Newest first, because a file that was filed and later promoted out of
+    holding has to be walked back the way it came.
+
+    `duplicates` runs are left alone unless asked for by name. Undoing one
+    puts back the copies somebody already decided they did not want, which
+    is the opposite of tidying and is a different decision from this one.
+    """
+    results = []
+    for row in ledger.undoable_runs(actions):
+        if on_run is not None:
+            on_run(row["id"], row["moves"])
+        try:
+            results.append(undo(ledger, row["id"], dry_run=dry_run))
+        except ValueError:
+            # It had moves a moment ago and has none now: an earlier undo
+            # in this same sweep already took them back.
+            continue
+    return results
+
+
 def undo(ledger, run_id=None, dry_run=False):
     original = ledger.latest_undoable_run() if run_id in (None, "last") \
         else ledger.run(int(run_id))

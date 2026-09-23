@@ -477,6 +477,84 @@ def _sort_report(plan, result):
     }
 
 
+def undo_all(state_file=None, apply_it=False, as_json=False):
+    """Put everything back into the folders it was sorted out of.
+
+    A preview unless `--apply` is given, and deliberately the other way
+    round from undoing a single run: this can be five hundred files, and
+    five hundred files are exactly where a look first belongs.
+    """
+    try:
+        with ledger_module.Ledger(state_file) as journal:
+            sorter.reconcile(journal)
+            pending = journal.undoable_runs()
+            total = sum(row["moves"] for row in pending)
+            roots = sorted(set(row["source_root"] or "" for row in pending))
+            if not apply_it:
+                report = {"runs": len(pending), "files": total,
+                          "back_to": roots, "applied": False}
+                if as_json:
+                    print(json.dumps(report, indent=2))
+                    return 0
+                if not pending:
+                    print("Nothing to put back: every sort has already been "
+                          "undone, or none has run.")
+                    return 0
+                print("Would put back %d file(s) from %d run(s), newest first,"
+                      % (total, len(pending)))
+                print("into the folder%s they were sorted out of:"
+                      % ("" if len(roots) == 1 else "s"))
+                for root in roots:
+                    print("    %s" % paths_short(root))
+                print()
+                print("Files you have since moved or deleted by hand are left "
+                      "where they are and")
+                print("listed. Duplicate clean-ups are not undone: those "
+                      "copies were binned on purpose.")
+                print()
+                print("Nothing has moved. Run again with --apply to do it.")
+                return 0
+
+            ticker = progress_module.none() if as_json \
+                else progress_module.Ticker(total=len(pending),
+                                            label="Putting back")
+            done = [0]
+
+            def advance(run_id, _moves):
+                done[0] += 1
+                ticker.step("run %d" % run_id, done[0])
+
+            try:
+                results = sorter.undo_everything(journal, dry_run=False,
+                                                 on_run=advance)
+            finally:
+                ticker.close()
+    except (ValueError, OSError, RuntimeError) as error:
+        print("Undo error: %s" % error, file=sys.stderr)
+        return 2
+    completed = sum(result.completed for result in results)
+    failed = sum(result.failed for result in results)
+    messages = [message for result in results for message in result.messages]
+    if as_json:
+        print(json.dumps({"runs": len(results), "completed": completed,
+                          "failed": failed, "messages": messages,
+                          "applied": True}, indent=2))
+        return 1 if failed else 0
+    print("Put back %d file(s) from %d run(s)." % (completed, len(results)))
+    if failed:
+        print("%d could not be put back:" % failed)
+        for message in messages[:20]:
+            print("    %s" % message)
+        if len(messages) > 20:
+            print("    ... and %d more" % (len(messages) - 20))
+    return 1 if failed else 0
+
+
+def paths_short(path):
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home) else path
+
+
 def undo_run(run_id="last", state_file=None, dry_run=False, as_json=False):
     try:
         with ledger_module.Ledger(state_file) as journal:
@@ -1660,7 +1738,8 @@ USAGE = """auto-sort %s
   auto-sort adopt               add a rule for a category that has since emerged
   auto-sort check-rules [FILE]  validate a rules file without changing anything
   auto-sort sort [FOLDER]       plan a sort; dry-run unless configuration says otherwise
-  auto-sort undo [RUN|last]     restore a completed move run
+  auto-sort undo [RUN|last|all] restore a completed move run; `all` previews
+                                putting every sorted file back, --apply does it
   auto-sort watch               run the persistent polling sorter
   auto-sort pause|resume        persistently pause or resume background sorting
   auto-sort status              show daemon and queue state
@@ -1804,8 +1883,11 @@ def main(argv=None):
         return sort_folders(roots, rule_set, state_file, dry_run, as_json)
     if command == "undo":
         if len(targets) > 1:
-            print("undo takes one run number or 'last'", file=sys.stderr)
+            print("undo takes one run number, 'last' or 'all'",
+                  file=sys.stderr)
             return 2
+        if targets and targets[0] == "all":
+            return undo_all(state_file, dry_run is False, as_json)
         return undo_run(targets[0] if targets else "last", state_file,
                         dry_run is True, as_json)
     if command == "watch":
