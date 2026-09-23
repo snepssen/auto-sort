@@ -41,6 +41,94 @@ PACKAGE_SUFFIXES = (
 PACKAGE_NAMES = {"bdmv", "video_ts", "audio_ts", "certificate", "__macosx",
                  "certificate.stream"}
 
+# Files whose whole job is to refer to other files in the same folder: a
+# build manifest, a project file, a repository. A folder holding one is a
+# project, and its contents only work together -- a CV's `.tex` does not
+# compile without the `altacv.cls` beside it, a Reaper session is nothing
+# without its audio, a repository is nothing without the rest of the tree.
+# This is knowledge about file formats, like the signature table, and not
+# about anybody's language.
+PROJECT_NAMES = {
+    ".git", ".hg", ".svn",
+    "package.json", "pyproject.toml", "setup.py", "cargo.toml", "go.mod",
+    "makefile", "cmakelists.txt", "build.gradle", "pom.xml", "gemfile",
+    "composer.json", "latexmkrc", ".latexmkrc", "dockerfile",
+}
+PROJECT_SUFFIXES = (
+    ".sln", ".csproj", ".rpp", ".als", ".flp", ".ptx", ".cpr", ".kdenlive",
+    ".prproj", ".aep", ".veg", ".drp", ".blend", ".kra", ".psd", ".afdesign",
+    ".uproject", ".godot", ".unity",
+)
+
+# A LaTeX document is only a project when it has company. A lone `.tex` is a
+# document like any other; one with a class file, a style or a bibliography
+# beside it is a build that breaks the moment they are separated.
+_LATEX_COMPANIONS = (".cls", ".sty", ".bib", ".bst", ".bbx", ".cbx")
+
+
+# What each marker says the project is, for the `project` fact.
+_PROJECT_KIND = (
+    ((".git", ".hg", ".svn"), "repository"),
+    (("package.json", "pyproject.toml", "setup.py", "cargo.toml", "go.mod",
+      "makefile", "cmakelists.txt", "build.gradle", "pom.xml", "gemfile",
+      "composer.json", "dockerfile", ".sln", ".csproj"), "code"),
+    (("latexmkrc", ".latexmkrc"), "latex"),
+    ((".rpp", ".als", ".flp", ".ptx", ".cpr"), "audio"),
+    ((".kdenlive", ".prproj", ".aep", ".veg", ".drp"), "video"),
+    ((".blend", ".uproject", ".godot", ".unity"), "3d"),
+    ((".kra", ".psd", ".afdesign"), "artwork"),
+)
+
+
+def project_kind(path):
+    """What sort of project a folder is, or None if it is not one.
+
+    Found on a real machine the hard way: ten CV folders, each a LaTeX
+    build with its class file and a font map beside the `.tex`, were sorted
+    one file at a time by name. Every `altacv.cls` ended up pooled in one
+    folder, away from every CV that needed it, and none of the ten would
+    compile afterwards. Nothing was lost -- everything was journalled -- but
+    a sorter that breaks a build to file it has not tidied anything.
+
+    Decided by what is inside, never by what the folder is called.
+    """
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return None
+    lowered = [name.lower() for name in names]
+    for markers, kind in _PROJECT_KIND:
+        for name in lowered:
+            if name in markers or any(marker.startswith(".")
+                                      and name.endswith(marker)
+                                      and marker not in (".git", ".hg",
+                                                         ".svn")
+                                      for marker in markers):
+                return kind
+    has_companion = any(name.endswith(_LATEX_COMPANIONS) for name in lowered)
+    if has_companion:
+        for name in names:
+            if name.lower().endswith(".tex") and _is_latex_root(
+                    os.path.join(path, name)):
+                return "latex"
+    return None
+
+
+def is_project(path):
+    """True for an ordinary folder whose contents only work together."""
+    return project_kind(path) is not None
+
+
+def _is_latex_root(path):
+    """A `.tex` that starts a document, rather than one that is included."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(8192)
+    except OSError:
+        return False
+    return b"\\documentclass" in head
+
+
 # Extensions that only ever accompany something else.
 SIDECAR_EXTENSIONS = {
     "srt", "vtt", "ass", "ssa", "sub", "idx", "sup", "smi", "sbv", "ttml",
@@ -277,8 +365,17 @@ def walk(root, max_depth=3, ignore=()):
         # skips every .app and every Pages document on the disk.
         packages = [name for name in subdirectories
                     if is_package(os.path.join(directory, name))]
+        # A project is kept whole the same way a package is, and for the
+        # same reason: moving part of one breaks the rest. The watched
+        # folder itself is never one -- it is where things arrive, not a
+        # thing -- so only folders inside it are asked.
+        projects = [name for name in subdirectories
+                    if name not in packages and not name.startswith(".")
+                    and name not in ignore
+                    and is_project(os.path.join(directory, name))]
         subdirectories[:] = [name for name in subdirectories
-                             if name not in packages and name not in ignore
+                             if name not in packages and name not in projects
+                             and name not in ignore
                              and not name.startswith(".")]
         # A depth-zero watch is an inbox: ordinary top-level folders must be
         # handled as atomic items or the inbox can never become empty. Do not
@@ -294,6 +391,10 @@ def walk(root, max_depth=3, ignore=()):
             yield Item(os.path.join(directory, name),
                        [os.path.join(directory, name)], is_dir=True,
                        reason="package directory")
+        for name in projects:
+            yield Item(os.path.join(directory, name),
+                       [os.path.join(directory, name)], is_dir=True,
+                       reason="project folder")
         for name in inbox_directories:
             yield Item(os.path.join(directory, name),
                        [os.path.join(directory, name)], is_dir=True,

@@ -143,6 +143,15 @@ def _stat(item, record):
         # its insides would describe an application's resources rather than
         # the thing itself.
         record.set("is_package", True, "path", CERTAIN)
+    elif item.is_dir:
+        # The same judgement the walker made when it kept this folder whole,
+        # recorded where a rule can see it. Without it a project arrives as
+        # a folder of mixed things and falls through to the last catch-all
+        # -- whole, which is the part that matters, but somewhere nobody
+        # would look for a CV.
+        kind = bundles.project_kind(item.primary)
+        if kind:
+            record.set("project", kind, "folder", CERTAIN)
 
 
 def _bytes(path, record, tier):
