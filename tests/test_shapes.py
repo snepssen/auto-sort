@@ -240,5 +240,77 @@ class Extraction(unittest.TestCase):
         self.assertEqual(rule_set.rules[0].extract.pattern, pattern)
 
 
+class WordsAndNotWords(unittest.TestCase):
+    """A little soup survives being filtered out of a page, and one word
+    of it is enough to name a folder."""
+
+    def word(self, text):
+        return shapes._is_a_word(text)
+
+    def test_glyph_numbers_are_not_a_word(self):
+        """No Latin-script language spells a word out of accented letters
+        alone."""
+        self.assertFalse(self.word("ÍäÎá"))
+        self.assertFalse(self.word("ªÎÞª¾êÞ"))
+
+    def test_accented_words_are_words(self):
+        for word in ("München", "Számla", "Đường", "Öbb", "Rechnung"):
+            self.assertTrue(self.word(word), word)
+
+    def test_scripts_that_are_not_latin_at_all_are_words(self):
+        """The word for "invoice" in several languages has no plain
+        letters in it, and refusing them would be refusing the feature."""
+        for word in ("Τιμολόγιο", "Счёт", "請求書", "발행"):
+            self.assertTrue(self.word(word), word)
+
+    def test_nothing_with_a_symbol_in_the_middle_of_it(self):
+        self.assertFalse(self.word("Rech¾nung"))
+        self.assertFalse(self.word("€uro"))
+
+    def test_a_word_of_no_letters_at_all(self):
+        self.assertFalse(self.word("4711"))
+        self.assertFalse(self.word(""))
+
+
+class NearTheFront(unittest.TestCase):
+    """A document says what it is before it says anything else."""
+
+    def test_a_word_that_leads(self):
+        self.assertTrue(shapes._near_the_front([0, 0, 0, 1]))
+
+    def test_a_word_on_the_second_line_of_a_letterhead(self):
+        """A letter that leads with its sender still names itself next."""
+        self.assertTrue(shapes._near_the_front([1, 2, 1, 2]))
+
+    def test_a_word_buried_in_a_sentence(self):
+        """Measured: `Service` sat at position 3 and was never once first."""
+        self.assertFalse(shapes._near_the_front([3, 4, 3, 5]))
+
+    def test_nowhere_at_all(self):
+        self.assertFalse(shapes._near_the_front([]))
+
+
+class WhatAFolderChoosesForItself(unittest.TestCase):
+
+    def test_soup_never_becomes_a_category(self):
+        headings = ["ÍäÎá 4711 2019"] * 30 + [
+            "Rechnung Stadtwerke", "Rechnung Muenchen", "Rechnung Januar",
+            "Mietvertrag Wohnung", "Mietvertrag Garage", "Mietvertrag Keller",
+            "Steuerbescheid 2019", "Steuerbescheid 2020",
+            "Steuerbescheid 2021"]
+        words = [word for word, _count in shapes.learn_terms(headings)]
+        self.assertNotIn("ÍäÎá", words)
+        self.assertIn("Rechnung", words)
+
+    def test_a_word_only_ever_buried_is_not_a_category(self):
+        headings = ["Rechnung Stadtwerke Muenchen fuer Service %d" % n
+                    for n in range(8)]
+        headings += ["Mietvertrag Wohnung", "Mietvertrag Garage",
+                     "Mietvertrag Keller", "Steuerbescheid 2019",
+                     "Steuerbescheid 2020", "Steuerbescheid 2021"]
+        words = [word for word, _count in shapes.learn_terms(headings)]
+        self.assertNotIn("Service", words)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

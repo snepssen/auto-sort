@@ -364,7 +364,9 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     ceiling = max(min_occurrences, total * max_share)
     terms = [(_best_spelling(spellings[key]), count)
              for key, count in frequency.items()
-             if min_occurrences <= count <= ceiling]
+             if min_occurrences <= count <= ceiling
+             and _is_a_word(_best_spelling(spellings[key]))
+             and _near_the_front(positions[key])]
     if len(terms) < MIN_CATEGORY_VALUES:
         # One word repeating is a letterhead; two is not yet a shape. Three
         # distinct answers is the smallest thing that sorts anything.
@@ -376,6 +378,70 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
 
     terms.sort(key=rank)
     return _without_boilerplate(terms, documents)[:cap]
+
+
+# How deep into a heading a word may usually sit and still be what the
+# document calls itself. The heading is six words; a word that is normally
+# the fourth or later is a detail inside a sentence, not an announcement.
+# Measured on one real folder: `Service` sat at position 3 and was never
+# once first, `This` at 2, and every genuine category at 0.
+MAX_HEADING_POSITION = 3
+
+
+def _near_the_front(positions):
+    """A document says what it is before it says anything else about
+    itself. Not "always first" -- a letter that leads with its sender still
+    names itself on the next line -- but not buried either."""
+    if not positions:
+        return False
+    middle = sorted(positions)[len(positions) // 2]
+    return middle < MAX_HEADING_POSITION
+
+
+def _is_a_word(word):
+    """Is this a word, or a font's glyph numbers read as characters?
+
+    A little soup survives the filtering `pdftext` does, and one surviving
+    word is enough to name a folder `ÍäÎá`. So the same question is asked
+    again here, of one word, and the sharper form it takes is about script
+    rather than about byte values.
+
+    **No language written in the Latin alphabet spells a word entirely out
+    of accented letters.** `München`, `Számla` and `Đường` all have plain
+    letters in them; `ÍäÎá` does not, because it is four glyph numbers that
+    happened to land in the accented range. Greek, Cyrillic, Hebrew, Thai
+    and Japanese words have no plain Latin letters either -- and are not
+    Latin, which is what tells the two apart.
+
+    Anything with a symbol, a currency sign or an ordinal mark inside it is
+    refused outright: no script puts those in the middle of a word.
+    """
+    if not word:
+        return False
+    # Not `Lo`. That category holds every Chinese, Japanese, Hebrew and
+    # Thai letter as well as the ordinal marks, and refusing it would
+    # refuse the word for "invoice" in several languages.
+    if any(unicodedata.category(char)
+           in ("So", "Sk", "Sc", "Sm", "Cf", "Co", "Cn", "No")
+           for char in word):
+        return False
+    letters = [char for char in word if char.isalpha()]
+    if not letters:
+        return False
+    latin = 0
+    plain = 0
+    for char in letters:
+        if "a" <= char.lower() <= "z":
+            plain += 1
+            latin += 1
+            continue
+        try:
+            if unicodedata.name(char).startswith("LATIN "):
+                latin += 1
+        except ValueError:
+            pass
+    written_in_latin = latin >= len(letters) * 0.8
+    return plain > 0 if written_in_latin else True
 
 
 def _without_boilerplate(terms, documents, overlap=0.9):

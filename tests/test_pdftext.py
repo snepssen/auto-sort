@@ -121,6 +121,37 @@ class Extraction(unittest.TestCase):
         text, _image_only = self.extract(text=soup)
         self.assertEqual(text, "")
 
+    def test_a_fonts_glyph_numbers_are_not_words(self):
+        """A subset font with no table numbers its glyphs from scratch.
+
+        Read as characters they pass every test for words and mean
+        nothing. One real folder had 171 documents whose headings agreed
+        on the same seven of them, and agreement is what this program
+        treats as evidence -- it would have named a folder after it.
+        """
+        codes = "".join(chr(0x80 + (index * 7) % 120) for index in range(300))
+        self.assertTrue(pdftext._glyph_codes(codes))
+
+    def test_a_page_of_greek_is_words(self):
+        """Wholly above ASCII and wholly letters. The test takes both."""
+        greek = "Τιμολόγιο αριθμός 4711 ημερομηνία 3 Μαΐου 2019 " * 8
+        self.assertFalse(pdftext._glyph_codes(greek))
+
+    def test_ordinary_accented_text_is_words(self):
+        for line in ("Rechnung Nr 4711 Stadtwerke München Betrag",
+                     "Loonbrief Individuele rekening Kantoor afhaling",
+                     "Számla sorszáma fizetési határidő"):
+            self.assertFalse(pdftext._glyph_codes(line * 6), line)
+
+    def test_soup_is_dropped_one_stream_at_a_time(self):
+        """A German invoice whose bullets are drawn with ZapfDingbats has
+        2,565 readable words and several hundred characters of glyph
+        numbers. Refusing the file for the second throws away the first."""
+        codes = "".join(chr(0x80 + (index * 7) % 120) for index in range(300))
+        text, image_only = self.extract(text=INVOICE + "\n" + codes)
+        self.assertFalse(image_only)
+        self.assertIn("RECHNUNG", text)
+
     def test_a_scan_with_a_stamp_on_it_still_asks_for_ocr(self):
         path = self.build("scan.pdf", text="Eingegangen 03 Mai",
                           image_only=True)

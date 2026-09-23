@@ -441,3 +441,8 @@ duplication is three files and it buys each tool the ability to stand alone.
     a share of characters, which an invoice full of amounts and reference
     numbers fails while being perfectly readable. Counting words instead
     took one real folder from 151 documents read to 304.
+17. Refusing what is not a word. A subset font with no character map
+    yields glyph numbers that read as words and mean nothing; they are
+    dropped a string at a time, and again as candidate categories, by
+    asking two questions that a page of Greek or Japanese answers
+    differently from a page of glyph numbers.

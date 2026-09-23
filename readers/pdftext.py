@@ -29,6 +29,7 @@ paperwork keywords found" about it would be a lie -- the right answer is
 from __future__ import annotations
 
 import re
+import unicodedata
 import zlib
 
 MAX_BYTES = 4 * 1024 * 1024     # how far into the file to look at all
@@ -359,15 +360,67 @@ def _readable(text):
     control characters, which are turned into spaces before this is asked,
     so they produce almost no words and are still refused.
 
-    What this cannot tell apart is a one-byte subset font whose encoding is
-    a substitution -- the same words with the letters swapped. That is a
-    cipher of real prose and has the same shape as prose, so no test
-    without a dictionary will catch it, and this one does not pretend to.
-    The cost if it happens is a category named something nobody can read,
-    which is visible in the log, listed by `check-rules`, and one line to
-    delete. The cost of the old test was 177 readable documents.
+    Counting words is not enough on its own, though, and the folder that
+    proved it had 172 files in it -- see `_glyph_codes` below.
+
+    What none of this can tell apart is a one-byte subset font whose
+    encoding is a substitution of the *same alphabet* -- real words with
+    the letters swapped. That is a cipher of prose and has the shape of
+    prose, so no test without a dictionary will catch it. The cost if it
+    happens is a category named something nobody can read, which is visible
+    in the log, listed by `check-rules`, and one line to delete.
     """
-    return len(_WORD.findall(text)) >= MIN_WORDS
+    if len(_WORD.findall(text)) < MIN_WORDS:
+        return False
+    return not _glyph_codes(text)
+
+
+# Characters that never turn up inside a word in any script: symbols,
+# currency signs, maths operators, formatting marks. A page of Greek is
+# entirely above ASCII and has none of these; a page of glyph numbers read
+# as Latin-1 is full of them.
+# Not `Lo`: that category holds every Chinese, Japanese, Hebrew and Thai
+# letter, and a page of any of them is not soup.
+_NOT_IN_WORDS = ("So", "Sk", "Sc", "Sm", "Cf", "Co", "Cn", "No")
+
+# Where the two populations sit, measured on 346 real files: text is under
+# 20% above ASCII and under 11% odd characters; glyph codes are over 40%
+# and around 18%. The thresholds sit in the gap rather than on either edge.
+_MOSTLY_HIGH = 0.4
+_SOME_ODD = 0.05
+
+
+def _glyph_codes(text):
+    """Is this a subset font's glyph numbers rather than anybody's words?
+
+    A font that ships only the glyphs it uses numbers them from scratch and
+    describes them in a `ToUnicode` table. Without that table the numbers
+    are all there is, and reading them as characters produces a stream that
+    passes every test for "words" while meaning nothing:
+
+        ììª® êí0@Âè ï®ÞÍà
+
+    It would name a folder that. One real folder had 171 documents whose
+    headings agreed on it exactly, which is worse than useless: agreement
+    is what this program treats as evidence.
+
+    Two measurements, and it takes both. **Mostly above ASCII**, because
+    glyph numbers scatter across the whole byte range while German and
+    Dutch and Hungarian stay near the bottom of it. And **containing
+    characters that words never contain** -- a currency sign or an arrow in
+    the middle of what claims to be a word. A page of Greek or Cyrillic is
+    entirely above ASCII and entirely letters, so it passes; that is why it
+    takes both and not either.
+    """
+    sample = text[:4000]
+    if not sample:
+        return False
+    above = sum(1 for char in sample if ord(char) > 127) / float(len(sample))
+    if above <= _MOSTLY_HIGH:
+        return False
+    odd = sum(1 for char in sample
+              if unicodedata.category(char) in _NOT_IN_WORDS)
+    return odd / float(len(sample)) > _SOME_ODD
 
 
 # Moving the pen, rather than drawing a space, is how PDF separates words.
@@ -411,13 +464,20 @@ def _page_text(body, maps):
         entry = maps.get(current) if current else None
         if entry:
             codes, width = entry
-            pieces.append(_through(raw, codes, width))
+            drawn = _through(raw, codes, width)
         else:
             # No table for this font: the bytes are most likely already
             # characters, which is true of every PDF written before font
             # subsetting became universal -- and those are the old files
             # this exists for.
-            pieces.append(_decode(raw))
+            drawn = _decode(raw)
+        # One string at a time, because one document routinely mixes a font
+        # that can be read with one that cannot, and they are not tidily
+        # separated into different streams. Refusing the file for the
+        # second would throw away the first -- on one real invoice, 1,106
+        # readable German words.
+        if drawn and not _glyph_codes(drawn):
+            pieces.append(drawn)
     return "".join(pieces)
 
 

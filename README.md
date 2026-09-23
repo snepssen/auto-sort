@@ -223,6 +223,25 @@ nothing, correctly — their filenames already carried the answer, and a
 reader that stays quiet leaves better evidence standing rather than
 overruling it.
 
+**Glyph numbers are not words.** A font that ships only the characters it
+uses numbers them from scratch and explains them in a table. Without that
+table the numbers are all there is, and read as characters they pass every
+test for words while meaning nothing — `ììª® êí0@Âè ï®ÞÍà`. One real folder
+had 171 documents whose headings agreed on exactly that, and agreement is
+what this program treats as evidence: it would have made a folder with that
+name. They are dropped a string at a time rather than a file at a time,
+because one document routinely mixes a font that can be read with one that
+cannot, and refusing the file for the second throws away the first — 1,106
+readable German words, on the invoice that proved it.
+
+Telling that apart from a language nobody here reads takes two questions,
+not one. Glyph numbers are mostly above ASCII **and** contain things no word
+in any script contains — a currency sign, an arrow, an ordinal mark. A page
+of Greek is the first and not the second. And no Latin-script language
+spells a word out of accented letters alone: `München`, `Számla` and `Đường`
+all have plain letters in them, while `ÍäÎá` does not. `Τιμολόγιο`, `Счёт`
+and `請求書` are not Latin at all, which is what tells them apart.
+
 **A page is judged by its words, not by its letters.** Whether a PDF has
 readable text used to be decided by asking whether letters made up 45% of the
 characters — a test that exists to reject the letter-soup a subset font with
@@ -971,6 +990,11 @@ its own specification at test time.
     A page is judged by its words rather than by what share of its
     characters are letters, which is how a folder went from 151 documents
     read to 304.
+
+17. **The categories, where somebody can see them** ✓
+    `propose` found what a folder's documents call themselves and then
+    printed everything except that. It says so now, and refuses a
+    "category" that is a font's glyph numbers or a word buried mid-sentence.
 
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.

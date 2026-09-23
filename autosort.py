@@ -1492,6 +1492,25 @@ def propose(root=".", tier=identify.TIER_HEADER, depth=3, out=None,
             print("      %s" % ", ".join(
                 name for name, _count in values.most_common(5)))
 
+    # The headline result, and it was not being printed at all: somebody
+    # running this saw the facets and the catch-alls and concluded that the
+    # one feature the program is named for had found nothing.
+    for terms, what, unit in ((found.heading_terms, "What these documents "
+                               "call themselves", "say it"),
+                              (found.stem_terms, "What these files are "
+                               "called", "are named it")):
+        if not terms:
+            continue
+        print()
+        print("  %s" % what)
+        for word, count in terms[:8]:
+            print("    %-24s %4d %s" % (word[:24], count, unit))
+        if len(terms) > 8:
+            print("    ... and %d more" % (len(terms) - 8))
+        print("    (a word %d or more of them lead with, and not one nearly"
+              % propose_module.shapes.MIN_OCCURRENCES)
+        print("     all of them share -- that would be a letterhead)")
+
     print()
     print("  Structure this folder suggests")
     if not accepted:
