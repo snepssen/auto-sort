@@ -154,10 +154,10 @@ class Extraction(unittest.TestCase):
         codes = "ìª® êí0@Âè ï®ÞÍà\x9c€ì°"
         runs = []
         for word in INVOICE.split():
-            runs.append(("F1", word))
-            runs.append((None, " "))
-            runs.append(("F9", codes[:4]))       # three or four at a time
-            runs.append((None, " "))
+            runs.append(("F1", word, 10.0))
+            runs.append((pdftext._GAP, " ", 0.0))
+            runs.append(("F9", codes[:4], 10.0))  # three or four at a time
+            runs.append((pdftext._GAP, " ", 0.0))
         text = pdftext._keep_readable_fonts(runs)
         self.assertIn("RECHNUNG", text)
         self.assertIn("Stadtwerke", text)
@@ -169,11 +169,11 @@ class Extraction(unittest.TestCase):
         a time, and each string on its own passed every test."""
         pieces = ["ìª®", "êí0", "@Âè", "ï®Þ", "Íà\x9c", "€ì°"]
         self.assertFalse(pdftext._glyph_codes("Íàx"))
-        runs = [("F9", piece) for piece in pieces * 10]
+        runs = [("F9", piece, 10.0) for piece in pieces * 10]
         self.assertEqual(pdftext._keep_readable_fonts(runs).strip(), "")
 
     def test_a_single_readable_font_is_all_kept(self):
-        runs = [("F1", word) for word in INVOICE.split()]
+        runs = [("F1", word, 10.0) for word in INVOICE.split()]
         self.assertEqual(pdftext._keep_readable_fonts(runs),
                          "".join(INVOICE.split()))
 

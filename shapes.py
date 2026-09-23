@@ -429,7 +429,11 @@ MAX_HEADING_POSITION = 3
 # A chunk of a heading that is a path, a web address or an email address
 # rather than words: the login name in `/Users/tamtor/Documents/...`, the
 # host in `sausage@factory`, the domain in `post.example.co.uk`.
-_AN_ADDRESS = re.compile(r"[/\\@]|\w\.\w+\.\w")
+# A slash between letters, as in a path -- not after a hyphen, which is how
+# German shares the end of a compound: `Lohn-/Gehalts-Abrechnung` is "wage
+# and salary statement", not a file, and treating it as one hid a real
+# category of payslips.
+_AN_ADDRESS = re.compile(r"(?<!-)[/\\]|@|\w\.\w+\.\w")
 
 
 def _bare_words(heading):

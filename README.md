@@ -214,8 +214,26 @@ moving the pen, not by drawing a space character, so raw extraction reads as
 match — pen moves and kerning past a threshold are read as the spaces they
 are.
 
-Only the first five hundred characters of a page are ever offered anywhere
-else in the program. A document announces what it is at the top and mentions
+**What a document calls itself is usually the biggest thing on it.** The
+first version of this looked only at the top of the page, on the reasoning
+that a document says what it is before anything else — which was learnt from
+CVs and letters somebody wrote themselves. Official paperwork does not work
+like that. A Belgian employment contract puts a block of registration numbers,
+insurers and funds first and its title four hundred characters down; German
+payslips open with the payroll program's version stamp. What they all do is
+draw the title larger than the body, and on real paperwork the only thing drawn
+larger still is *who the document is for* — the recipient's name and address,
+or a stamp saying who signed on their behalf. So the heading is the largest
+emphasised text on the page that is not about the owner, whose name the
+computer already knows. On the folder that prompted this, 168 contracts went
+from being named after the payroll office's registration number to
+`ARBEIDSOVEREENKOMST VOOR UITZENDARBEID`, and four German payslips from the
+name of the software to `Lohn-/Gehalts-Abrechnung`. A large line ending in a
+comma is a greeting, not a title.
+
+Where nothing on a page is drawn larger than the rest, the first words at the
+top are used instead, and only the first five hundred characters of a page are
+ever offered anywhere else in the program. A document announces what it is at the top and mentions
 everything else further down: read whole, a CV that lists two certifications
 looks like a certificate, and a covering letter that mentions a booking looks
 like a ticket, both observed on real files. Read from the top, both say

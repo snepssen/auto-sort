@@ -78,6 +78,19 @@ _BFCHAR = re.compile(rb"beginbfchar(.*?)endbfchar", re.S)
 _BFRANGE = re.compile(rb"beginbfrange(.*?)endbfrange", re.S)
 _HEX = re.compile(rb"<([0-9A-Fa-f\s]*)>")
 _SET_FONT = re.compile(rb"/([A-Za-z0-9_.+-]+)\s+[-\d.]+\s+Tf")
+# The same, keeping the size: `/F5 11 Tf` draws what follows at eleven points.
+_SIZED_FONT = re.compile(rb"/([A-Za-z0-9_.+-]+)\s+(-?[\d.]+)\s+Tf")
+# Some writers set every font at size 1 and scale the text matrix instead --
+# `11 0 0 11 72 700 Tm` -- so the size a person sees is the product.
+_TEXT_MATRIX = re.compile(rb"(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+"
+                          rb"(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+Tm")
+
+
+def _number(raw):
+    try:
+        return abs(float(raw))
+    except (TypeError, ValueError):
+        return 0.0
 
 MAX_OBJECTS = 4000
 
@@ -468,17 +481,32 @@ def _page_runs(body, maps, current=None):
     of 172 documents, and reading each stream fresh made nine words in ten
     look as though they had been drawn with no font at all.
     """
-    switches = [(match.start(), match.group(1).decode("latin-1"))
-                for match in _SET_FONT.finditer(body)]
+    # What was in use when the previous stream ended, font and size both.
+    if isinstance(current, tuple):
+        current, carried = current
+    else:
+        carried = 0.0
+    switches = [(match.start(), match.group(1).decode("latin-1"),
+                 _number(match.group(2)))
+                for match in _SIZED_FONT.finditer(body)]
+    scalings = [(match.start(), abs(_number(match.group(4)) or 1.0))
+                for match in _TEXT_MATRIX.finditer(body)]
     runs = []
     position = 0
+    scaled = 0
+    size = carried
+    scale = 1.0
     previous_end = None
     for where, ends, raw in _strings(body):
         while position < len(switches) and switches[position][0] <= where:
             current = switches[position][1]
+            size = switches[position][2] or size
             position += 1
+        while scaled < len(scalings) and scalings[scaled][0] <= where:
+            scale = scalings[scaled][1] or 1.0
+            scaled += 1
         if previous_end is not None and _gap_is_a_space(body[previous_end:where]):
-            runs.append((_GAP, " "))
+            runs.append((_GAP, " ", 0.0))
         previous_end = ends
         entry = maps.get(current) if current else None
         if entry:
@@ -491,8 +519,8 @@ def _page_runs(body, maps, current=None):
             # this exists for.
             drawn = _decode(raw)
         if drawn:
-            runs.append((current, drawn))
-    return runs, current
+            runs.append((current, drawn, round((size or 0.0) * scale, 1)))
+    return runs, (current, size)
 
 
 def _page_text(body, maps, current=None):
@@ -518,13 +546,13 @@ def _keep_readable_fonts(runs):
     and the verdict is not close.
     """
     drawn = collections.defaultdict(list)
-    for font, text in runs:
+    for font, text, _size in runs:
         if font is not _GAP and font is not None:
             drawn[font].append(text)
     unreadable = set(font for font, texts in drawn.items()
                      if _glyph_codes("".join(texts)))
     kept = []
-    for font, text in runs:
+    for font, text, _size in runs:
         if font is _GAP:
             kept.append(text)
         elif font is None:
@@ -586,6 +614,153 @@ def _is_page_content(data, stream_start, body):
     return printable >= len(sample) * _MOSTLY_PRINTABLE
 
 
+# How much bigger than the body a line must be drawn to count as a title.
+# One point is the smallest step any writer uses for emphasis; less is the
+# rounding of a scaled matrix.
+_EMPHASIS = 1.0
+# A title is a few words. More than this at one size is a paragraph set
+# large, or a table header row, not the name of the document.
+_TITLE_WORDS = 12
+
+
+def title(runs, exclude=()):
+    """What a document calls itself in type bigger than its body text.
+
+    "A document says what it is at the top" was learnt from CVs and letters
+    somebody wrote themselves, where the first line is the title. Official
+    paperwork does not work like that. A Belgian employment contract puts
+    a block of registration numbers, insurers and funds first and its title
+    four hundred characters down; German payslips start with the payroll
+    program's version stamp. Position cannot find those titles without
+    also finding the certifications a CV mentions halfway down.
+
+    Size can, in any language. The title is drawn bigger than the body --
+    and on real paperwork the only things drawn bigger still are *who it is
+    for*: the recipient's name and address, or a stamp saying who signed.
+    So the title is the largest emphasised text that is not about the
+    owner, whose name `exclude` carries.
+    """
+    exclude = set(word.lower() for word in (exclude or ()))
+    runs = _join_capitals(runs)
+    tiers = collections.OrderedDict()
+    weight = collections.Counter()
+    last = None
+    for font, text, size in runs:
+        if font is _GAP:
+            if last is not None and tiers.get(last):
+                tiers[last].append(" ")
+            continue
+        if not size:
+            continue
+        tiers.setdefault(size, []).append(text)
+        weight[size] += len(text)
+        last = size
+    if not weight:
+        return ""
+    body = weight.most_common(1)[0][0]
+    for size in sorted(tiers, reverse=True):
+        if size < body + _EMPHASIS:
+            break
+        words = "".join(tiers[size]).split()
+        if not words or not _WORD.search(" ".join(words)):
+            continue
+        folded = set(_fold_word(word) for token in words
+                     for word in _WORD.findall(token))
+        if folded & exclude:
+            continue                    # the owner's name: for, not what
+        words = _once([word for word in words if _a_title_word(word)])
+        if not words or len(words) > _TITLE_WORDS:
+            continue
+        # A greeting set large -- `Dear Hiring Manager,`, `Sehr geehrte
+        # Damen und Herren,`, `Geachte heer,` -- ends with a comma in nearly
+        # every language that uses one, and a title never does.
+        if words[-1].endswith(","):
+            continue
+        return " ".join(words)
+    return ""
+
+
+def _join_capitals(runs):
+    """Put a decorative capital back on the word it starts.
+
+    A drop capital is drawn on its own at a larger size, so taken tier by
+    tier a cover letter's greeting reads `ear Hiring Manager` and a
+    certificate's title loses its first word. A fragment of one or two
+    characters drawn with no gap after it belongs to the text that follows,
+    whatever size either was drawn at.
+    """
+    joined = []
+    carry = ""
+    for index, (font, text, size) in enumerate(runs):
+        if font is _GAP:
+            # Not joined across a gap, although a drop capital is usually
+            # followed by one -- the pen jumps right to make room for it.
+            # `Luik A` followed by body text in lower case has exactly the
+            # same shape, and without where each letter sits on the page
+            # the two cannot be told apart. The one real case, a cover
+            # letter's greeting, is not a title anyway.
+            if carry:
+                joined.append((None, carry, size))
+                carry = ""
+            joined.append((font, text, size))
+            continue
+        following = runs[index + 1] if index + 1 < len(runs) else None
+        if (len(text.strip()) <= 2 and text.strip().isalpha()
+                and following is not None and following[0] is not _GAP):
+            carry += text.strip()
+            continue
+        joined.append((font, carry + text, size))
+        carry = ""
+    if carry:
+        joined.append((None, carry, 0.0))
+    return joined
+
+
+def _a_title_word(token):
+    """A word, a number, or a short connecting word -- not a stray glyph.
+
+    One Belgian tax form's title came out `Luik Í1 Í@ A`: the heading of a
+    section, and three glyphs from a font with no character map. Anything
+    of a letter or two that is not plain Latin is dropped.
+    """
+    stripped = token.strip(".,:;()[]\"'-–—")
+    if not stripped:
+        return False
+    if stripped.isdigit():
+        return True
+    if _WORD.search(stripped):
+        return True
+    return len(stripped) <= 3 and all("a" <= char.lower() <= "z"
+                                      for char in stripped)
+
+
+def _once(words):
+    """A title drawn on every page reads `Loonbrief Loonbrief Loonbrief`."""
+    seen = set()
+    kept = []
+    for word in words:
+        key = word.lower()
+        if key in seen:
+            break
+        seen.add(key)
+        kept.append(word)
+    return kept
+
+
+def _fold_word(word):
+    decomposed = unicodedata.normalize("NFKD", word.lower())
+    return "".join(char for char in decomposed
+                   if not unicodedata.combining(char))
+
+
+def read(peek, exclude=()):
+    """`(text, image_only, title)`. See `extract` and `title`."""
+    runs, image_hint, data = _collect(peek)
+    if runs is None:
+        return "", False, ""
+    return _finish(runs, image_hint, data) + (title(runs, exclude),)
+
+
 def extract(peek):
     """`(text, image_only)` for a PDF, without unpacking the document.
 
@@ -594,11 +769,23 @@ def extract(peek):
     on it. `image_only` says the file holds pictures and no readable type,
     which is a scanned page and a different problem.
     """
+    runs, image_hint, data = _collect(peek)
+    if runs is None:
+        return "", False
+    return _finish(runs, image_hint, data)
+
+
+def _collect(peek):
+    """Every run of text the page content draws, with its font and size.
+
+    Returns `(runs, image_hint, data)`, or `(None, ...)` for a file that is
+    empty or encrypted.
+    """
     data = peek.at(0, MAX_BYTES)
     if not data:
-        return "", False
+        return None, False, data
     if b"/Encrypt" in data[-2048:] or b"/Encrypt" in data[:2048]:
-        return "", False
+        return None, False, data
 
     try:
         maps = _font_maps(data)
@@ -629,9 +816,13 @@ def extract(peek):
             continue
         found, current = _page_runs(body, maps, current)
         runs.extend(found)
-        runs.append((_GAP, " "))
-        total += sum(len(text) for _font, text in found)
+        runs.append((_GAP, " ", 0.0))
+        total += sum(len(text) for _font, text, _size in found)
+    return runs, bool(_IMAGE_HINT.search(data)), data
 
+
+def _finish(runs, image_hint, data):
+    """The readable text of the collected runs, or a verdict of none."""
     # Judged once, over everything each font drew in the whole document --
     # the more of a font there is to look at, the less the verdict is a
     # guess. The collection runs further than the text kept, for the same
@@ -642,7 +833,7 @@ def extract(peek):
                    for char in text)
     text = re.sub(r"\s+", " ", text).strip()
     if not _readable(text):
-        return "", bool(_IMAGE_HINT.search(data))
+        return "", image_hint
     return text[:MAX_CHARS], False
 
 

@@ -266,7 +266,8 @@ def _read_the_page(peek, record):
     hundred characters on that corpus, so the window sits at five hundred.
     """
     try:
-        text, image_only = pdftext.extract(peek)
+        text, image_only, drawn_title = pdftext.read(
+            peek, exclude=_owner_words())
     except (OSError, ValueError, MemoryError, re.error):
         return
     if image_only:
@@ -285,9 +286,32 @@ def _read_the_page(peek, record):
         return
     record.set("text_layer", True, "pdf-text", CERTAIN)
     record.set("words_read", len(text.split()), "pdf-text", CERTAIN)
-    heading = heading_of(text)
+    # The title the page draws large, where there is one, and otherwise the
+    # first words at the top. See `pdftext.title` for why size and not
+    # position -- and why the owner's own name is never taken for it.
+    if drawn_title:
+        record.set("title_drawn", drawn_title[:80], "pdf-text", STRONG)
+    heading = " ".join(drawn_title.split()[:HEADING_WORDS]) if drawn_title \
+        else heading_of(text)
     if heading:
         record.set("heading", heading[:80], "pdf-text", STRONG)
+
+
+def _owner_words():
+    """The owner's name, folded, so a page's title is never taken to be the
+    person it is addressed to. Asked lazily and never allowed to fail."""
+    try:
+        import owner
+        return set(_fold(word) for word in owner.names())
+    except Exception:                        # noqa: BLE001
+        return set()
+
+
+def _fold(word):
+    import unicodedata
+    decomposed = unicodedata.normalize("NFKD", str(word).lower())
+    return "".join(char for char in decomposed
+                   if not unicodedata.combining(char))
 
 
 _HAS_A_WORD = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
