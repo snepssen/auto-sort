@@ -147,6 +147,23 @@ def output(key, arguments, timeout=20):
     return (done.stdout or b"").decode("utf-8", "replace")
 
 
+def inventory():
+    """Every optional program, whether it is here, and how to get it.
+
+    For the log page and for `status`. Somebody whose scanned post is being
+    held has no way to find out why otherwise: the answer is a program they
+    have not installed, and nothing in the program was saying so where they
+    would look.
+    """
+    listing = []
+    for key in sorted(PROGRAMS):
+        program = PROGRAMS[key]
+        listing.append({"key": key, "purpose": program.purpose,
+                        "installed": bool(find(key)),
+                        "install": program.install_line()})
+    return listing
+
+
 def missing():
     return [program for key, program in PROGRAMS.items() if not find(key)]
 

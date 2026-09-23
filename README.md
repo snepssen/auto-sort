@@ -876,7 +876,13 @@ name first:
 | `ffprobe` | durations and frame sizes for containers the built-in parsers decline | those facts are absent, and rules needing them decline |
 | `exiftool` | metadata from uncommon cameras and RAW formats | the same, for a smaller set of files |
 
-Declining all three still leaves a working sorter. `bootstrap.py` never runs
+Declining all three still leaves a working sorter — and the log page says
+which of them this computer has, under **Folders & drives**, with what each
+one would add and the exact command to install it. Somebody whose scanned
+post is being filed by nothing but its file type has no other way to find
+out why: the answer is a program they have never heard of. `auto-sort status`
+says the same thing, and counts the pages that were filed without ever being
+read. `bootstrap.py` never runs
 `sudo` — on a system whose package manager needs root it prints the command
 for you to run — never installs without being asked, never prompts when there
 is nobody to answer, and never blocks the sorter when something fails.

@@ -11,6 +11,7 @@ import urllib.parse
 
 import costs
 import mirror
+import platform_support
 import mover
 import sorter
 
@@ -127,6 +128,8 @@ class LogPage(object):
                 return _json_response(400, {"error": "not a row number"})
             self.journal.forget_cost(cost_id)
             return _json_response(200, self._costs())
+        if parsed.path == "/api/reading" and method == "GET":
+            return _json_response(200, self._reading())
         if parsed.path == "/api/backup" and method == "GET":
             return _json_response(200, self._backup())
         if parsed.path == "/api/backup" and method == "POST":
@@ -218,6 +221,19 @@ class LogPage(object):
             "port": self.port,
             "queue": dict((row["status"], row["count"])
                           for row in self.journal.queue_counts()),
+        }
+
+    def _reading(self):
+        """What this machine can read, and what it could not.
+
+        Somebody whose scanned post is being filed by nothing but its file
+        type has no way to find out why. The answer is usually a program
+        they have never heard of and do not have, and nothing anywhere was
+        saying so where they would look.
+        """
+        return {
+            "programs": platform_support.inventory(),
+            "filed_unread": self.journal.waiting_for_reading(),
         }
 
     def _costs(self):

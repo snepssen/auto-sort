@@ -292,5 +292,61 @@ into = {output}/Pictures
             os.path.join(self.output, "Pictures", "photo.png")))
 
 
+class WhatThisMachineCanRead(unittest.TestCase):
+    """Somebody whose scanned post is being filed by nothing but its file
+    type has no way to find out why. The answer is a program they have
+    never heard of and do not have."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-reading-")
+        self.journal = ledger.Ledger(os.path.join(self.dir, "state.db"))
+        self.page = logpage.LogPage(self.journal, 48766, "test-token")
+
+    def tearDown(self):
+        self.journal.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def ask(self):
+        response = self.page.handle_request(
+            "GET", "/api/reading?token=test-token")
+        return json.loads(response.body)
+
+    def filed(self, number, facts):
+        run = self.journal.start_run("sort", source_root=self.dir,
+                                     dry_run=False)
+        move = self.journal.add_move(
+            run, number, 1, "move", "documents",
+            os.path.join(self.dir, "f%d.pdf" % number),
+            os.path.join(self.dir, "out", "f%d.pdf" % number),
+            10, "", "done", facts=facts)
+        self.journal.update_move(move, "done")
+
+    def test_it_lists_every_optional_program(self):
+        keys = [row["key"] for row in self.ask()["programs"]]
+        self.assertEqual(sorted(keys), ["exiftool", "ffprobe", "tesseract"])
+
+    def test_each_one_says_what_it_is_for_and_how_to_get_it(self):
+        for row in self.ask()["programs"]:
+            self.assertTrue(row["purpose"])
+            self.assertIn("installed", row)
+
+    def test_pages_nobody_could_read_are_counted(self):
+        self.filed(1, {"kind": "document", "needs_ocr": True})
+        self.filed(2, {"kind": "document", "needs_ocr": True})
+        self.filed(3, {"kind": "document", "heading": "Rechnung"})
+        self.assertEqual(self.ask()["filed_unread"], 2)
+
+    def test_a_folder_where_everything_was_read_says_nothing(self):
+        self.filed(1, {"kind": "document", "heading": "Rechnung"})
+        self.assertEqual(self.ask()["filed_unread"], 0)
+
+    def test_an_undone_move_is_not_still_waiting(self):
+        self.filed(1, {"kind": "document", "needs_ocr": True})
+        self.journal.connection.execute(
+            "UPDATE moves SET undone_at = '2026-01-01T00:00:00'")
+        self.journal.connection.commit()
+        self.assertEqual(self.ask()["filed_unread"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

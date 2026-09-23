@@ -25,6 +25,7 @@ import jobs
 import ledger as ledger_module
 import logpage
 import paths
+import platform_support
 import progress as progress_module
 import propose as propose_module
 import duplicates as duplicates_module
@@ -555,14 +556,17 @@ def daemon_control(command, state_file=None, as_json=False):
         paused = journal.paused()
         counts = dict((row["status"], row["count"])
                       for row in journal.queue_counts())
+        waiting = journal.waiting_for_reading()
         port = int(journal.get_state("daemon_port",
                                      daemon_module.DEFAULT_PORT))
     running = daemon_module.wake(state_file, "status")
     directory = os.path.dirname(os.path.abspath(state_file or
                                                 paths.ledger_file()))
     abandoned = paths.strays(directory, [state_file or paths.ledger_file()])
+    programs = platform_support.inventory()
     report = {"running": running, "paused": paused, "port": port,
-              "queue": counts,
+              "queue": counts, "programs": programs,
+              "waiting_to_be_read": waiting,
               "unused_state_files": [{"path": path, "bytes": size}
                                      for path, size in abandoned]}
     if as_json:
@@ -574,6 +578,24 @@ def daemon_control(command, state_file=None, as_json=False):
         print("Queue: %s" % (", ".join(
             "%s %d" % (name, count)
             for name, count in sorted(counts.items())) or "empty"))
+        absent = [row for row in programs if not row["installed"]]
+        if absent:
+            print("Not installed: %s" % ", ".join(
+                "%s (%s)" % (row["key"], row["purpose"]) for row in absent))
+            for row in absent:
+                if row["install"]:
+                    print("    %s" % row["install"])
+        if waiting:
+            # Filed, findable, and never read: a page that was placed by
+            # what kind of file it is rather than by anything it says.
+            # Stated in the past tense on purpose -- these are already
+            # somewhere, and nothing is going back for them.
+            print("Filed without being read: %d page(s) that were pictures "
+                  "of pages" % waiting)
+            if not any(row["key"] == "tesseract" and row["installed"]
+                       for row in programs):
+                print("    tesseract would read pages like these as they "
+                      "arrive")
         if abandoned:
             # Not deleted, and not offered to be: deleting is not something
             # this program does. Said because a few megabytes of abandoned

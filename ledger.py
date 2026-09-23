@@ -528,6 +528,30 @@ class Ledger(object):
             return self.connection.execute(
                 "DELETE FROM readings WHERE path = ?", (path,)).rowcount
 
+    def waiting_for_reading(self, limit=20000):
+        """How many filed items are still waiting to be read, and where.
+
+        A page held for OCR is filed -- it went somewhere -- but nothing in
+        it was ever read, so it sits in a holding folder with no category.
+        Counting them is what lets the log page say "twenty-two pages are
+        waiting for a program you have not installed" instead of leaving
+        somebody to wonder why their post is not sorting itself.
+        """
+        rows = self.connection.execute(
+            "SELECT facts_json FROM moves "
+            " WHERE status IN ('done','copied') AND undone_at IS NULL "
+            "   AND facts_json LIKE '%needs_ocr%' "
+            " ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+        waiting = 0
+        for row in rows:
+            try:
+                facts = json.loads(row["facts_json"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if isinstance(facts, dict) and facts.get("needs_ocr"):
+                waiting += 1
+        return waiting
+
     def record_cost(self, path, file_name, size, seconds,
                     growth=None, peak=None, reason=""):
         """Remember that one file was expensive to read.
