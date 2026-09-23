@@ -77,10 +77,20 @@ thread cannot be taken away from work it refuses to stop doing.
 They are separated because they **fail differently**, not merely to spread
 load. Their names are the ones that describe them:
 
-**folder-discovery** — walks trees, finds candidates. *Not built.*
-Fails on: permissions, dead network mounts, symlink loops, a volume that
-disappears mid-walk. Cheap, restartable, holds no state worth protecting.
-Correct response to a hang: kill and retry later.
+**folder-discovery** — walks trees, finds candidates. *Not built, and the
+case for it is weaker than it looked.*
+Fails on: permissions, dead network mounts, a volume that disappears
+mid-walk. Cheap, restartable, holds no state worth protecting. Correct
+response to a hang: kill and retry later.
+
+Symlink loops were listed here and are not a hazard: `os.walk` does not
+follow symlinked directories, and a loop three levels deep yields one item
+at depth 40. Checked, not assumed.
+
+What is left is a volume vanishing mid-walk, which truncates the walk
+silently and can drop queue entries that the next scan rebuilds anyway.
+That is a small, self-healing fault, and a process boundary is a large
+answer to it.
 
 **identify-catalogue** — reads bytes and works out what a file is. **Built**
 (`jobs.py`, `identify_worker.py`, `tool_worker.py`).
