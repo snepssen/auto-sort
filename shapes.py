@@ -318,7 +318,7 @@ def _best_spelling(counter):
 
 
 def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
-                max_share=MAX_CATEGORY_RATIO, cap=40, owner=(), never=()):
+                max_share=MAX_CATEGORY_RATIO, cap=40, owner=()):
     """Words that enough documents lead with to be a category they chose.
 
     This is deliberately not `learn`. That one groups files by the shape of
@@ -348,6 +348,7 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     if total < min_occurrences:
         return []
     frequency = collections.Counter()
+    bare = collections.Counter()
     spellings = collections.defaultdict(collections.Counter)
     positions = collections.defaultdict(list)
     documents = collections.defaultdict(set)
@@ -360,10 +361,15 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
             key = _fold(word)
             seen.setdefault(key, index)
             spellings[key][word] += 1
+        # Which of them were standing on their own rather than buried in a
+        # path or an address. See `_bare_words`.
+        standing = _bare_words(heading)
         for key, index in seen.items():
             frequency[key] += 1
             positions[key].append(index)
             documents[key].add(number)
+            if key in standing:
+                bare[key] += 1
 
     ceiling = max(min_occurrences, total * max_share)
     # The owner's own name is at the top of their payslip, their tenancy
@@ -377,14 +383,10 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     # matches the word it is being compared with: `Tamás` folds to `tamas`
     # on one side of the comparison and not the other.
     owner = set(_fold(word) for word in (owner or ()))
-    # A login name is not a word in any language, so it gets no allowance
-    # at all: `tamtor` is a handle somebody typed once when the machine was
-    # new, and no document has ever called itself that.
-    never = set(_fold(word) for word in (never or ()))
     own_ceiling = max(min_occurrences, total * OWNER_NAME_RATIO)
     terms = [(_best_spelling(spellings[key]), count)
              for key, count in frequency.items()
-             if key not in never
+             if bare[key] >= min_occurrences
              and min_occurrences <= count
              <= (own_ceiling if key in owner else ceiling)
              and _is_a_word(_best_spelling(spellings[key]))
@@ -408,6 +410,37 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
 # Measured on one real folder: `Service` sat at position 3 and was never
 # once first, `This` at 2, and every genuine category at 0.
 MAX_HEADING_POSITION = 3
+
+
+# A chunk of a heading that is a path, a web address or an email address
+# rather than words: the login name in `/Users/tamtor/Documents/...`, the
+# host in `sausage@factory`, the domain in `post.example.co.uk`.
+_AN_ADDRESS = re.compile(r"[/\\@]|\w\.\w+\.\w")
+
+
+def _bare_words(heading):
+    """The words of a heading that were standing on their own.
+
+    A word that only ever turns up inside a path or an address is an
+    identifier rather than a category. A login name is the usual one --
+    every occurrence of one in a real folder of 314 documents was inside
+    `/Users/<name>/...` and not one was a word -- but the rule is worth
+    more than that case: nothing a document *calls itself* is only ever
+    found inside a URL.
+
+    This also settles what to do about somebody whose account is named
+    after their online moniker rather than themselves. `sausage` is a
+    perfectly good username and also a perfectly good thing for a butcher's
+    invoice to say at the top, and the difference between the two is not
+    the word, it is whether it was ever used as one.
+    """
+    standing = set()
+    for chunk in str(heading or "").split():
+        if _AN_ADDRESS.search(chunk):
+            continue
+        for word in _WORD.findall(chunk):
+            standing.add(_fold(word))
+    return standing
 
 
 def _near_the_front(positions):

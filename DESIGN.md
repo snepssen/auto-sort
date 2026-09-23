@@ -449,4 +449,6 @@ duplication is three files and it buys each tool the ability to stand alone.
 18. The owner's own name, from the account record. No table and no
     vocabulary: the system was told it when the account was made. Held
     to a much lower ceiling than other words rather than banned, because
-    a surname is often also a word.
+    a surname is often also a word -- and the login and machine names with
+    it, since a moniker is a word too. What settles those is that a word
+    only ever found inside a path or an address was never used as one.

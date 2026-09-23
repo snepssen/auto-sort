@@ -236,8 +236,17 @@ It is not a ban, because a surname is often also a word: `Koch` is a cook,
 `Baker` is a baker, `Bill` is a bill. The name is held to a much lower
 ceiling than other words — above it the name is a letterhead, below it a
 word that happens to be somebody's name is far likelier to be the language.
-A *login* name gets no such allowance: `tamtor` is a handle somebody typed
-once when the machine was new, and no document has ever called itself that.
+
+The login name and the machine's own name are treated the same way, and for
+a better reason than they first appear to need. Plenty of people use an
+online moniker as a login and call the computer something like
+`sausage@factory`, and both turn up in exported headers and printed paths
+across everything they own. But `sausage` is also a perfectly good thing for
+a butcher's invoice to say at the top, so what settles it is not the word:
+**a word that only ever appears inside a path or an address is not what a
+document calls itself.** Measured on a real folder of 314 documents, every
+occurrence of the login name was inside `/Users/<name>/…` and not one was a
+word — while a `Sausage Factory` invoice keeps its category.
 
 **Glyph numbers are not words.** A font that ships only the characters it
 uses numbers them from scratch and explains them in a table. Without that

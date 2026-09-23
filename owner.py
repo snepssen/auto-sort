@@ -92,22 +92,43 @@ def names(refresh=False):
 
 
 def account(refresh=False):
-    """The login name and the home folder's name.
+    """The login name, the home folder's name, and this machine's name.
 
-    Kept apart from the name, and treated more harshly, because these are
-    not words. `Koch` is a cook and `Bill` is a bill, so a surname is only
-    suspected; `tamtor` is a handle somebody typed once and is never what a
-    document calls itself.
+    Kept apart from the name because it is a different kind of thing, and
+    often a sillier one: plenty of people use an online moniker as a login
+    and call the machine something like `sausage@factory`. Those are just
+    as useless as a category and just as much a letterhead -- they turn up
+    in exported headers and printed paths across everything the person
+    owns.
+
+    They are not banned, and the reason is the moniker: `sausage` is a
+    perfectly good username and a perfectly good thing for a butcher's
+    invoice to say at the top. What settles it is not the word but whether
+    the documents ever use it as one -- see `shapes._bare_words`.
     """
     global _account
     if _account is None or refresh:
         try:
             _account = (_words(os.path.basename(os.path.expanduser("~")))
                         | _words(os.environ.get("USER", ""))
-                        | _words(os.environ.get("USERNAME", "")))
+                        | _words(os.environ.get("USERNAME", ""))
+                        | _words(_machine()))
         except Exception:                    # noqa: BLE001
             _account = set()
     return _account
+
+
+def _machine():
+    """What this computer calls itself, minus the parts that are not a name."""
+    try:
+        import socket
+        name = socket.gethostname() or ""
+    except Exception:                        # noqa: BLE001
+        return ""
+    # `sausage.local`, `factory.lan`, `Tamas-MacBook-Pro.fritz.box`: the
+    # suffix is the network's, not the machine's.
+    return re.sub(r"\.(local|lan|home|internal|box|fritz\.box)$", "",
+                  str(name), flags=re.I).replace("-", " ").replace(".", " ")
 
 
 def forget():

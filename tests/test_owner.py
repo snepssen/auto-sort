@@ -53,6 +53,19 @@ class AskingTheMachine(unittest.TestCase):
                 mock.patch.dict(os.environ, {"USERFULLNAME": ""}, clear=False):
             self.assertEqual(owner.names(), set())
 
+    def test_the_machine_name_counts_as_an_account_name(self):
+        """`sausage@factory` is somebody's idea of a hostname and turns up
+        in exported headers across everything they own."""
+        owner.forget()
+        with mock.patch.object(owner, "_machine",
+                               return_value="Tamass-MacBook-Pro.local"):
+            self.assertIn("macbook", owner.account())
+
+    def test_a_network_suffix_is_not_the_machines_name(self):
+        owner.forget()
+        with mock.patch.object(owner, "_machine", return_value="sausage"):
+            self.assertIn("sausage", owner.account())
+
     def test_the_login_is_kept_apart_from_the_name(self):
         with mock.patch.object(owner, "_from_account",
                                return_value="Tamás Török"), \
@@ -108,18 +121,32 @@ class WhatItChanges(unittest.TestCase):
                  in shapes.learn_terms(headings, owner={"bill"})]
         self.assertIn("Bill", found)
 
-    def test_a_login_name_never_gets_that_chance(self):
-        """It is not a word in any language. Somebody typed it once."""
-        headings = (["tamtor export %d" % n for n in range(4)]
+    def test_a_login_name_inside_a_path_is_not_a_category(self):
+        """Measured: every occurrence of one in a real folder of 314
+        documents was inside `/Users/<name>/...` and not one was a word."""
+        headings = (["/Users/tamtor/Documents/export %d" % n
+                     for n in range(6)]
                     + ["Rechnung Stadtwerke %d" % n for n in range(40)]
                     + ["Mietvertrag Wohnung %d" % n for n in range(30)]
                     + ["Steuerbescheid Finanzamt %d" % n for n in range(30)])
         found = [word for word, _count
-                 in shapes.learn_terms(headings, never={"tamtor"})]
+                 in shapes.learn_terms(headings, owner={"tamtor"})]
         self.assertNotIn("tamtor", found)
+        self.assertNotIn("Users", found)
+
+    def test_a_moniker_the_documents_actually_use_keeps_its_chance(self):
+        """`sausage` is a perfectly good username and a perfectly good
+        thing for a butcher's invoice to say at the top."""
+        headings = (["Sausage Factory invoice %d" % n for n in range(6)]
+                    + ["Rechnung Stadtwerke %d" % n for n in range(40)]
+                    + ["Mietvertrag Wohnung %d" % n for n in range(30)]
+                    + ["Steuerbescheid Finanzamt %d" % n for n in range(30)])
+        found = [word for word, _count
+                 in shapes.learn_terms(headings, owner={"sausage"})]
+        self.assertIn("Sausage", found)
 
     def test_knowing_nobody_changes_nothing(self):
-        self.assertEqual(self.terms(owner=set(), never=set()), self.terms())
+        self.assertEqual(self.terms(owner=set()), self.terms())
 
 
 if __name__ == "__main__":

@@ -264,11 +264,9 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
     # has to have heard of it.
     # The one word this program is allowed to know without counting it:
     # the name of whoever this computer belongs to.
-    mine, handle = owner.names(), owner.account()
-    found.heading_terms = shapes.learn_terms(found.headings, owner=mine,
-                                             never=handle)
-    found.stem_terms = shapes.learn_terms(found.document_stems, owner=mine,
-                                          never=handle)
+    mine = owner.names() | owner.account()
+    found.heading_terms = shapes.learn_terms(found.headings, owner=mine)
+    found.stem_terms = shapes.learn_terms(found.document_stems, owner=mine)
     return found
 
 

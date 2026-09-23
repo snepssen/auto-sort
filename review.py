@@ -253,8 +253,8 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
     # belongs to: their name heads half the post in the house and divides
     # none of it.
     candidates = [word for word, _count
-                  in shapes.learn_terms(headings, owner=owner.names(),
-                                        never=owner.account())
+                  in shapes.learn_terms(
+                      headings, owner=owner.names() | owner.account())
                   if not _named_by_a_rule(word, rule_set, fact)]
     if not candidates:
         return [], len(headings)
