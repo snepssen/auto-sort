@@ -23,6 +23,7 @@ import zipfile
 from xml.etree import ElementTree
 
 from . import pdftext
+from . import worddoc
 
 MAX_PART = 4 * 1024 * 1024      # of any one XML part inside a document
 MAX_CHARS = 8000                # of text kept, as for a PDF
@@ -40,6 +41,11 @@ def read(path, fmt, head=b""):
     """`(text, runs)` for a document, or `("", [])`. Never raises."""
     try:
         if fmt == "word":
+            with open(path, "rb") as handle:
+                start = handle.read(8)
+            if start == worddoc.MAGIC:
+                # Word 97-2003: text only, headed by the top of the page.
+                return worddoc.text(_whole(path, worddoc.MAX_FILE)), []
             return _docx(path)
         if fmt == "opendocument-text":
             return _odt(path)

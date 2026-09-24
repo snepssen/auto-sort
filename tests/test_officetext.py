@@ -143,5 +143,42 @@ class Markdown(unittest.TestCase):
         self.assertTrue(text.startswith("Some preamble"))
 
 
+class Word97(unittest.TestCase):
+    """A `.doc` from before 2007: a compound file and a piece table."""
+
+    def test_a_real_one_reads(self):
+        import shutil as _shutil
+        import subprocess
+        tool = _shutil.which("textutil")
+        if not tool:
+            self.skipTest("textutil (macOS) writes the fixture")
+        folder = tempfile.mkdtemp(prefix="autosort-doc-")
+        try:
+            source = os.path.join(folder, "in.txt")
+            with open(source, "w", encoding="utf-8") as handle:
+                handle.write("Mietvertrag für die Wohnung\n\nZwischen dem "
+                             "Vermieter und dem Mieter wird folgender "
+                             "Vertrag geschlossen.\n")
+            target = os.path.join(folder, "Mietvertrag.doc")
+            subprocess.run([tool, "-convert", "doc", source, "-output",
+                            target], check=True, capture_output=True)
+            record = identify.identify(target, tier=identify.TIER_HEADER)
+            self.assertTrue(record.value("heading").startswith(
+                "Mietvertrag für die Wohnung"))
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_field_instructions_are_not_text(self):
+        from readers import worddoc
+        self.assertEqual(
+            worddoc._clean("Seite \x13 PAGE \\* MERGEFORMAT \x141\x15 von 3"),
+            "Seite 1 von 3")
+
+    def test_something_that_only_looks_like_one_is_just_unread(self):
+        from readers import worddoc
+        self.assertEqual(worddoc.text(worddoc.MAGIC + os.urandom(3000)), "")
+        self.assertEqual(worddoc.text(b"not a compound file"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

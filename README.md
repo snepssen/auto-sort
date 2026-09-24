@@ -339,6 +339,16 @@ it, and none lost a word: `P a ym e n ts` became `Payments`, `An twerpen`
 `Antwerpen`, `he eft` `heeft`, and 25 documents that had read as empty were
 read.
 
+**Not only PDFs.** Word, OpenDocument, RTF, Markdown and plain-text files are
+read the same way: the text near the top, and the title found by what is set
+larger than the body — a Word file records every run's size, directly or
+through its styles and the styles those are based on, so no list of what a
+heading style is called in any language is needed. A Markdown file's first
+`# ` line is its title. A Word 97–2003 `.doc` is a compound file holding a
+table of text pieces, 8-bit or UTF-16; it is read with the standard library
+too, text only, headed by the top of its first page. A Pages document is read
+through the PDF preview older ones keep; newer ones keep none.
+
 **Encrypted is not the same as locked.** Payroll portals, banks and phone
 companies encrypt what they send, almost always with no password to open it:
 the encryption forbids printing and editing, and every viewer opens the file
