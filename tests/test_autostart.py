@@ -44,6 +44,11 @@ class Autostart(unittest.TestCase):
                 entry = handle.read()
             self.assertIn("[Desktop Entry]", entry)
             self.assertIn("watch", entry)
+            # The menu entry starts what it opens, with the same rules.
+            with open(autostart.launcher_target(), encoding="utf-8") as handle:
+                launcher = handle.read()
+            self.assertIn('"open-log" "--start" "--rules"', launcher)
+            self.assertIn(autostart._desktop_quote(self.rules), launcher)
             removed = autostart.remove()
             self.assertFalse(removed["installed"])
 

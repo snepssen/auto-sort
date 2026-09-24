@@ -500,6 +500,64 @@ class DaemonCli(unittest.TestCase):
         self.assertLess(output.index("unlocked first"),
                         output.index("sudo pacman"))
 
+    def menu_click(self, answers, opened=True):
+        """`open-log --start`, as the applications-menu entry runs it."""
+        rules_file = os.path.join(self.directory, "rules.ini")
+        with mock.patch("daemon.wake", return_value=False), \
+                mock.patch("paths.state_dir", return_value=self.directory), \
+                mock.patch("subprocess.Popen") as popen, \
+                mock.patch("autosort._wait_for_new_daemon",
+                           return_value=answers), \
+                mock.patch("logpage.open_log", return_value=opened) as page:
+            result = self.run_cli("open-log", "--start", "--rules", rules_file,
+                                  "--state", self.state_file)
+        return result, popen, page, rules_file
+
+    def daemon_log(self):
+        try:
+            with open(os.path.join(self.directory, "daemon.log"),
+                      encoding="utf-8") as handle:
+                return handle.read()
+        except OSError:
+            return ""
+
+    def test_the_menu_entry_starts_a_daemon_that_is_not_running(self):
+        """On Linux the menu entry is the only way in, and clicking it with
+        nothing running printed to a terminal that did not exist."""
+        (code, _output, _errors), popen, page, rules_file = \
+            self.menu_click(answers=True)
+        self.assertEqual(code, 0)
+        command = popen.call_args[0][0]
+        self.assertIn("watch", command)
+        self.assertEqual(command[command.index("--rules") + 1], rules_file)
+        self.assertEqual(command[command.index("--state") + 1],
+                         self.state_file)
+        self.assertTrue(popen.call_args[1].get("start_new_session"))
+        page.assert_called_once_with(self.state_file)
+
+    def test_a_menu_click_that_cannot_start_it_says_so_somewhere(self):
+        (code, _output, errors), _popen, page, _rules = \
+            self.menu_click(answers=False)
+        self.assertEqual(code, 1)
+        page.assert_not_called()
+        self.assertIn("did not start", errors)
+        self.assertIn("did not start", self.daemon_log())
+
+    def test_a_page_that_would_not_open_says_so_somewhere(self):
+        (code, _output, _errors), _popen, _page, _rules = \
+            self.menu_click(answers=True, opened=False)
+        self.assertEqual(code, 1)
+        self.assertIn("could not open the log page", self.daemon_log())
+
+    def test_open_log_from_a_terminal_still_starts_nothing(self):
+        with mock.patch("daemon.wake", return_value=False), \
+                mock.patch("subprocess.Popen") as popen:
+            code, _output, errors = self.run_cli(
+                "open-log", "--state", self.state_file)
+        self.assertEqual(code, 1)
+        self.assertIn("not running", errors)
+        popen.assert_not_called()
+
     def test_sort_now_fails_clearly_when_daemon_is_absent(self):
         with mock.patch("daemon.wake", return_value=False):
             code, _output, errors = self.run_cli(

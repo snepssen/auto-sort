@@ -620,7 +620,8 @@ def watch(rule_path=None, state_file=None, dry_run=None, port=None,
     return 0
 
 
-def daemon_control(command, state_file=None, as_json=False):
+def daemon_control(command, state_file=None, as_json=False, start=False,
+                   rule_path=None, port=None):
     if command in ("pause", "resume"):
         with ledger_module.Ledger(state_file) as journal:
             journal.set_paused(command == "pause")
@@ -647,11 +648,13 @@ def daemon_control(command, state_file=None, as_json=False):
 
     if command == "open-log":
         running = daemon_module.wake(state_file, "status")
+        if not running and start:
+            return _start_and_open(rule_path, state_file, port)
         if not running:
             print("auto-sort daemon is not running", file=sys.stderr)
             return 1
         if not logpage.open_log(state_file):
-            print("could not open the log page", file=sys.stderr)
+            _say("could not open the log page")
             return 1
         return 0
 
@@ -891,19 +894,11 @@ def restart(rule_path=None, state=None, port=None, wait_seconds=20):
               file=sys.stderr)
         return 1
 
-    command = _watch_command(rule_path, state, port)
-    import subprocess
-    log = _daemon_log()
-    try:
-        # Detached, so it outlives this command rather than dying with it.
-        subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
-                         start_new_session=True)
-    except OSError as error:
-        print("Could not start a replacement: %s" % error, file=sys.stderr)
+    # Detached, so it outlives this command rather than dying with it.
+    failure = _spawn_daemon(_watch_command(rule_path, state, port))
+    if failure:
+        print("Could not start a replacement: %s" % failure, file=sys.stderr)
         return 1
-    finally:
-        if hasattr(log, "close"):
-            log.close()
     if _wait_for_new_daemon(state, before, wait_seconds):
         print("Restarted. %s" % _daemon_line(state))
         return 0
@@ -934,24 +929,78 @@ def relaunch(rule_path=None, state=None, port=None, wait_seconds=20):
               "back yet.", file=sys.stderr)
         return 1
 
-    import subprocess
-    log = _daemon_log()
-    try:
-        subprocess.Popen(_watch_command(rule_path, state, port),
-                         stdout=log, stderr=subprocess.STDOUT,
-                         start_new_session=True)
-    except OSError as error:
-        print("Could not start a replacement: %s" % error, file=sys.stderr)
+    # Detached, so it outlives this command rather than dying with it.
+    failure = _spawn_daemon(_watch_command(rule_path, state, port))
+    if failure:
+        print("Could not start a replacement: %s" % failure, file=sys.stderr)
         return 1
-    finally:
-        if hasattr(log, "close"):
-            log.close()
     if _wait_for_new_daemon(state, mine, wait_seconds):
         print("Restarted. %s" % _daemon_line(state))
         return 0
     print("Started a replacement, but it has not answered yet.",
           file=sys.stderr)
     return 1
+
+
+def _start_and_open(rule_path=None, state=None, port=None, wait_seconds=20):
+    """What the applications-menu entry does when nothing is running.
+
+    On a Linux desktop with no tray the menu entry is the only way in, and
+    clicking it with the daemon stopped printed "not running" to a terminal
+    that did not exist: a click that did nothing at all. So it starts the
+    daemon exactly as `restart` does -- detached, writing to the daemon
+    log -- waits for it to answer, and then opens the page. Whatever goes
+    wrong is said where somebody who clicked can find it.
+    """
+    before = daemon_module.running_pid(state)
+    failure = _spawn_daemon(_watch_command(rule_path, state, port))
+    if failure:
+        _say("auto-sort did not start: %s" % failure)
+        return 1
+    if not _wait_for_new_daemon(state, before, wait_seconds):
+        _say("auto-sort did not start within %d seconds; what it said is "
+             "in %s" % (wait_seconds, os.path.join(paths.state_dir(),
+                                                   "daemon.log")))
+        return 1
+    if not logpage.open_log(state):
+        _say("auto-sort is running, but could not open the log page in a "
+             "browser")
+        return 1
+    return 0
+
+
+def _spawn_daemon(command):
+    """Start `command` detached, so it outlives this process; None, or why
+    it could not be started."""
+    import subprocess
+    log = _daemon_log()
+    try:
+        subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                         start_new_session=True)
+    except OSError as error:
+        return str(error)
+    finally:
+        if hasattr(log, "close"):
+            log.close()
+    return None
+
+
+def _say(message):
+    """Tell somebody who may not have a terminal.
+
+    Standard error for the one who does, and the daemon log for the one who
+    clicked a menu entry: that file is where the log page, `status` and a
+    person looking for what happened all end up.
+    """
+    print(message, file=sys.stderr)
+    try:
+        paths.ensure(paths.state_dir())
+        with open(os.path.join(paths.state_dir(), "daemon.log"), "a",
+                  encoding="utf-8") as handle:
+            handle.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"),
+                                       message))
+    except OSError:
+        pass
 
 
 def _daemon_log():
@@ -1801,6 +1850,7 @@ Options
   --apply                            perform a sort after its required preview
   --dry-run                          force a read-only sort or undo preview
   --once                             run one watch cycle and exit
+  --start                            open-log: start the daemon if it is not running
   --port N                           loopback daemon port (default 47653)
   --out FILE                         write proposed rules to FILE (propose)
   --limit N                          stop surveying after N items (propose)
@@ -1828,6 +1878,7 @@ def main(argv=None):
     state_file = None
     dry_run = None
     once = False
+    start_daemon = False
     port = None
     targets = []
     while argv:
@@ -1854,6 +1905,8 @@ def main(argv=None):
             dry_run = True
         elif argument == "--once":
             once = True
+        elif argument == "--start":
+            start_daemon = True
         elif argument == "--port" and argv:
             try:
                 port = int(argv.pop(0))
@@ -1950,7 +2003,9 @@ def main(argv=None):
         if targets:
             print("%s takes no arguments" % command, file=sys.stderr)
             return 2
-        return daemon_control(command, state_file, as_json)
+        return daemon_control(command, state_file, as_json,
+                              start=start_daemon, rule_path=rule_path,
+                              port=port)
     if command == "autostart":
         if len(targets) > 1:
             print("autostart takes one action", file=sys.stderr)

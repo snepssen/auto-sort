@@ -129,7 +129,8 @@ def install(rules_file, runner=subprocess.run):
         # so somebody can open the page without being told a command.
         launcher = launcher_target()
         paths.ensure(os.path.dirname(launcher))
-        _write_text(launcher, _launcher_entry(open_log_command()), 0o644)
+        _write_text(launcher, _launcher_entry(open_log_command(rules_file)),
+                    0o644)
     return status()
 
 
@@ -182,11 +183,20 @@ X-GNOME-Autostart-enabled=true
 """ % " ".join(_desktop_quote(argument) for argument in arguments)
 
 
-def open_log_command():
-    """The argv that opens the page in a browser, token and all."""
+def open_log_command(rules_file=None):
+    """The argv that opens the page in a browser, token and all.
+
+    `--start` because a menu click is not a terminal: with nothing running
+    it printed "not running" to nobody, and the only way in on a desktop
+    with no tray did nothing at all. It starts the same daemon the login
+    entry does, with the same rules, and then opens the page.
+    """
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "autosort.py")
-    return [sys.executable, script, "open-log"]
+    arguments = [sys.executable, script, "open-log", "--start"]
+    if rules_file:
+        arguments += ["--rules", os.path.abspath(rules_file)]
+    return arguments
 
 
 def _launcher_entry(arguments):
