@@ -462,6 +462,20 @@ class WhatAMacPrints(unittest.TestCase):
                 b"BT 10 0 0 10 120 700 Tm /F1 1 Tf (ll) Tj ET")
         self.assertEqual(self.runs(body, widths), "Atholl")
 
+    def test_a_step_the_width_of_the_last_glyph_is_the_same_word(self):
+        widths = {"F1": ({ord("P"): 640, ord("a"): 570}, 500.0, 1)}
+        self.assertFalse(pdftext._stepped_gap(b" Tj 0.64 0 Td ",
+                                              ("F1", 1.0, b"P"), widths))
+        self.assertTrue(pdftext._stepped_gap(b" Tj 0.9 0 Td ",
+                                             ("F1", 1.0, b"P"), widths))
+
+    def test_a_step_backwards_is_another_column(self):
+        """A Belgian payslip steps left to right-aligned columns, and read as
+        a continuation its headings ran together: `BedragBasisAantal`."""
+        widths = {"F1": ({ord(c): 500 for c in "Bedrag"}, 500.0, 1)}
+        self.assertTrue(pdftext._stepped_gap(b" Tj -52 0 Td ",
+                                             ("F1", 5.8, b"Bedrag"), widths))
+
     def test_cid_widths_in_both_forms(self):
         self.assertEqual(pdftext._cid_widths(b"[1 [500 600] 10 12 250]"),
                          {1: 500.0, 2: 600.0, 10: 250.0, 11: 250.0,

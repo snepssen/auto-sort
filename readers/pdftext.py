@@ -897,6 +897,8 @@ def _page_runs(body, maps, current=None, widths=None):
             spaced = _placed_gap(gap, placed.get(index - 1),
                                  placed.get(index), previous, widths)
             if spaced is None:
+                spaced = _stepped_gap(gap, previous, widths)
+            if spaced is None:
                 spaced = _gap_is_a_space(
                     gap, (drawn_size or 1.0) if glyph_at_a_time else 0.0)
             if spaced:
@@ -1016,6 +1018,41 @@ def _placed_gap(gap, before, after, previous, widths):
     if step < -0.5 * em:
         return True                              # back to another column
     return step > _PLACED_SPACE * em
+
+
+def _stepped_gap(gap, previous, widths):
+    """Is a `tx ty Td` step between two strings a space? None if unknown.
+
+    The step is in the same units as the glyph widths once the font size is
+    applied, so a step the width of the last glyph is the same word and one
+    wider by `_PLACED_SPACE` of an em is a space. Some writers place every
+    glyph like this -- `0.64 0 Td <..> Tj` -- and without the widths their
+    payslips read `P a ym e n ts`.
+    """
+    if not widths or previous is None:
+        return None
+    font, size, raw = previous
+    table = widths.get(font)
+    if table is None or not size:
+        return None
+    if any(move in gap for move in (b"Tm", b"T*", b"'", b'"', b"ET", b"TJ")):
+        return None
+    steps = _STEP.findall(gap)
+    if len(steps) != 1:
+        return None
+    tx, ty = _signed(steps[0][0]), _signed(steps[0][1])
+    if tx is None or ty is None:
+        return None
+    if abs(ty) > 0.01 * size:
+        return True                              # another line
+    advance = _advance(raw, table) / 1000.0 * size
+    beyond = tx - advance
+    # Backwards is never the same word: a table's writer steps left to the
+    # start of the next right-aligned column, and read as a continuation a
+    # Belgian payslip's headings ran together as `BedragBasisAantal`.
+    if beyond < -0.3 * size:
+        return True
+    return beyond > _PLACED_SPACE * size
 
 
 def _page_text(body, maps, current=None):

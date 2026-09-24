@@ -73,13 +73,19 @@ class Handler(object):
         return rc4(key, data)
 
 
-def handler(data):
-    """A `Handler` if `data` is encrypted and opens with no password.
+def handler(data, passwords=None):
+    """A `Handler` if `data` is encrypted and can be opened.
 
-    None for a file that is not encrypted, one that needs a password, and
-    one this does not know how to read -- the three are the same answer to
-    the caller, which is "read it as it is".
+    With no password first, which is how most of them open; then with each
+    of `passwords` -- the owner's own, from the Keychain (see `known`) --
+    as the password that opens the file and as the one that owns it.
+
+    None for a file that is not encrypted, one whose password is not
+    known, and one this does not know how to read -- the three are the same
+    answer to the caller, which is "read it as it is".
     """
+    if passwords is None:
+        passwords = known()
     dictionary = _encrypt_dictionary(data)
     if dictionary is None:
         return None
@@ -117,28 +123,102 @@ def handler(data):
     size = 5 if revision == 2 else length // 8
     metadata = not re.search(rb"/EncryptMetadata\s+false", dictionary)
 
-    # Algorithm 2: the file key, from the empty password.
-    digest = hashlib.md5(
-        _PAD + owner[:32] + struct.pack("<i", _signed(permissions)) + ident
-        + (b"\xff\xff\xff\xff" if revision >= 4 and not metadata else b"")
-    ).digest()
-    if revision >= 3:
-        for _round in range(50):
-            digest = hashlib.md5(digest[:size]).digest()
-    key = digest[:size]
+    def file_key(padded):
+        # Algorithm 2: the file key, from a padded user password.
+        digest = hashlib.md5(
+            padded + owner[:32] + struct.pack("<i", _signed(permissions))
+            + ident + (b"\xff\xff\xff\xff" if revision >= 4 and not metadata
+                       else b"")).digest()
+        if revision >= 3:
+            for _round in range(50):
+                digest = hashlib.md5(digest[:size]).digest()
+        return digest[:size]
 
-    # Algorithms 4 and 5: is the empty password really the password?
-    if revision == 2:
-        if rc4(key, _PAD) != user[:32]:
-            return None
-    else:
+    def opens(key):
+        # Algorithms 4 and 5: does this key produce the file's check value?
+        if revision == 2:
+            return rc4(key, _PAD) == user[:32]
         check = hashlib.md5(_PAD + ident).digest()
         for count in range(20):
             check = rc4(bytes(byte ^ count for byte in key), check)
-        if check != user[:16]:
-            return None
-    return Handler(key, stream_method == "AESV2", stream_method,
-                   string_method)
+        return check == user[:16]
+
+    def as_owner(padded):
+        # Algorithm 7: the owner password unlocks the user password.
+        digest = hashlib.md5(padded).digest()
+        if revision >= 3:
+            for _round in range(50):
+                digest = hashlib.md5(digest).digest()
+        owner_key = digest[:size]
+        found = owner[:32]
+        if revision == 2:
+            return rc4(owner_key, found)
+        for count in range(19, -1, -1):
+            found = rc4(bytes(byte ^ count for byte in owner_key), found)
+        return found
+
+    for padded in [_PAD] + [_padded(word) for word in passwords]:
+        for candidate in (padded, as_owner(padded) if padded != _PAD
+                          else None):
+            if candidate is None:
+                continue
+            key = file_key(candidate)
+            if opens(key):
+                return Handler(key, stream_method == "AESV2", stream_method,
+                               string_method)
+    return None
+
+
+def _padded(password):
+    raw = password.encode("utf-8") if isinstance(password, str) else password
+    return (raw + _PAD)[:32]
+
+
+# ---------------------------------------------------------------------------
+# The owner's own passwords
+# ---------------------------------------------------------------------------
+
+# Where they are kept: a generic password in the login Keychain. Never in
+# the rules file, the ledger or a log -- the rules file is plain text that
+# gets shared, and the ledger outlives any one file.
+KEYCHAIN_SERVICE = "auto-sort PDF passwords"
+
+_known = None
+
+
+def known(refresh=False):
+    """The passwords the owner has given for their own PDFs. Often none.
+
+    One per line in a single Keychain item, read once per process. The
+    Keychain asks the owner before handing it to a program it has not
+    allowed; asking is its job, not this one's. Anything but a Mac, or no
+    item, is an empty list and the same behaviour as before.
+    """
+    global _known
+    if _known is not None and not refresh:
+        return _known
+    _known = []
+    import subprocess
+    import sys
+    if sys.platform != "darwin":
+        return _known
+    try:
+        done = subprocess.run(
+            ["/usr/bin/security", "find-generic-password", "-s",
+             KEYCHAIN_SERVICE, "-w"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return _known
+    if done.returncode == 0:
+        text = done.stdout.decode("utf-8", "replace").rstrip("\n")
+        _known = [line for line in text.split("\n") if line]
+    return _known
+
+
+def forget():
+    """For tests, and after the owner changes what is kept."""
+    global _known
+    _known = None
 
 
 def decrypted(data, found=None, pictures=False):

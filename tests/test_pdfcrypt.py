@@ -33,9 +33,9 @@ AES_PAGE = bytes.fromhex(
     "59992382cbaa649f2b607c0bbe37627994a96a99166f3bfb26596bee10")
 
 
-def _key(permissions=-4):
-    digest = hashlib.md5(pdfcrypt._PAD + OWNER + struct.pack(
-        "<i", permissions) + IDENT).digest()
+def _key(permissions=-4, padded=None, owner=None):
+    digest = hashlib.md5((padded or pdfcrypt._PAD) + (owner or OWNER)
+                         + struct.pack("<i", permissions) + IDENT).digest()
     for _round in range(50):
         digest = hashlib.md5(digest[:16]).digest()
     return digest[:16]
@@ -79,6 +79,24 @@ def _aes_pdf():
     return _pdf(encrypt, AES_PAGE)
 
 
+def _locked_pdf(user_password, owner_password):
+    """RC4, revision 3, needing `user_password` to open (Algorithms 2-5)."""
+    user_padded = pdfcrypt._padded(user_password)
+    owner_key = hashlib.md5(pdfcrypt._padded(owner_password)).digest()
+    for _round in range(50):
+        owner_key = hashlib.md5(owner_key).digest()
+    owner = user_padded
+    for count in range(20):
+        owner = pdfcrypt.rc4(bytes(byte ^ count for byte in owner_key[:16]),
+                             owner)
+    key = _key(padded=user_padded, owner=owner)
+    handler = pdfcrypt.Handler(key, False, "V2", "V2")
+    encrypt = (b"<</Filter/Standard/V 2/R 3/Length 128/P -4/O <"
+               + owner.hex().encode() + b">/U <"
+               + _user_value(key).hex().encode() + b">>>")
+    return _pdf(encrypt, handler.decrypt(4, 0, PAGE))
+
+
 class _Peek:
     def __init__(self, data):
         self.data = data
@@ -108,6 +126,13 @@ class TheCiphers(unittest.TestCase):
 
 class OpeningWithoutAPassword(unittest.TestCase):
 
+    def setUp(self):
+        # Never the Keychain of whoever runs the tests.
+        pdfcrypt._known = []
+
+    def tearDown(self):
+        pdfcrypt.forget()
+
     def test_an_rc4_file_reads(self):
         text, image_only = pdftext.extract(_Peek(_rc4_pdf()))
         self.assertIn("Rechnung Stadtwerke", text)
@@ -122,6 +147,24 @@ class OpeningWithoutAPassword(unittest.TestCase):
         locked = _rc4_pdf(user=bytes(32))
         self.assertIsNone(pdfcrypt.handler(locked))
         self.assertEqual(pdftext.extract(_Peek(locked)), ("", False))
+
+    def test_the_owners_password_opens_it(self):
+        locked = _locked_pdf("letmein", "boss")
+        self.assertIsNone(pdfcrypt.handler(locked, passwords=[]))
+        opened = pdfcrypt.handler(locked, passwords=["letmein"])
+        self.assertIsNotNone(opened)
+        text, _image_only = pdftext.extract(_Peek(
+            pdfcrypt.decrypted(locked, opened).replace(b"/Encrypt",
+                                                       b"/Xncrypt")))
+        self.assertIn("Rechnung Stadtwerke", text)
+
+    def test_the_password_that_owns_it_opens_it_too(self):
+        locked = _locked_pdf("letmein", "boss")
+        self.assertIsNotNone(pdfcrypt.handler(locked, passwords=["boss"]))
+
+    def test_a_wrong_password_is_not_enough(self):
+        locked = _locked_pdf("letmein", "boss")
+        self.assertIsNone(pdfcrypt.handler(locked, passwords=["guess"]))
 
     def test_an_unencrypted_file_has_no_handler(self):
         self.assertIsNone(pdfcrypt.handler(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n"))
