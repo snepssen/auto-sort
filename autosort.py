@@ -1479,9 +1479,31 @@ def adopt_categories(rule_path=None, state=None, apply_changes=False,
 
     print()
     if not found:
-        print("  Nothing new. Every word that heads %d or more of your %d"
-              % (shapes.MIN_OCCURRENCES, headings))
-        print("  filed documents already has a rule.")
+        with ledger_module.Ledger(state) as journal:
+            reason, words = review.nothing_new(journal, rule_set)
+        at_least = (shapes.MIN_OCCURRENCES, headings)
+        if reason == "named":
+            print("  Nothing new. Every word that heads %d or more of your %d"
+                  % at_least)
+            print("  filed documents already has a rule.")
+        elif reason == "too few":
+            print("  Nothing new yet. %s head%s %d or more of your %d filed"
+                  % ((", ".join(words), "s" if len(words) == 1 else "")
+                     + at_least))
+            print("  documents, but one or two words repeating can be a "
+                  "letterhead;")
+            print("  %d different ones are needed before any becomes a "
+                  "folder." % shapes.MIN_CATEGORY_VALUES)
+        elif reason == "claimed":
+            print("  Nothing new. %s head%s %d or more of your %d filed"
+                  % ((", ".join(words), "s" if len(words) == 1 else "")
+                     + at_least))
+            print("  documents, but a word nearer the top of those pages "
+                  "already files them.")
+        else:
+            print("  Nothing new yet. No word heads %d or more of your %d "
+                  "filed" % at_least)
+            print("  documents.")
         print()
         return 0
 

@@ -319,7 +319,8 @@ def _best_spelling(counter):
 
 def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
                 max_share=MAX_CATEGORY_RATIO, cap=40, owner=(),
-                owner_share=None, person=(), titled=False):
+                owner_share=None, person=(), titled=False,
+                min_values=MIN_CATEGORY_VALUES):
     """Words that enough documents lead with to be a category they chose.
 
     This is deliberately not `learn`. That one groups files by the shape of
@@ -345,7 +346,9 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     and the folders anybody wants are the second kind. Nothing here knows
     which is which -- only where they sat.
 
-    `titled` is for headings: see `_set_as_a_title`.
+    `titled` is for headings: see `_set_as_a_title`. `min_values` is how
+    many such words there must be before any of them is trusted; one, to
+    ask which words would count if there were enough of them.
     """
     total = len(headings)
     if total < min_occurrences:
@@ -407,7 +410,7 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
              and _is_a_word(_best_spelling(spellings[key]))
              and _near_the_front(positions[key])
              and (not titled or _set_as_a_title(spellings[key]))]
-    if len(terms) < MIN_CATEGORY_VALUES:
+    if len(terms) < min_values:
         # One word repeating is a letterhead; two is not yet a shape. Three
         # distinct answers is the smallest thing that sorts anything.
         return []

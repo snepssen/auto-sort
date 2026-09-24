@@ -447,29 +447,12 @@ def emerging(journal, rule_set, fact="heading", limit=20000,
     already has. Every heading still teaches the vocabulary, so a sender's
     letterhead is still known as one.
     """
-    holding = set(rule.name for rule in rule_set.rules if rule.holding)
-    holding.add("[unsorted]")
-    headings = []
-    documents = []
-    for row in journal.placed_moves(None, limit):
-        facts = _facts_of(row)
-        value = facts.get(fact)
-        if value:
-            waiting = bool(row["holding"] if "holding" in row.keys()
-                           else 0) or row["rule_name"] in holding
-            headings.append(value)
-            documents.append((value, facts, waiting))
+    headings, documents = _headings(journal, rule_set, fact, limit)
     if not headings:
         return [], 0
 
     # Candidates: words the documents themselves repeat, that no rule names.
-    # The same allowance the proposer makes for whoever this computer
-    # belongs to: their name heads half the post in the house and divides
-    # none of it.
-    candidates = [word for word, _count
-                  in shapes.learn_terms(
-                      headings, owner=owner.account(),
-                      person=owner.names(), titled=fact == "heading")
+    candidates = [word for word, _count in _terms(headings, fact)
                   if not _named_by_a_rule(word, rule_set, fact)]
     if not candidates:
         return [], len(headings)
@@ -533,6 +516,61 @@ def emerging(journal, rule_set, fact="heading", limit=20000,
     found = [(word, earned[word]) for word in candidates
              if earned[word] >= shapes.MIN_OCCURRENCES]
     return found, len(headings)
+
+
+def _headings(journal, rule_set, fact="heading", limit=20000):
+    """Every filed heading, and each with its facts and whether it waits."""
+    holding = set(rule.name for rule in rule_set.rules if rule.holding)
+    holding.add("[unsorted]")
+    headings = []
+    documents = []
+    for row in journal.placed_moves(None, limit):
+        facts = _facts_of(row)
+        value = facts.get(fact)
+        if value:
+            waiting = bool(row["holding"] if "holding" in row.keys()
+                           else 0) or row["rule_name"] in holding
+            headings.append(value)
+            documents.append((value, facts, waiting))
+    return headings, documents
+
+
+def _terms(headings, fact="heading", min_values=shapes.MIN_CATEGORY_VALUES):
+    # The same allowance the proposer makes for whoever this computer
+    # belongs to: their name heads half the post in the house and divides
+    # none of it.
+    return shapes.learn_terms(headings, owner=owner.account(),
+                              person=owner.names(),
+                              titled=fact == "heading",
+                              min_values=min_values)
+
+
+def nothing_new(journal, rule_set, fact="heading", limit=20000):
+    """Why `emerging` found nothing, as `(reason, words)`.
+
+    `adopt` used to answer every empty result with "every word that heads 3
+    or more of your documents already has a rule", including on a folder
+    where `Rechnung` headed three of six and had no rule at all. Nothing
+    new is four different answers:
+
+    - `none`: no word heads enough documents yet.
+    - `too few`: `words` do, but one or two words repeating is not yet a
+      shape -- it may be a letterhead -- so none of them is trusted.
+    - `named`: every such word already has a rule.
+    - `claimed`: `words` have none, but where they are said a word nearer
+      the top already files those documents.
+    """
+    headings, _documents = _headings(journal, rule_set, fact, limit)
+    standing = [word for word, _count in _terms(headings, fact, min_values=1)]
+    if not standing:
+        return "none", []
+    unnamed = [word for word in standing
+               if not _named_by_a_rule(word, rule_set, fact)]
+    if not unnamed:
+        return "named", []
+    if len(standing) < shapes.MIN_CATEGORY_VALUES:
+        return "too few", unnamed
+    return "claimed", unnamed
 
 
 def outranked(journal, rule_set, words, fact="heading", limit=20000):

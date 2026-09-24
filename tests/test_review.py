@@ -8,6 +8,8 @@ the part that reads the answer back out.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import shutil
 import sys
@@ -17,6 +19,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import autosort                                          # noqa: E402
 import fixtures                                          # noqa: E402
 import ledger                                            # noqa: E402
 import review                                            # noqa: E402
@@ -536,6 +539,53 @@ class CategoriesThatArriveLater(unittest.TestCase):
                        "Rechnung")
         new, _seen = review.emerging(self.journal, self.rule_set)
         self.assertNotIn("Muenchen", [word for word, _count in new])
+
+
+class WhyNothingWasLearnt(CategoriesThatArriveLater):
+    """`adopt` said "every word that heads 3 or more of your 6 filed
+    documents already has a rule" about a folder where `Rechnung` headed
+    three of them and had no rule at all. Nothing new is several different
+    answers, and only one of them is "already has a rule"."""
+
+    def test_no_word_heads_enough_documents(self):
+        for heading in ("Lohnabrechnung Januar", "Mietvertrag Koeln",
+                        "Kontoauszug Mai", "Steuerbescheid 2019"):
+            self.filed_with(heading)
+        reason, _words = review.nothing_new(self.journal, self.rule_set)
+        self.assertEqual(reason, "none")
+
+    def test_one_word_repeating_is_not_yet_a_category(self):
+        for number in range(3):
+            self.filed_with("Mahnung Nummer %d" % number)
+        self.filed_with("Mietvertrag Koeln")
+        self.filed_with("Steuerbescheid 2019")
+        reason, words = review.nothing_new(self.journal, self.rule_set)
+        self.assertEqual(reason, "too few")
+        self.assertEqual(words, ["Mahnung"])
+
+    def test_every_such_word_already_has_a_rule(self):
+        for word in ("Rechnung", "Stadtwerke", "Kontoauszug"):
+            for number in range(3):
+                self.filed("%s Nummer %d" % (word, number),
+                           "what the page calls itself: %s" % word)
+        reason, _words = review.nothing_new(self.journal, self.rule_set)
+        self.assertEqual(reason, "named")
+
+    def test_adopt_only_says_already_has_a_rule_when_it_is_true(self):
+        for number in range(3):
+            self.filed_with("Mahnung Nummer %d" % number)
+        self.filed_with("Mietvertrag Koeln")
+        self.filed_with("Steuerbescheid 2019")
+        self.journal.close()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = autosort.main(["adopt", "--rules", self.rule_set.source,
+                                  "--state", os.path.join(self.dir,
+                                                          "state.db")])
+        self.journal = ledger.Ledger(os.path.join(self.dir, "state.db"))
+        self.assertEqual(code, 0)
+        self.assertNotIn("already has a rule", output.getvalue())
+        self.assertIn("Mahnung", output.getvalue())
 
 
 class AdoptingWithoutRewriting(unittest.TestCase):
