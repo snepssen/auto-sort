@@ -358,64 +358,40 @@ class PollingDaemon(object):
                         "`auto-sort corrections` to see what it suggests."
                         % (len(moved), "" if len(moved) == 1 else "s"))
 
+    # Files read again per cycle, in either pass. The log page, the tray and
+    # a quit all wait on the same thread as a cycle, and the first refile
+    # after an update read 2,100 files in one go: minutes of an icon that
+    # did not answer. A few at a time, between cycles, costs nobody
+    # anything.
+    REFILE_BATCH = 25
+    # How often files in holding folders are looked at again when nothing
+    # else has changed: for rules that depend on a file's age, and for a
+    # reading program installed since. Everything else that could promote
+    # them -- a new rule, a better reader -- starts a pass at once.
+    REGROUP_INTERVAL = 24 * 3600
+
     def _check_regroup(self, rule_set, now_value, requested_dry):
         """Promote what is waiting, once the folder has taught enough.
 
-        Shares the corrections interval because both answer the same kind of
-        question -- has anything changed since we last looked -- and both are
-        cheap when the answer is no. But a new rules file is an answer to
-        that question already: somebody who has just adopted a category
-        should see its files arrive in it now, not in half an hour. So is a
-        preview, which the next cycle carries out rather than the next
-        interval.
+        A new rules file is the usual reason: somebody who has just adopted
+        a category should see its files arrive in it now. A better reader
+        is another -- what is waiting was judged on what an older one said.
+        Otherwise once a day. On a new machine most of a decade of
+        Downloads waits in these folders, so they are gone through a batch
+        at a time, like `_check_refile`.
         """
-        if rule_set.settings.regroup == "off":
-            return
-        mark = "%s:%s" % (sorter.rules_hash(rule_set),
-                          regroup_module.reader_mark())
         last = self.journal.get_state("regroup_checked_at")
         try:
             last_value = float(last or 0)
         except (TypeError, ValueError):
             last_value = 0.0
-        if (now_value - last_value < self.CORRECTION_INTERVAL
-                and self.journal.get_state("regrouped_with") == mark):
-            return
-        self.journal.set_state("regroup_checked_at", repr(now_value))
-        self.journal.set_state("regrouped_with", mark)
-        # What is waiting is judged on what was read when it arrived, and
-        # the reader may have got better since. See `review.refresh_held`.
-        # With the tools this daemon already runs, so that a page filed
-        # before OCR was possible is read now rather than never.
-        helpers = self._helpers(rule_set)
-        try:
-            review.refresh_held(self.journal, helpers=helpers,
-                                reader=self.reader)
-        except Exception as error:           # noqa: BLE001
-            self.output("Could not re-read waiting files: %s" % error)
-        try:
-            plans = regroup_module.build(self.journal, rule_set,
-                                         reader=self.reader)
-        except (OSError, ValueError) as error:
-            self.output("Could not check for regrouping: %s" % error)
-            return
-        total = sum(len(plan.items) for _root, plan in plans)
-        if not total:
-            return
-        if rule_set.settings.regroup != "apply":
-            self.output("%d file%s in a holding folder could be filed "
-                        "properly now. Run `auto-sort regroup` to see, or "
-                        "set regroup = apply." % (total,
-                                                  "" if total == 1 else "s"))
-            return
-        if self._run_plans(plans, rule_set, requested_dry, "Regrouped"):
-            self.journal.set_state("regrouped_with", "")
-
-    # Filed files read again per cycle. The log page, the tray and a quit
-    # all wait on the same thread as a cycle, and the first pass after an
-    # update read 2,100 files in one go: minutes of an icon that did not
-    # answer. A few at a time, between cycles, costs nobody anything.
-    REFILE_BATCH = 25
+        self._pass(rule_set, requested_dry, "regroup", regroup_module.candidates,
+                   "Regrouped", "%d file%s in a holding folder could be "
+                   "filed properly now. Run `auto-sort regroup` to see, or "
+                   "set regroup = apply.",
+                   due=now_value - last_value >= self.REGROUP_INTERVAL,
+                   finished=lambda: self.journal.set_state(
+                       "regroup_checked_at", repr(now_value)))
 
     def _check_refile(self, rule_set, requested_dry):
         """Reconsider what a category placed, once the rules or reader change.
@@ -430,56 +406,74 @@ class PollingDaemon(object):
 
         Keyed on the rules and the reader, not on a clock, because reading
         every filed document again is the most expensive thing this does
-        and is pointless while neither has changed. Newest first, a batch a
-        cycle, with where it got to kept in the ledger so a restart carries
-        on rather than starting over.
+        and is pointless while neither has changed.
+        """
+        self._pass(rule_set, requested_dry, "refile", regroup_module.filed,
+                   "Refiled", "%d filed file%s would go to a different "
+                   "category now. Run `auto-sort refile` to see, or set "
+                   "regroup = apply.")
+
+    def _pass(self, rule_set, requested_dry, name, pick, label, report,
+              due=False, finished=None):
+        """One batch of a pass over placed files, if a pass is owed.
+
+        A pass is owed when the rules or the reader have changed since the
+        last one finished, or when `due` says so. Newest first, a batch a
+        cycle, with where it got to kept in the ledger so that a restart
+        carries on rather than starting over; a forced preview is carried
+        out by the next cycle, on the same batch.
         """
         if rule_set.settings.regroup == "off":
             return
         mark = "%s:%s" % (sorter.rules_hash(rule_set),
                           regroup_module.reader_mark())
-        if self.journal.get_state("refiled_with") == mark:
-            return
+        # The names the ledger already uses, so an update does not start
+        # either pass over for nothing.
+        done_key = {"refile": "refiled_with",
+                    "regroup": "regrouped_with"}.get(name, name + "_with")
+        progress_key = "%s_progress" % name
         below, found = None, 0
-        progress = (self.journal.get_state("refile_progress") or "").split()
+        progress = (self.journal.get_state(progress_key) or "").split()
         if len(progress) == 3 and progress[0] == mark:
             below, found = int(progress[1]), int(progress[2])
+        elif self.journal.get_state(done_key) == mark and not due:
+            return
         try:
             batch = [candidate for candidate
-                     in regroup_module.filed(self.journal, rule_set)
+                     in pick(self.journal, rule_set)
                      if below is None or candidate.row["id"] < below]
             batch = batch[:self.REFILE_BATCH]
         except Exception as error:           # noqa: BLE001
-            self.output("Could not check filed files again: %s" % error)
-            self.journal.set_state("refiled_with", mark)
-            return
+            self.output("Could not look at filed files again: %s" % error)
+            batch = []
         if not batch:
-            self.journal.set_state("refiled_with", mark)
-            self.journal.set_state("refile_progress", "")
+            self.journal.set_state(done_key, mark)
+            self.journal.set_state(progress_key, "")
+            if finished:
+                finished()
             if found and rule_set.settings.regroup != "apply":
-                self.output("%d filed file%s would go to a different "
-                            "category now. Run `auto-sort refile` to see, or "
-                            "set regroup = apply."
-                            % (found, "" if found == 1 else "s"))
+                self.output(report % (found, "" if found == 1 else "s"))
             return
         lowest = min(candidate.row["id"] for candidate in batch)
         try:
+            # What is filed was judged on what was read when it arrived,
+            # and the reader may have got better since; so is what the
+            # tools can add, a page filed before OCR was possible included.
             review.refresh_held(self.journal, helpers=self._helpers(rule_set),
                                 rows=[candidate.row for candidate in batch],
                                 reader=self.reader)
-            plans = regroup_module.build(self.journal, rule_set,
-                                         pick=regroup_module.filed,
+            plans = regroup_module.build(self.journal, rule_set, pick=pick,
                                          only=batch, reader=self.reader)
         except Exception as error:           # noqa: BLE001
             # Past this batch rather than stuck on it: the next cycle
             # would only fail the same way.
-            self.output("Could not check filed files again: %s" % error)
+            self.output("Could not look at filed files again: %s" % error)
             plans = []
         total = sum(len(plan.items) for _root, plan in plans)
         if total and rule_set.settings.regroup == "apply":
-            if self._run_plans(plans, rule_set, requested_dry, "Refiled"):
+            if self._run_plans(plans, rule_set, requested_dry, label):
                 return              # a preview: the same batch moves next
-        self.journal.set_state("refile_progress",
+        self.journal.set_state(progress_key,
                                "%s %d %d" % (mark, lowest, found + total))
 
     def _helpers(self, rule_set):

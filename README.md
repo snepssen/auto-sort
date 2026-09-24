@@ -782,9 +782,13 @@ gap — `corrections` learns from it, and regrouping will not overrule it.
 
 A promotion is an ordinary move: same planner, same collision handling, same
 forced preview the first time, same ledger, and `auto-sort undo` reverses it
-like anything else. The background sorter checks every half hour and does it;
-set `regroup = report` in `[settings]` to have it only say so in the log, or
-`off` to never look.
+like anything else. The background sorter does it by itself as soon as the
+rules file or the reader changes -- adopt a category and its files arrive in
+it within seconds -- and once a day otherwise, for rules that depend on a
+file's age. It goes through the waiting files a few at a time between
+checks of the watched folder, so a decade of them never stops the tray icon
+answering. Set `regroup = report` in `[settings]` to have it only say so in
+the log, or `off` to never look.
 
 The flag lives in the ledger, recorded when the file was placed, rather than
 being worked out later from the rule's name — names change every time a rules

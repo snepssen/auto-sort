@@ -305,6 +305,68 @@ class PromotedWhenARuleArrives(unittest.TestCase):
         self.assertTrue(os.path.exists(
             os.path.join(self.out, "Letters", "offer letter.txt")), messages)
 
+    def hold(self, name):
+        where = os.path.join(self.out, "Unfiled")
+        path = os.path.join(where, name)
+        with open(path, "w") as handle:
+            handle.write("Dear applicant")
+        with ledger.Ledger(self.state) as journal:
+            run = journal.start_run("sort", source_root=self.root,
+                                    dry_run=False)
+            journal.add_move(run, 1, 1, "move", "waiting",
+                             os.path.join(self.root, name), path, 1, "",
+                             status="done", facts={"kind": "document"},
+                             holding=True)
+            journal.finish_run(run, "completed")
+
+    def test_a_decade_of_waiting_files_goes_a_few_at_a_time(self):
+        for number in range(2, 10):
+            self.hold("letter %d.txt" % number)
+        self.write(ADOPTED)
+        read = []
+        import review
+        original = review.refresh_held
+
+        def counting(journal, **kwargs):
+            # Every held file at once, when no rows are given.
+            rows = kwargs.get("rows")
+            read.append(len(rows) if rows is not None else 10 ** 6)
+            return original(journal, **kwargs)
+        with daemon.PollingDaemon(self.rules, self.state, port=0,
+                                  output=[].append) as service:
+            service.REFILE_BATCH = 3
+            review.refresh_held = counting
+            try:
+                for moment in range(1000, 1012):
+                    service.cycle(now_value=moment)
+            finally:
+                review.refresh_held = original
+        self.assertTrue(read and max(read) <= 3, read)
+        self.assertEqual(len(os.listdir(os.path.join(self.out, "Letters"))),
+                         9)
+
+    def test_nothing_changed_nothing_read_until_a_day_has_passed(self):
+        self.write(HOLDING)
+        asked = []
+        original = regroup.candidates
+
+        def counting(*args, **kwargs):
+            asked.append(1)
+            return original(*args, **kwargs)
+        with daemon.PollingDaemon(self.rules, self.state, port=0,
+                                  output=[].append) as service:
+            for moment in (1000, 1001, 1002):
+                service.cycle(now_value=moment)
+            regroup.candidates = counting
+            try:
+                for moment in (1100, 5000, 20000):
+                    service.cycle(now_value=moment)
+                self.assertEqual(asked, [])
+                service.cycle(now_value=1000 + service.REGROUP_INTERVAL + 5)
+                self.assertTrue(asked)
+            finally:
+                regroup.candidates = original
+
 
 class TheReaderMark(unittest.TestCase):
 
