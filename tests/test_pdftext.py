@@ -335,6 +335,121 @@ class OnlyWhatThePageDraws(unittest.TestCase):
         self.assertFalse(pdftext._is_page_content(data, at, binary))
 
 
+class _Peek:
+    def __init__(self, data):
+        self.data = data
+
+    def at(self, offset, size):
+        return self.data[offset:offset + size]
+
+
+# How Qt (and so every wkhtmltopdf document) writes: glyph ids through
+# a two-byte font, each glyph its own string moved to with `Td`, spaces
+# drawn as glyphs, and a character map stored uncompressed in the
+# bracketed form.
+_QT_TEXT = "Loonbrief voor de maand september met alle bedragen erop"
+
+
+def _qt_like(compress_map=False):
+    import zlib
+    letters = sorted(set(_QT_TEXT))
+    glyph = dict((char, index + 1) for index, char in enumerate(letters))
+    targets = b" ".join(b"<%04X>" % ord(char) for char in letters)
+    cmap = (b"begincmap\n1 begincodespacerange\n<0000> <FFFF>\n"
+            b"endcodespacerange\n1 beginbfrange\n<0001> <%04X> [%s]\n"
+            b"endbfrange\nendcmap" % (len(letters), targets))
+    steps = b"\n".join(b"7 0 Td <%04X> Tj" % glyph[char] for char in _QT_TEXT)
+    page = zlib.compress(b"BT\n/F6 14 Tf 1 0 0 -1 0 0 Tm\n" + steps + b"\nET")
+    if compress_map:
+        cmap_object = (b"6 0 obj\n<</Length %d/Filter/FlateDecode>>stream\n"
+                       % len(zlib.compress(cmap)) + zlib.compress(cmap))
+    else:
+        cmap_object = b"6 0 obj\n<</Length %d>>stream\n" % len(cmap) + cmap
+    return (b"%PDF-1.4\n"
+            b"5 0 obj\n<</Type/Font/Subtype/Type0/Encoding/Identity-H"
+            b"/ToUnicode 6 0 R>>\nendobj\n"
+            + cmap_object + b"\nendstream\nendobj\n"
+            b"4 0 obj\n<</Type/Page/Resources<</Font<</F6 5 0 R>>>>"
+            b"/Contents 7 0 R>>\nendobj\n"
+            b"7 0 obj\n<</Length %d/Filter/FlateDecode>>stream\n" % len(page)
+            + page + b"\nendstream\nendobj\n%%EOF\n")
+
+
+class WhatQtWrites(unittest.TestCase):
+    """Two real payslips written this way were read as having no words at
+    all, and sent to be OCR'd as though they were photographs."""
+
+    def test_the_whole_document_reads(self):
+        text, image_only = pdftext.extract(_Peek(_qt_like()))
+        self.assertEqual(text, _QT_TEXT)
+        self.assertFalse(image_only)
+
+    def test_a_map_stored_plain_is_still_a_map(self):
+        compressed, _ = pdftext.extract(_Peek(_qt_like(compress_map=True)))
+        plain, _ = pdftext.extract(_Peek(_qt_like()))
+        self.assertEqual(plain, compressed)
+
+    def test_a_range_that_lists_its_targets(self):
+        codes, width = pdftext._parse_cmap(
+            b"1 begincodespacerange <0000> <FFFF> endcodespacerange "
+            b"1 beginbfrange <0001> <0003> [<0053> <0044> <0020>] endbfrange")
+        self.assertEqual(width, 2)
+        self.assertEqual(codes, {1: "S", 2: "D", 3: " "})
+
+    def test_the_list_is_not_read_as_ranges_of_its_own(self):
+        """Read as the run form, `<0035> <002F> <0039>` inside the list
+        became a mapping of its own."""
+        codes, _width = pdftext._parse_cmap(
+            b"1 begincodespacerange <0000> <FFFF> endcodespacerange "
+            b"1 beginbfrange <0001> <0004> [<0035> <002F> <0039> <0032>] "
+            b"endbfrange")
+        self.assertEqual(sorted(codes), [1, 2, 3, 4])
+
+    def test_words_placed_one_at_a_time_keep_their_gaps(self):
+        """The other kind of writer: a word per string, moved with `Td`."""
+        body = b"BT /F1 10 Tf " + b" ".join(
+            b"30 0 Td (%s) Tj" % word.encode()
+            for word in "one two three four five six seven eight nine ten "
+                        "eleven twelve thirteen fourteen fifteen sixteen "
+                        "seventeen eighteen nineteen twenty".split()) + b" ET"
+        text = pdftext._page_text(body, {})
+        self.assertTrue(text.startswith("one two three four"), text)
+
+    def test_a_jump_along_the_line_is_still_a_gap(self):
+        """One glyph at a time, then a jump to the next column."""
+        steps = [b"6 0 Td (%s) Tj" % char.encode() for char in "Betrag"]
+        steps.append(b"200 0 Td (1) Tj")
+        steps += [b"6 0 Td (%s) Tj" % char.encode() for char in "2345678901234567"]
+        body = b"BT /F1 10 Tf " + b" ".join(steps) + b" ET"
+        self.assertEqual(pdftext._page_text(body, {}), "Betrag 12345678901234567")
+
+
+class TablesThatSayLessThanTheyShould(unittest.TestCase):
+    """Character maps as real writers leave them, not as the spec has them."""
+
+    def test_the_codes_listed_decide_the_width(self):
+        """Declared `<0000> <FFFF>`, listed one byte at a time: read two
+        bytes at a time, a real certificate went blank."""
+        codes, width = pdftext._parse_cmap(
+            b"1 begincodespacerange <0000> <FFFF> endcodespacerange "
+            b"2 beginbfchar <77> <0077> <92> <2019> endbfchar")
+        self.assertEqual(width, 1)
+        self.assertEqual(pdftext._through(b"w\x92s", codes, width), "w\u2019s")
+
+    def test_a_one_byte_code_left_out_is_itself(self):
+        """A table of only the exceptions: the ligature, the curly quote."""
+        codes = {0x92: "\u2019", 0x1F: "fi"}
+        self.assertEqual(pdftext._through(b"\x1Fgures", codes, 1), "figures")
+
+    def test_a_two_byte_code_left_out_is_nothing(self):
+        self.assertEqual(pdftext._through(b"\x00\x41", {}, 2), "")
+
+    def test_the_end_of_a_stream_is_not_the_start_of_one(self):
+        data = (b"1 0 obj <</Length 3>> stream\nabc\nendstream\nendobj\n"
+                b"2 0 obj <</Length 3>> stream\ndef\nendstream\nendobj\n")
+        self.assertEqual(len(pdftext._STREAM.findall(data)), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
 

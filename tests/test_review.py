@@ -129,6 +129,33 @@ class WhatTheRecordShows(unittest.TestCase):
         dead, _files = review.dead_rules(self.journal, self.rule_set)
         self.assertEqual(dead, [])
 
+    def test_a_rule_written_above_the_old_winner_has_not_lost(self):
+        """Filed by `Stadtwerke` before a rule above it existed: those
+        files are the new rule's to take, not proof it can never win.
+        Reported as always losing, a rule written a minute earlier came
+        with the advice that deleting it would change nothing."""
+        run = self.journal.start_run("sort", source_root=self.dir,
+                                     dry_run=False)
+        for number in range(6):
+            self.file_one(run, number, "Rechnung Stadtwerke", "Stadtwerke")
+        self.journal.finish_run(run, "done")
+        dead, _files = review.dead_rules(self.journal, self.rule_set)
+        self.assertNotIn("Rechnung", [use.name for use in dead])
+        waiting = [use for use in review.usage(self.journal, self.rule_set)[0]
+                   if use.name == "Rechnung"][0]
+        self.assertEqual(waiting.waiting, 6)
+        self.assertEqual(waiting.shadowed, 0)
+
+    def test_a_winner_no_longer_in_the_file_beats_nothing(self):
+        run = self.journal.start_run("sort", source_root=self.dir,
+                                     dry_run=False)
+        for number in range(6):
+            self.file_one(run, number, "Stadtwerke Abrechnung",
+                          "a rule since deleted")
+        self.journal.finish_run(run, "done")
+        dead, _files = review.dead_rules(self.journal, self.rule_set)
+        self.assertNotIn("Stadtwerke", [use.name for use in dead])
+
 
 class RulesThatJustMiss(unittest.TestCase):
     """A rule asking about a fact that is there, for a value that is not.

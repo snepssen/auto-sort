@@ -45,7 +45,11 @@ MAX_INFLATE = 4 * 1024 * 1024
 
 # A page drawn as a photograph rather than set as type.
 _IMAGE_HINT = re.compile(rb"/Subtype\s*/Image|/DCTDecode|/JPXDecode|/CCITTFaxDecode")
-_STREAM = re.compile(rb"stream\r\n|stream\n|stream\r")
+# Not the `stream` inside `endstream`: that is the end of one, and what
+# follows it is the next object. It went unnoticed while every stream had
+# to inflate, because those bytes never do; read as a plain stream, fonts
+# and colour profiles became letters.
+_STREAM = re.compile(rb"(?<!end)stream(?:\r\n|\n|\r)")
 _ESCAPES = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b",
             b"f": b"\f", b"(": b"(", b")": b")", b"\\": b"\\"}
 _OCTAL = re.compile(rb"\\([0-7]{1,3})")
@@ -210,7 +214,31 @@ def _inflate(body):
         return None
     end = body.find(b"endstream", match.end())
     raw = body[match.end():end if end != -1 else len(body)]
+    return _contents(body[:match.start()], raw)
+
+
+def _contents(dictionary, raw):
+    """A stream's bytes as its dictionary says they are stored.
+
+    Compression is optional. A stream with no `/Filter` is its own
+    contents, and writers old and new leave them that way: Qt, behind
+    every wkhtmltopdf document, stores its character maps plain. Only
+    inflating meant two real payslips' maps were never found, their text
+    came out as glyph numbers, and they were sent to be OCR'd -- as though
+    a document that was typed were a photograph of one.
+    """
+    if b"/Filter" not in dictionary:
+        return raw[:MAX_INFLATE]
     return _unzip(raw)
+
+
+def _dictionary_before(data, stream_start):
+    """The dictionary of the stream starting at `stream_start`."""
+    head = data[max(0, stream_start - 600):stream_start]
+    # The dictionary belongs to this stream only from its object header on;
+    # anything before that is the tail of the previous object.
+    header = head.rfind(b" obj")
+    return head[header:] if header != -1 else head[-300:]
 
 
 def _unzip(raw):
@@ -224,6 +252,11 @@ def _unzip(raw):
         return zlib.decompressobj().decompress(raw, MAX_INFLATE)
     except zlib.error:
         return None
+
+
+_RANGE_ENTRY = re.compile(
+    rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*"
+    rb"(?:\[([^\]]*)\]|<([0-9A-Fa-f]+)>)")
 
 
 def _parse_cmap(body):
@@ -241,6 +274,18 @@ def _parse_cmap(body):
         bounds = _HEX.findall(space.group(1))
         if bounds:
             width = max(1, min(4, len(_hex_str(bounds[0])) or 1))
+    # The codes the table lists are what the font draws with, whatever the
+    # codespace claims. A real certificate's fonts declared `<0000> <FFFF>`
+    # and listed `<77> <0077>`: read two bytes at a time, not one character
+    # of it matched and the whole certificate went blank.
+    listed = collections.Counter(
+        len(_hex_str(source))
+        for block in _BFCHAR.findall(body) + _BFRANGE.findall(body)
+        for source in _HEX.findall(block)[:1])
+    if listed:
+        commonest = listed.most_common(1)[0][0]
+        if 1 <= commonest <= 4:
+            width = commonest
 
     for block in _BFCHAR.findall(body):
         items = _HEX.findall(block)
@@ -251,16 +296,23 @@ def _parse_cmap(body):
                 codes[int.from_bytes(source, "big")] = target
 
     for block in _BFRANGE.findall(body):
-        # `<low> <high> <first>` maps a run, and the bracketed form lists
-        # each destination instead. Only the run form is common.
-        for low, high, dest in re.findall(
-                rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
-                block):
-            start = int(low, 16)
-            stop = int(high, 16)
+        # `<low> <high> <first>` maps a run; `<low> <high> [<a> <b> ...]`
+        # lists each destination instead. Qt writes only the second, and
+        # read as though it were the first, the triples inside its list
+        # became mappings of their own -- a document of wrong letters.
+        for match in _RANGE_ENTRY.finditer(block):
+            start = int(match.group(1), 16)
+            stop = int(match.group(2), 16)
             if stop < start or stop - start > 65535:
                 continue
-            base = _hex_str(dest)
+            if match.group(3):
+                targets = _HEX.findall(match.group(3))
+                for offset, dest in enumerate(targets[:stop - start + 1]):
+                    target = _utf16(_hex_str(dest))
+                    if target:
+                        codes[start + offset] = target
+                continue
+            base = _hex_str(match.group(4))
             if not base:
                 continue
             first = int.from_bytes(base, "big")
@@ -474,11 +526,21 @@ def _font_maps(data, objects=None, own=None):
 
 
 def _through(raw, codes, width):
-    """One string's bytes mapped through a font's own table."""
+    """One string's bytes mapped through a font's own table.
+
+    A one-byte font's table is often only the exceptions -- a ligature, a
+    curly quote -- and every other code is the character it looks like,
+    which is how these strings read before any table was consulted. A
+    two-byte code has no such fallback: it is a glyph number and means
+    nothing on its own.
+    """
     out = []
     for index in range(0, len(raw) - width + 1, width):
         code = int.from_bytes(raw[index:index + width], "big")
-        out.append(codes.get(code, ""))
+        found = codes.get(code)
+        if found is None and width == 1:
+            found = chr(code)
+        out.append(found or "")
     return "".join(out)
 
 
@@ -602,10 +664,37 @@ _KERN = re.compile(rb"-?\d+(?:\.\d+)?")
 _KERN_IS_A_SPACE = -100.0
 
 
-def _gap_is_a_space(gap):
-    """Did the writer move the pen far enough between these two strings?"""
+# A pen move within a line: `tx ty Td`.
+_STEP = re.compile(rb"(-?\d*\.?\d+)\s+(-?\d*\.?\d+)\s+T[dD]")
+# Most strings one character long: the writer places glyphs, not words.
+_GLYPH_AT_A_TIME = 0.6
+_GLYPH_STRINGS = 20
+# In that mode, a step along the line longer than this many ems is a jump
+# to somewhere else -- the next column, a tab stop -- rather than the width
+# of the glyph just drawn.
+_GLYPH_STEP = 1.5
+
+
+def _gap_is_a_space(gap, glyph_size=0.0):
+    """Did the writer move the pen far enough between these two strings?
+
+    `glyph_size` is the font size when the stream is drawn a glyph at a
+    time, as Qt draws everything (and so every wkhtmltopdf document): each
+    character its own string, each moved to with `Td`, and the spaces drawn
+    as glyphs of their own. There, a step the width of a letter is not a
+    word gap -- read as one, a payslip came out as `S D   S t a f f i n g`
+    and was sent off to be OCR'd as having no words at all.
+    """
     if not gap:
         return False
+    if glyph_size and not any(move in gap for move in
+                              (b"Tm", b"T*", b"'", b'"', b"TJ", b"ET")):
+        steps = _STEP.findall(gap)
+        if steps and all(abs(_number(ty) or 0.0) < 0.01
+                         and 0.0 <= (_number(tx) or 0.0)
+                         <= glyph_size * _GLYPH_STEP
+                         for tx, ty in steps):
+            return False
     if any(move in gap for move in _MOVES):
         return True
     for number in _KERN.findall(gap):
@@ -644,12 +733,11 @@ def _page_runs(body, maps, current=None):
                 for match in _SIZED_FONT.finditer(body)]
     scalings = [(match.start(), abs(_number(match.group(4)) or 1.0))
                 for match in _TEXT_MATRIX.finditer(body)]
-    runs = []
+    drawn_strings = []
     position = 0
     scaled = 0
     size = carried
     scale = 1.0
-    previous_end = None
     for where, ends, raw in _strings(body):
         while position < len(switches) and switches[position][0] <= where:
             current = switches[position][1]
@@ -658,9 +746,6 @@ def _page_runs(body, maps, current=None):
         while scaled < len(scalings) and scalings[scaled][0] <= where:
             scale = scalings[scaled][1] or 1.0
             scaled += 1
-        if previous_end is not None and _gap_is_a_space(body[previous_end:where]):
-            runs.append((_GAP, " ", 0.0))
-        previous_end = ends
         entry = maps.get(current) if current else None
         if entry:
             codes, width = entry
@@ -671,8 +756,24 @@ def _page_runs(body, maps, current=None):
             # subsetting became universal -- and those are the old files
             # this exists for.
             drawn = _decode(raw)
+        drawn_strings.append((where, ends, current, size, scale, drawn))
+
+    # Judged over the whole stream: one writer draws it all the same way.
+    singles = sum(1 for entry in drawn_strings if len(entry[5]) == 1)
+    glyph_at_a_time = (len(drawn_strings) >= _GLYPH_STRINGS
+                       and singles >= len(drawn_strings) * _GLYPH_AT_A_TIME)
+
+    runs = []
+    previous_end = None
+    for where, ends, font, drawn_size, drawn_scale, drawn in drawn_strings:
+        if previous_end is not None and _gap_is_a_space(
+                body[previous_end:where],
+                (drawn_size or 1.0) if glyph_at_a_time else 0.0):
+            runs.append((_GAP, " ", 0.0))
+        previous_end = ends
         if drawn:
-            runs.append((current, drawn, round((size or 0.0) * scale, 1)))
+            runs.append((font, drawn,
+                         round((drawn_size or 0.0) * drawn_scale, 1)))
     return runs, (current, size)
 
 
@@ -754,11 +855,7 @@ def _is_page_content(data, stream_start, body):
     carried the same attachment, and were offered as the name the series
     had chosen for itself.
     """
-    head = data[max(0, stream_start - 600):stream_start]
-    # The dictionary belongs to this stream only from its object header on;
-    # anything before that is the tail of the previous object.
-    header = head.rfind(b" obj")
-    dictionary = head[header:] if header != -1 else head[-300:]
+    dictionary = _dictionary_before(data, stream_start)
     if _NOT_PAGE_CONTENT.search(dictionary):
         return False
     if not body:
@@ -1022,7 +1119,7 @@ def _collect(peek):
         streams += 1
         # Capped, and tolerant of a wrongly written length -- which is common
         # enough that giving up on the file would be an overreaction.
-        body = _unzip(body)
+        body = _contents(_dictionary_before(data, match.start()), body)
         if body is None:
             continue
         if b"BT" not in body:            # no text block: a picture or a path

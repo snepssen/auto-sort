@@ -45,6 +45,9 @@ class Usage(object):
         self.placed = 0          # times it was the answer
         self.shadowed = 0        # times it matched and something above won
         self.shadowed_by = collections.Counter()
+        # Times it matched a file filed by a rule that is now below it, or
+        # gone: the file is its to take next time, not a loss.
+        self.waiting = 0
 
     @property
     def dead(self):
@@ -58,7 +61,8 @@ class Usage(object):
         """
         if getattr(self.rule, "holding", False):
             return False
-        return self.placed == 0 and self.shadowed >= MIN_TRIALS
+        return (self.placed == 0 and self.waiting == 0
+                and self.shadowed >= MIN_TRIALS)
 
     def __repr__(self):
         return "<Usage %s placed=%d shadowed=%d>" % (
@@ -82,6 +86,8 @@ def usage(journal, rule_set, limit=20000):
     """
     usages = collections.OrderedDict(
         (rule.name, Usage(rule)) for rule in rule_set.rules)
+    order = dict((rule.name, index)
+                 for index, rule in enumerate(rule_set.rules))
     files = 0
     for row in journal.placed_moves(None, limit):
         facts = _facts_of(row)
@@ -102,9 +108,18 @@ def usage(journal, rule_set, limit=20000):
                 matched, _used = rule.condition.evaluate(facts)
             except Exception:    # noqa: BLE001 - a rule must never crash this
                 continue
-            if matched:
+            if not matched:
+                continue
+            # Only a rule above this one can have beaten it. A winner now
+            # below it, or no longer in the file, filed this before the
+            # rules said otherwise -- read as a loss, a contract rule added
+            # above the one that had filed 169 contracts was reported as
+            # always losing to it, and as safe to delete.
+            if winner in order and order[winner] < order[rule.name]:
                 usages[rule.name].shadowed += 1
                 usages[rule.name].shadowed_by[winner] += 1
+            else:
+                usages[rule.name].waiting += 1
     return list(usages.values()), files
 
 
@@ -236,7 +251,7 @@ def near_misses(journal, rule_set, limit=20000):
     """
     usages, files = usage(journal, rule_set, limit)
     never = set(use.rule.name for use in usages
-                if not use.placed and not use.shadowed)
+                if not use.placed and not use.shadowed and not use.waiting)
     if not never:
         return [], files
 
