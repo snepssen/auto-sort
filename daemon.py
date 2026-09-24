@@ -34,6 +34,7 @@ import regroup as regroup_module
 import review
 import sorter
 import tray
+import userdirs
 
 
 DEFAULT_PORT = 47653
@@ -664,9 +665,11 @@ class PollingDaemon(object):
                 queue_fingerprint, now_value, QUEUE_LIMIT)
             if not ready:
                 continue
-            results.extend(self._process_ready(
+            done = self._process_ready(
                 root, ready, rule_set, queue_fingerprint, plan_fingerprint,
-                requested_dry, now_value))
+                requested_dry, now_value)
+            results.extend(done)
+            self._say_sorted(root, done)
             if self.journal.paused():
                 break
         # Tool workers are started on the first file that needs one and
@@ -688,6 +691,29 @@ class PollingDaemon(object):
             self._tidy_ledger(now_value)
             self._tidy_state_dir(now_value)
         return results
+
+    def _say_sorted(self, root, results):
+        """One line for a background sort that moved something.
+
+        The log said "Learnt" and "Regrouped" and never that a download had
+        been sorted, which is the thing it does all day. A line a sort and
+        not a line a file: the ledger and the log page have the detail.
+        Files, not items -- a film and its subtitles are two -- counted
+        from what the ledger recorded as done.
+        """
+        moved = failed = 0
+        for result in results:
+            if result.dry_run:
+                continue
+            moved += len(self.journal.moves(result.run_id, ["done"]))
+            failed += result.failed
+        if not moved and not failed:
+            return
+        line = "Sorted %d file%s from %s" % (
+            moved, "" if moved == 1 else "s", userdirs.short(root))
+        if failed:
+            line += "; %d could not be moved" % failed
+        self.output(line)
 
     def _observe_root(self, root, rule_set, fingerprint, now_value):
         protected = self._protected(rule_set)

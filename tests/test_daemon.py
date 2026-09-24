@@ -24,6 +24,7 @@ import ledger                                            # noqa: E402
 import rules                                             # noqa: E402
 import sorter                                            # noqa: E402
 import tray                                               # noqa: E402
+import userdirs                                           # noqa: E402
 
 
 class PersistentDaemon(unittest.TestCase):
@@ -88,6 +89,25 @@ into = {output}/Pictures
             self.assertTrue(os.path.exists(
                 os.path.join(self.output, "Pictures", "photo.png")))
         self.assertTrue(any("daemon paused" in message for message in messages))
+
+    def test_a_background_sort_says_what_it_did_in_one_line(self):
+        """The log said "Learnt" and "Regrouped" and never once that a
+        download had been sorted -- the thing it does all day. One line a
+        sort, not one a file: the ledger and the log page have the detail."""
+        self.configure(settle=3)
+        for name in ("one.png", "two.png", "three.png"):
+            self.image(name)
+        messages = []
+        with self.service(messages) as service:
+            service.cycle(now_value=100)
+            service.cycle(now_value=104)            # the preview
+            service.journal.set_paused(False)
+            service.cycle(now_value=105)
+        sorted_lines = [message for message in messages
+                        if message.startswith("Sorted ")]
+        self.assertEqual(sorted_lines, ["Sorted 3 files from %s"
+                                        % userdirs.short(self.root)],
+                         messages)
 
     def test_change_restarts_settle_window(self):
         self.configure(settle=3, dry_run="yes")
