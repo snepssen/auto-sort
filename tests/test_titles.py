@@ -202,6 +202,14 @@ class DropCapitals(unittest.TestCase):
         runs = body("Luik A", 12.0) + body("in te vullen " * 20, 8.5)
         self.assertEqual(pdftext.title(runs), "Luik A")
 
+    def test_glyphs_at_one_size_are_not_drop_capitals(self):
+        """A Mac's print draws a glyph or two at a time; joined as capitals,
+        "Year to Date" read `Yearto Date`."""
+        runs = ([("F1", "Y", 14.0), ("F1", "ear", 14.0), ("F1", " t", 14.0),
+                 ("F1", "o", 14.0), ("F1", " Date", 14.0)]
+                + body("body " * 40, 10.0))
+        self.assertEqual(pdftext.title(runs), "Year to Date")
+
     def test_a_lone_capital_word_stays_a_word(self):
         """`A` followed by a capitalised word is not a drop capital."""
         runs = ([("F7", "A", 12.0), (GAP, " ", 0.0), ("F7", "Title", 12.0)]

@@ -832,9 +832,14 @@ def _page_runs(body, maps, current=None, widths=None):
     of 172 documents, and reading each stream fresh made nine words in ten
     look as though they had been drawn with no font at all.
     """
-    # What was in use when the previous stream ended, font and size both.
+    # What was in use when the previous stream ended, font and size both,
+    # and where its last string was set, if that is known.
+    last_placed = None
     if isinstance(current, tuple):
-        current, carried = current
+        if len(current) == 3:
+            current, carried, last_placed = current
+        else:
+            current, carried = current
     else:
         carried = 0.0
     switches = [(match.start(), match.group(1).decode("latin-1"),
@@ -870,15 +875,23 @@ def _page_runs(body, maps, current=None, widths=None):
 
     # Judged over the whole stream: one writer draws it all the same way.
     singles = sum(1 for entry in drawn_strings if len(entry[5]) == 1)
-    placed = _placements(body, drawn_strings, matrices) if widths else {}
+    placed = _placements(body, drawn_strings, matrices, widths) \
+        if widths else {}
     glyph_at_a_time = (len(drawn_strings) >= _GLYPH_STRINGS
                        and singles >= len(drawn_strings) * _GLYPH_AT_A_TIME)
 
     runs = []
     previous_end = None
     previous = None
+    joins = False
     for index, (where, ends, font, drawn_size, drawn_scale, drawn,
                 raw) in enumerate(drawn_strings):
+        if index == 0 and last_placed is not None and widths:
+            # The last stream ended in the middle of a word as often as not:
+            # Quartz splits a page's glyphs between streams as it pleases.
+            before, earlier = last_placed
+            joins = _placed_gap(b"Tm", before, placed.get(0), earlier,
+                                widths) is False
         if previous_end is not None:
             gap = body[previous_end:where]
             spaced = _placed_gap(gap, placed.get(index - 1),
@@ -890,10 +903,19 @@ def _page_runs(body, maps, current=None, widths=None):
                 runs.append((_GAP, " ", 0.0))
         previous_end = ends
         previous = (font, drawn_size, raw)
+        last_placed = (placed.get(index), previous) if index in placed \
+            else None
         if drawn:
             runs.append((font, drawn,
                          round((drawn_size or 0.0) * drawn_scale, 1)))
-    return runs, (current, size)
+    if joins:
+        runs.insert(0, (_JOINS, "", 0.0))
+    return runs, (current, size, last_placed)
+
+
+# Marks the start of a stream that continues the word the last one ended
+# in; `_collect` takes back the gap it put between them.
+_JOINS = object()
 
 
 def _signed(raw):
@@ -907,14 +929,19 @@ def _signed(raw):
 _RELATIVE = re.compile(rb"\bT[dD*]\b|['\"]")
 
 
-def _placements(body, drawn_strings, matrices):
-    """`{string index: (x, y, horizontal scale)}` for strings set by `Tm`.
+def _placements(body, drawn_strings, matrices, widths):
+    """`{string index: (x, y, horizontal scale)}` where a position is known.
 
-    Only a string drawn straight after its own text matrix, with no other
-    string and no relative move in between, has a position known without
-    following the whole text state -- and that is exactly how the writers
-    that need this draw: Quartz, behind every PDF a Mac prints, gives each
-    glyph or two a text block and a matrix of its own.
+    A string drawn straight after a text matrix is where the matrix puts
+    it. One drawn after another with nothing between them but kerning --
+    the next string of a `TJ`, or another `Tj` -- is where the pen was left:
+    the last one's position, plus its width from the font's own table,
+    less the kerning. Anything else (a relative move, a new line) and the
+    position is not followed further until the next matrix.
+
+    That is how the writers that need this draw. Quartz, behind every PDF
+    a Mac prints, gives each glyph or two a text block and a matrix of its
+    own, and puts the rest of a word in a `TJ` after it.
     """
     placed = {}
     matrix_at = 0
@@ -925,15 +952,35 @@ def _placements(body, drawn_strings, matrices):
         while matrix_at < len(matrices) and matrices[matrix_at].start() < where:
             latest = matrices[matrix_at]
             matrix_at += 1
-        if latest is not None and latest.start() > last_string_end and \
-                not _RELATIVE.search(body[latest.end():where]):
-            x = _signed(latest.group(5))
-            y = _signed(latest.group(6))
-            a = _signed(latest.group(1))
-            if x is not None and y is not None and a:
-                placed[index] = (x, y, a)
+        between = body[max(last_string_end, 0):where]
+        if latest is not None and latest.start() > last_string_end:
+            if not _RELATIVE.search(body[latest.end():where]):
+                x = _signed(latest.group(5))
+                y = _signed(latest.group(6))
+                a = _signed(latest.group(1))
+                if x is not None and y is not None and a:
+                    placed[index] = (x, y, a)
+        elif index - 1 in placed and not _RELATIVE.search(between) \
+                and b"ET" not in between and b"BT" not in between:
+            previous = drawn_strings[index - 1]
+            table = widths.get(previous[2]) if widths else None
+            size = previous[3]
+            # Show operators and a font change, and kerning numbers: that
+            # is all that may stand between them. Anything else -- a `cm`,
+            # a `Td` -- moves the pen in a way not followed here.
+            rest = _TJ_NUMBERS.sub(b" ", between)
+            if table is not None and size and \
+                    not re.search(rb"[A-Za-z*'\"]", rest):
+                x, y, a = placed[index - 1]
+                kerning = sum(float(number) for number in _KERN.findall(rest))
+                moved = (_advance(previous[6], table) - kerning) / 1000.0
+                placed[index] = (x + moved * size * a, y, a)
         last_string_end = entry[1]
     return placed
+
+
+# What sits between two strings that is not a kerning number.
+_TJ_NUMBERS = re.compile(rb"\bT[jJ]\b|/[^\s/\[\]()<>]+\s+-?[\d.]+\s+Tf|[\[\]()]")
 
 
 # Of an em: a step past the end of the last glyph larger than this is a
@@ -1110,6 +1157,12 @@ def title(runs, exclude=()):
             continue
         if not size:
             continue
+        if last is not None and last != size and tiers.get(size):
+            # Interrupted by text of another size since this size was last
+            # drawn: that is a word boundary, whatever the gaps said. A
+            # payslip's column headings, a word or two at a time between
+            # figures in another size, came out as `Yearto Date`.
+            tiers[size].append(" ")
         tiers.setdefault(size, []).append(text)
         weight[size] += len(text)
         drawn += len(text)
@@ -1145,8 +1198,8 @@ def _join_capitals(runs):
     A drop capital is drawn on its own at a larger size, so taken tier by
     tier a cover letter's greeting reads `ear Hiring Manager` and a
     certificate's title loses its first word. A fragment of one or two
-    characters drawn with no gap after it belongs to the text that follows,
-    whatever size either was drawn at.
+    characters drawn larger than the text after it, with no gap between,
+    belongs to that text.
     """
     joined = []
     carry = ""
@@ -1167,8 +1220,14 @@ def _join_capitals(runs):
             joined.append((font, text, size))
             continue
         following = runs[index + 1] if index + 1 < len(runs) else None
+        # Only when drawn bigger than what follows: that is what a drop
+        # capital is. Text set a glyph or two at a time -- every PDF a Mac
+        # prints -- is nothing but short fragments at one size, and joining
+        # those made "Year to Date" into `Yearto Date`.
         if (len(text.strip()) <= 2 and text.strip().isalpha()
-                and following is not None and following[0] is not _GAP):
+                and following is not None and following[0] is not _GAP
+                and following[0] is not _PAGE_END
+                and (carry or size > (following[2] or 0.0))):
             carry += text.strip()
             continue
         joined.append((font, carry + text, size))
@@ -1334,6 +1393,10 @@ def _collect(peek):
             continue
         found, current = _page_runs(body, fonts, current,
                                     widths if index < on_page_one else None)
+        if found and found[0][0] is _JOINS:
+            found = found[1:]
+            if runs and runs[-1][0] is _GAP:
+                runs.pop()
         runs.extend(found)
         runs.append((_GAP, " ", 0.0))
         total += sum(len(text) for _font, text, _size in found)

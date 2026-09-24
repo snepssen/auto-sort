@@ -454,6 +454,14 @@ class WhatAMacPrints(unittest.TestCase):
                 b"BT 10 0 0 10 106 680 Tm /F1 1 Tf (a) Tj ET")
         self.assertEqual(self.runs(body, self.widths), "P a")
 
+    def test_the_rest_of_a_word_in_a_tj_after_its_matrix(self):
+        """`[(At) 1 (ho)] TJ`, then a new block for `(ll)`: the pen is
+        followed through the TJ, so the new block is known to continue it."""
+        widths = {"F1": ({ord(c): 500 for c in "Athol"}, 500.0, 1)}
+        body = (b"BT 10 0 0 10 100 700 Tm /F1 1 Tf [(At) 0 (ho)] TJ ET "
+                b"BT 10 0 0 10 120 700 Tm /F1 1 Tf (ll) Tj ET")
+        self.assertEqual(self.runs(body, widths), "Atholl")
+
     def test_cid_widths_in_both_forms(self):
         self.assertEqual(pdftext._cid_widths(b"[1 [500 600] 10 12 250]"),
                          {1: 500.0, 2: 600.0, 10: 250.0, 11: 250.0,

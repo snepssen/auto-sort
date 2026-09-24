@@ -325,6 +325,9 @@ def _would_match(comparison, value):
 READ_FACTS = frozenset((
     "heading", "words_read", "text_layer", "needs_ocr", "read_by",
     "scan_pixels", "scan_of", "doc_title", "author", "producer", "pages",
+    # Readable only since encrypted files could be opened: before that a
+    # producer and creator of ciphertext, and no word of a locked file.
+    "creator", "encrypted", "needs_password", "title_drawn",
 ))
 
 
