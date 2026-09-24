@@ -270,29 +270,164 @@ def _parse_cmap(body):
     return codes, width
 
 
-def _font_maps(data):
+def _objects(data):
+    """`{object number: (start, stop)}` for the objects in `data`.
+
+    Offsets, not slices. `data[a:b]` copies, and four thousand objects of up
+    to sixty-four kilobytes each is a quarter of a gigabyte of copies to
+    answer a question about a handful of them. Measured on a real folder:
+    two hundred PDFs peaked at 237 MB this way and at 34 MB once the copying
+    stopped.
+    """
+    # The *last* definition of each object, because that is the one that
+    # counts. A PDF edited after it was made has the changes appended, and
+    # an object defined again later replaces the earlier one -- four real
+    # contracts had been reordered that way, and reading the first
+    # definitions followed the page tree as it was before the edit.
+    objects = {}
+    for count, match in enumerate(_OBJ.finditer(data)):
+        if count >= MAX_OBJECTS:
+            break
+        number = int(match.group(1))
+        end = data.find(b"endobj", match.end())
+        objects[number] = (match.end(),
+                           end if end != -1 else match.end() + 65536)
+    return objects
+
+
+_REF = rb"(\d+)\s+\d+\s+R"
+_PAGES_REF = re.compile(rb"/Pages\s+" + _REF)
+_KIDS = re.compile(rb"/Kids\s*\[([^\]]*)\]")
+_ANY_REF = re.compile(_REF)
+_CONTENTS = re.compile(rb"/Contents\s*(\[[^\]]*\]|" + _REF + rb")")
+_RESOURCES_REF = re.compile(rb"/Resources\s+" + _REF)
+_XOBJECTS = re.compile(rb"/XObject\s*<<(.*?)>>", re.S)
+_FONT_DICT_REF = re.compile(rb"/Font\s+" + _REF)
+
+
+def _first_page(data, objects):
+    """`(streams, fonts)`: what page one draws, and with which fonts.
+
+    `streams` is the object numbers of the streams drawn on page one, in
+    order. `fonts` is `{resource name: font object}` as page one and the
+    forms it draws declare them -- see `_font_maps` for why that matters.
+
+    A PDF's page order is its page tree, not where the pages sit in the
+    file, and the two can disagree. Four real six-page employment contracts
+    stored the form attached at the back *before* the contract's first page,
+    and read in file order they were titled after that form's section
+    heading -- `Luik A`, "Part A" -- instead of the contract's own title.
+
+    Returns `([], {})` whenever the tree cannot be followed: compressed
+    object streams, a damaged catalog, anything unexpected. Then the file is
+    read in file order, which is what always happened before.
+    """
+    def body(number, limit=8192):
+        span = objects.get(number)
+        if not span:
+            return b""
+        start, stop = span
+        return data[start:min(stop, start + limit)]
+
+    # The catalog the file's *last* trailer names. An edited file can carry
+    # the old catalog and a new one side by side, and only the newest root
+    # describes the document as it now is.
+    catalog = None
+    root = None
+    for match in re.finditer(rb"/Root\s+" + _REF, data):
+        root = int(match.group(1))
+    if root is not None:
+        catalog = body(root, 2048) or None
+    if catalog is None:
+        for number in objects:
+            text = body(number, 2048)
+            if re.search(rb"/Type\s*/Catalog\b", text):
+                catalog = text
+                break
+    if catalog is None:
+        return [], {}
+    pages = _PAGES_REF.search(catalog)
+    if not pages:
+        return [], {}
+    node = int(pages.group(1))
+    page = None
+    for _depth in range(12):
+        text = body(node)
+        if re.search(rb"/Type\s*/Page\b(?!s)", text):
+            page = text
+            break
+        kids = _KIDS.search(text)
+        first = _ANY_REF.search(kids.group(1)) if kids else None
+        if not first:
+            return [], {}
+        node = int(first.group(1))
+    if page is None:
+        return [], {}
+
+    ordered = []
+    contents = _CONTENTS.search(page)
+    if contents:
+        ordered.extend(int(ref) for ref in
+                       _ANY_REF.findall(contents.group(1) if contents.group(1)
+                                        .startswith(b"[") else
+                                        contents.group(0)))
+    # Forms the page draws with `Do` are part of the page too: that is how
+    # the contracts above drew everything but a signature. One level of
+    # them, and the forms those draw, is as deep as real files go.
+    def resources_of(text):
+        indirect = _RESOURCES_REF.search(text)
+        return body(int(indirect.group(1))) if indirect else text
+
+    fonts = {}
+
+    def note_fonts(resources):
+        declared = [match.group(1) for match in _FONT_DICT.finditer(resources)]
+        declared += [body(int(match.group(1)), 4096)
+                     for match in _FONT_DICT_REF.finditer(resources)]
+        for dictionary in declared:
+            for name, number in _FONT_REF.findall(dictionary):
+                fonts.setdefault(name.decode("latin-1"), int(number))
+
+    resources = resources_of(page)
+    note_fonts(resources)
+    for level in range(2):
+        found = []
+        for match in _XOBJECTS.finditer(resources):
+            found.extend(int(ref) for ref in _ANY_REF.findall(match.group(1)))
+        found = [number for number in found if number not in ordered]
+        if not found:
+            break
+        ordered.extend(found)
+        resources = b"".join(resources_of(body(number, 4096))
+                             for number in found)
+        note_fonts(resources)
+    return ordered, fonts
+
+
+def _font_maps(data, objects=None, own=None):
     """`{resource name: (codes, width)}` for the fonts this file declares.
 
-    A name is taken from the first resource dictionary that defines it. A
-    document that reuses `/F1` for a different font on a later page would be
-    read wrongly from that page on, which is a trade made deliberately: the
-    alternative is resolving page trees, and only the front of the file is
-    ever read here anyway.
+    A name is taken from the first resource dictionary that defines it,
+    which is right far more often than not and wrong for a file that reuses
+    `/F7` for a different font on a later page.
+
+    That was measured, not imagined: 3 of 172 employment contracts declared
+    `/F7` first as a Calibri with two-byte codes and then, on page one, as
+    Times-Bold -- and the contract's title, drawn in Times-Bold, went
+    through Calibri's table and came out as nothing. So when page one's own
+    fonts are known (`own`, from `_first_page`) a second answer is returned
+    for page one, with those names meaning what page one means by them.
+
+    Returns `(maps, page_one_maps)`; the second is the first when `own` is
+    empty.
     """
     # Offsets, not slices. `data[a:b]` copies, and four thousand objects of
     # up to sixty-four kilobytes each is a quarter of a gigabyte of copies
     # to answer a question about a handful of them. Measured on a real
     # folder: two hundred PDFs peaked at 237 MB this way and at 34 MB once
     # the copying stopped.
-    objects = {}
-    for count, match in enumerate(_OBJ.finditer(data)):
-        if count >= MAX_OBJECTS:
-            break
-        number = int(match.group(1))
-        if number not in objects:
-            end = data.find(b"endobj", match.end())
-            objects[number] = (match.end(),
-                               end if end != -1 else match.end() + 65536)
+    if objects is None:
+        objects = _objects(data)
 
     # A view costs nothing and `re` searches it happily.
     view = memoryview(data)
@@ -302,25 +437,40 @@ def _font_maps(data):
         if ref:
             cmap_of_font[number] = int(ref.group(1))
 
-    maps = {}
     parsed = {}
+
+    def table(font):
+        target = cmap_of_font.get(font)
+        if target is None or target not in objects:
+            return None
+        if target not in parsed:
+            # Only the few objects that really are character maps are
+            # ever copied out of the view.
+            start, stop = objects[target]
+            body = _inflate(bytes(view[start:stop]))
+            parsed[target] = _parse_cmap(body) if body else ({}, 1)
+        return parsed[target] if parsed[target][0] else None
+
+    maps = {}
     for dictionary in _FONT_DICT.findall(data):
         for name, number in _FONT_REF.findall(dictionary):
             label = name.decode("latin-1")
             if label in maps:
                 continue
-            target = cmap_of_font.get(int(number))
-            if target is None or target not in objects:
-                continue
-            if target not in parsed:
-                # Only the few objects that really are character maps are
-                # ever copied out of the view.
-                start, stop = objects[target]
-                body = _inflate(bytes(view[start:stop]))
-                parsed[target] = _parse_cmap(body) if body else ({}, 1)
-            if parsed[target][0]:
-                maps[label] = parsed[target]
-    return maps
+            found = table(int(number))
+            if found:
+                maps[label] = found
+    if not own:
+        return maps, maps
+    page_one = dict(maps)
+    for label, number in own.items():
+        found = table(number)
+        if found:
+            page_one[label] = found
+        else:
+            # A font with no table of its own: its bytes are characters.
+            page_one.pop(label, None)
+    return maps, page_one
 
 
 def _through(raw, codes, width):
@@ -471,6 +621,9 @@ def _gap_is_a_space(gap):
 # does not glue its neighbours together. Not a font, and never judged.
 _GAP = object()
 
+# Marks where page one's streams end, when the page tree could be followed.
+_PAGE_END = object()
+
 
 def _page_runs(body, maps, current=None):
     """One content stream as `([(font, text)], font in use at the end)`.
@@ -547,12 +700,14 @@ def _keep_readable_fonts(runs):
     """
     drawn = collections.defaultdict(list)
     for font, text, _size in runs:
-        if font is not _GAP and font is not None:
+        if font is not _GAP and font is not _PAGE_END and font is not None:
             drawn[font].append(text)
     unreadable = set(font for font, texts in drawn.items()
                      if _glyph_codes("".join(texts)))
     kept = []
     for font, text, _size in runs:
+        if font is _PAGE_END:
+            continue
         if font is _GAP:
             kept.append(text)
         elif font is None:
@@ -622,6 +777,13 @@ _EMPHASIS = 1.0
 # large, or a table header row, not the name of the document.
 _TITLE_WORDS = 12
 
+# How far into a document to look for its title: about one dense page of
+# drawn text. A document names itself on its first page, and later pages
+# have section headings -- four six-page employment contracts were titled
+# `Luik A` ("Part A") from a form attached at the back, printed larger than
+# the contract's own title on page one.
+_TITLE_REACH = 4000
+
 
 def title(runs, exclude=()):
     """What a document calls itself in type bigger than its body text.
@@ -645,7 +807,12 @@ def title(runs, exclude=()):
     tiers = collections.OrderedDict()
     weight = collections.Counter()
     last = None
+    drawn = 0
     for font, text, size in runs:
+        # Page one, where the page tree says where it ends; otherwise about
+        # a page's worth of text.
+        if font is _PAGE_END or drawn >= _TITLE_REACH:
+            break
         if font is _GAP:
             if last is not None and tiers.get(last):
                 tiers[last].append(" ")
@@ -654,6 +821,7 @@ def title(runs, exclude=()):
             continue
         tiers.setdefault(size, []).append(text)
         weight[size] += len(text)
+        drawn += len(text)
         last = size
     if not weight:
         return ""
@@ -692,6 +860,9 @@ def _join_capitals(runs):
     joined = []
     carry = ""
     for index, (font, text, size) in enumerate(runs):
+        if font is _PAGE_END:
+            joined.append((font, text, size))
+            continue
         if font is _GAP:
             # Not joined across a gap, although a drop capital is usually
             # followed by one -- the pen jumps right to make room for it.
@@ -775,6 +946,38 @@ def extract(peek):
     return _finish(runs, image_hint, data)
 
 
+def _in_page_order(data, objects, first):
+    """Every stream in the file, with page one's first.
+
+    The rest follow in file order, which is as good a guess as any and is
+    what everything was read in before. `first` is page one's streams, from
+    `_first_page`. Returns `(streams, how many of them are page one)`.
+    """
+    matches = list(_STREAM.finditer(data))
+    if not first:
+        return matches, 0
+    owner = {}
+    for number, (start, stop) in objects.items():
+        owner[start] = number
+    rank = dict((number, index) for index, number in enumerate(first))
+    starts = sorted(owner)
+
+    def number_of(match):
+        # The object a stream belongs to is the last one to start before it.
+        import bisect
+        index = bisect.bisect_right(starts, match.start()) - 1
+        return owner[starts[index]] if index >= 0 else None
+
+    def key(pair):
+        position, match = pair
+        number = number_of(match)
+        return (0, rank[number]) if number in rank else (1, position)
+
+    ordered = sorted(enumerate(matches), key=key)
+    on_page_one = sum(1 for pair in ordered if key(pair)[0] == 0)
+    return [match for _position, match in ordered], on_page_one
+
+
 def _collect(peek):
     """Every run of text the page content draws, with its font and size.
 
@@ -788,16 +991,28 @@ def _collect(peek):
         return None, False, data
 
     try:
-        maps = _font_maps(data)
+        objects = _objects(data)
+    except (re.error, ValueError, OverflowError):
+        objects = {}
+    try:
+        first, own = _first_page(data, objects)
+    except (re.error, ValueError, OverflowError):
+        first, own = [], {}
+    try:
+        maps, page_one_maps = _font_maps(data, objects, own)
     except (re.error, ValueError, OverflowError, zlib.error):
-        maps = {}
+        maps, page_one_maps = {}, {}
 
     runs = []
     total = 0
     streams = 0
     # Carried from stream to stream, as it is on the page. See `_page_runs`.
     current = None
-    for match in _STREAM.finditer(data):
+    ordered, on_page_one = _in_page_order(data, objects, first)
+    for index, match in enumerate(ordered):
+        if on_page_one and index == on_page_one:
+            runs.append((_PAGE_END, "", 0.0))
+        fonts = page_one_maps if index < on_page_one else maps
         if streams >= MAX_STREAMS or total >= MAX_CHARS * 4:
             break
         end = data.find(b"endstream", match.end())
@@ -814,7 +1029,7 @@ def _collect(peek):
             continue
         if not _is_page_content(data, match.start(), body):
             continue
-        found, current = _page_runs(body, maps, current)
+        found, current = _page_runs(body, fonts, current)
         runs.extend(found)
         runs.append((_GAP, " ", 0.0))
         total += sum(len(text) for _font, text, _size in found)
