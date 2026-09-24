@@ -221,7 +221,8 @@ _OFFICE_PRODUCERS = re.compile(
 
 # Formats whose words are read as well as their metadata; see `officetext`.
 _READ_THE_TEXT = ("word", "opendocument-text", "rtf", "markdown",
-                  "plain-text", "pages", "email", "calendar", "html")
+                  "plain-text", "pages", "email", "calendar", "html",
+                  "delimited", "excel", "numbers")
 
 
 def read(peek, fmt, record):

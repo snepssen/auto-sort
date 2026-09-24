@@ -63,6 +63,12 @@ def read(path, fmt, head=b""):
             return _calendar(_whole(path, MAX_PART))
         if fmt == "html":
             return _html(_whole(path, MAX_PART))
+        if fmt == "delimited":
+            return _plain(_whole(path, MAX_CHARS * 4))
+        if fmt == "excel":
+            return _xlsx(path)
+        if fmt == "numbers":
+            return _numbers(path)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile,
             ElementTree.ParseError, UnicodeError, RecursionError):
         pass
@@ -602,3 +608,52 @@ def _html(data):
     name = title or heading
     named = html.unescape(_HTML_TAG.sub(" ", name.group(1))) if name else ""
     return _titled(named, _html_text(markup))
+
+
+# ---------------------------------------------------------------------------
+# Spreadsheets
+# ---------------------------------------------------------------------------
+
+_SHEET = re.compile(r'<sheet\b[^>]*\bname="([^"]*)"')
+_SHARED = re.compile(r"<si>(.*?)</si>", re.S)
+_CELL_TEXT = re.compile(r"<t[^>]*>(.*?)</t>", re.S)
+
+
+def _xlsx(path):
+    """An Excel workbook's sheet names and the text in its cells, in order.
+
+    Text only -- a statement's title cell, its column headings -- which is
+    what the workbook keeps in one place, `sharedStrings.xml`, in the order
+    it was first typed. The numbers are not what it is called.
+    """
+    import html
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        if "xl/workbook.xml" not in names:
+            return "", []
+        workbook = _part(archive, "xl/workbook.xml").decode("utf-8", "replace")
+        shared = _part(archive, "xl/sharedStrings.xml").decode(
+            "utf-8", "replace") if "xl/sharedStrings.xml" in names else ""
+    strings = []
+    total = 0
+    for item in _SHARED.finditer(shared):
+        value = html.unescape("".join(_CELL_TEXT.findall(item.group(1))))
+        if value.strip():
+            strings.append(value)
+            total += len(value)
+            if total >= MAX_CHARS:
+                break
+    sheets = [html.unescape(name) for name in _SHEET.findall(workbook)]
+    text = re.sub(r"\s+", " ", " ".join(strings)).strip()[:MAX_CHARS]
+    if not text:
+        text = " ".join(sheets)
+    return text, []
+
+
+def _numbers(path):
+    """A Numbers document keeps its text as Pages does."""
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        if "Index/Document.iwa" not in names:
+            return "", []
+        return _iwa_text(_part(archive, "Index/Document.iwa")), []

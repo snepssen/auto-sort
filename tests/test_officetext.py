@@ -269,5 +269,47 @@ class MailCalendarsAndPages(unittest.TestCase):
         self.assertIn("Your order has shipped", text)
 
 
+
+class Spreadsheets(unittest.TestCase):
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-sheets-")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_a_workbook_is_its_text_in_order(self):
+        path = os.path.join(self.dir, "Statement.xlsx")
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("xl/workbook.xml",
+                             '<workbook><sheets><sheet name="Mai 2024" '
+                             'sheetId="1"/></sheets></workbook>')
+            archive.writestr("xl/sharedStrings.xml",
+                             "<sst><si><t>Kontoauszug Girokonto</t></si>"
+                             "<si><r><t>Buchungs</t></r><r><t>tag</t></r></si>"
+                             "<si><t>Betrag &amp; Saldo</t></si></sst>")
+        record = identify.identify(path, tier=identify.TIER_HEADER)
+        self.assertTrue(record.value("heading").startswith(
+            "Kontoauszug Girokonto Buchungstag"))
+
+    def test_a_workbook_with_no_text_is_its_sheet_names(self):
+        path = os.path.join(self.dir, "Numbers only.xlsx")
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("xl/workbook.xml",
+                             '<workbook><sheets><sheet name="Haushaltsbuch"/>'
+                             '</sheets></workbook>')
+        text, _runs = officetext.read(path, "excel")
+        self.assertEqual(text, "Haushaltsbuch")
+
+    def test_a_csv_is_its_first_rows(self):
+        path = os.path.join(self.dir, "export.csv")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("Date,Description,Amount,Balance\n"
+                         "2024-05-01,Rent,-900.00,1200.00\n")
+        record = identify.identify(path, tier=identify.TIER_HEADER)
+        self.assertTrue(record.value("heading").startswith(
+            "Date,Description,Amount,Balance"))
+
+
 if __name__ == "__main__":
     unittest.main()
