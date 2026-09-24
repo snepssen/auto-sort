@@ -1139,9 +1139,24 @@ def _is_page_content(data, stream_start, body):
     if not body:
         return False
     sample = body[:4096]
-    printable = sum(1 for byte in sample
+    # Judged outside the strings. What a string draws is whatever bytes its
+    # font's codes are -- two-byte glyph numbers are mostly unprintable --
+    # and a real privacy policy's page, drawn that way, was 69% printable
+    # and refused, while its operators and numbers were all text.
+    outside = bytearray()
+    at = 0
+    for start, end, _raw in _strings(sample):
+        outside += sample[at:start]
+        at = end
+    outside += sample[at:]
+    # Binary with an early unmatched `(` reads as one long string with next
+    # to nothing outside it, so there has to be something outside to judge.
+    # Random bytes are about 37% printable, so the test below does the rest.
+    if len(outside) < min(16, len(sample) // 2):
+        return False
+    printable = sum(1 for byte in outside
                     if 32 <= byte < 127 or byte in (9, 10, 13))
-    return printable >= len(sample) * _MOSTLY_PRINTABLE
+    return printable >= len(outside) * _MOSTLY_PRINTABLE
 
 
 # How much bigger than the body a line must be drawn to count as a title.

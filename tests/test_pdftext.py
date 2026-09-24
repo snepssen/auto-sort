@@ -329,6 +329,21 @@ class OnlyWhatThePageDraws(unittest.TestCase):
             b"BT (x) Tj ET")
         self.assertTrue(pdftext._is_page_content(data, at, b"BT (x) Tj ET"))
 
+    def test_glyph_codes_in_strings_do_not_make_a_page_binary(self):
+        """A privacy policy's page drew every word as two-byte glyph codes,
+        was 69% printable overall, and was refused -- 1,270 words lost."""
+        body = b"BT /F1 12 Tf 72 700 Td " + b" ".join(
+            b"(" + bytes([0, code, 0, code + 1, 0, code + 2]) + b") Tj"
+            for code in range(1, 200)) + b" ET"
+        data, at = self.stream(b"<</Subtype/Form/Length 9>>", body)
+        self.assertTrue(pdftext._is_page_content(data, at, body))
+
+    def test_binary_with_an_early_bracket_is_still_binary(self):
+        import os as _os
+        binary = b"(" + _os.urandom(4000) + b"BT"
+        data, at = self.stream(b"<</Length 9>>", binary)
+        self.assertFalse(pdftext._is_page_content(data, at, binary))
+
     def test_bytes_that_are_mostly_not_instructions(self):
         data, at = self.stream(b"<</Length 9>>", b"")
         binary = bytes(range(256)) * 4 + b"BT"
