@@ -288,5 +288,74 @@ class ItIsOfferedLikeTheOthers(unittest.TestCase):
             shutil.rmtree(directory, ignore_errors=True)
 
 
+def _flate_image(number, width, height, colour=b"/DeviceRGB", fill=b"\x80",
+                 extra=b""):
+    import zlib as _zlib
+    components = 3 if colour == b"/DeviceRGB" else 1
+    rows = b"".join(fill * (width * components) for _ in range(height))
+    packed = _zlib.compress(rows)
+    return (b"%d 0 obj\n<</Type/XObject/Subtype/Image/Width %d/Height %d"
+            b"/BitsPerComponent 8/ColorSpace%s/Filter/FlateDecode%s"
+            b"/Length %d>>\nstream\n" % (number, width, height, colour,
+                                            extra, len(packed))
+            + packed + b"\nendstream\nendobj\n")
+
+
+class PagesStoredAsPixels(unittest.TestCase):
+    """Two certificates were a 1408 by 1988 picture kept as compressed
+    pixels, and with only JPEGs lifted out for OCR nobody could read them."""
+
+    def test_the_page_comes_out_as_a_png(self):
+        data = b"%PDF-1.4\n" + _flate_image(5, 800, 900)
+        found = pdftext.page_image(data)
+        self.assertIsNotNone(found)
+        image, width, height = found
+        self.assertTrue(image.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual((width, height), (800, 900))
+        import struct
+        self.assertEqual(struct.unpack(">II", image[16:24]), (800, 900))
+
+    def test_a_mask_of_the_same_size_is_not_the_page(self):
+        """The nearly blank soft mask came first and was read instead."""
+        import os as _os
+        mask = _flate_image(5, 800, 900, colour=b"/DeviceGray", fill=b"\xff")
+        page = b"%PDF-1.4\n" + mask + _flate_image(
+            6, 800, 900, fill=b"\x10", extra=b"/SMask 5 0 R")
+        # Give the page some content, so it compresses to more than the mask.
+        page = page.replace(b"\x10" * 10, _os.urandom(10), 1)
+        found = pdftext.page_image(page)
+        self.assertEqual(found[0][25], 2)            # colour type: RGB
+
+    def test_a_picture_too_small_to_be_a_page_is_not_one(self):
+        self.assertIsNone(pdftext.page_image(
+            b"%PDF-1.4\n" + _flate_image(5, 200, 100)))
+
+    def test_read_image_names_a_png_as_one(self):
+        seen = []
+
+        def run(command, **_kwargs):
+            seen.append(command[1])
+            return mock.Mock(returncode=0, stdout=b"words")
+        with mock.patch.object(ocr, "available", return_value="/bin/echo"), \
+                mock.patch.object(ocr, "languages_installed",
+                                  return_value=[]), \
+                mock.patch("subprocess.run", side_effect=run):
+            ocr._turns.clear()
+            ocr.read_image(b"\x89PNG\r\n\x1a\nrest")
+        self.assertTrue(seen[-1].endswith(".png"))
+
+
+class PastTheBorder(unittest.TestCase):
+
+    def test_a_decorative_border_is_not_the_heading(self):
+        self.assertEqual(
+            ocr._past_the_border("ray Es Ss iS} Ea iS = z VIRTUAL COLLEGE "
+                                 "Accredited This certificate"),
+            "VIRTUAL COLLEGE Accredited This certificate")
+
+    def test_text_with_no_run_of_words_is_left_as_it_was(self):
+        self.assertEqual(ocr._past_the_border("a b c"), "a b c")
+
+
 if __name__ == "__main__":
     unittest.main()

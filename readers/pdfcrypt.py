@@ -44,6 +44,9 @@ _LEAVE = re.compile(rb"/Type\s*/XRef\b|/Subtype\s*/Image\b")
 # are a few hundred kilobytes at most; this is well past that and still
 # only a second or two of pure-Python AES.
 MAX_DECRYPT = 2 * 1024 * 1024
+# On the way to OCR the page is a picture, and a picture is megabytes. A
+# few seconds, once: what OCR says is kept.
+MAX_DECRYPT_PICTURES = 24 * 1024 * 1024
 
 
 class Handler(object):
@@ -254,7 +257,8 @@ def decrypted(data, found=None, pictures=False):
         if body_end is None:
             continue
         body = data[start.end():body_end]
-        if spent + len(body) > MAX_DECRYPT:
+        if spent + len(body) > (MAX_DECRYPT_PICTURES if pictures
+                                else MAX_DECRYPT):
             break
         spent += len(body)
         try:

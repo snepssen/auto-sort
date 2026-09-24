@@ -1305,6 +1305,81 @@ def _once(words):
     return kept
 
 
+_BITS = re.compile(rb"/BitsPerComponent\s+(\d+)")
+_PREDICTOR = re.compile(rb"/Predictor\s+(\d+)")
+
+
+def _flate_page(data, match):
+    """A page stored as zlib-compressed pixels, as `(png, width, height)`.
+
+    Two real certificates were a page-sized picture of 1408 by 1988 pixels
+    kept this way, and with only JPEGs lifted out for OCR they had nothing
+    anybody could read. The rows are already what a PNG holds -- with a
+    filter byte in front of each when the PDF says `/Predictor` 10 or more,
+    without one otherwise -- so the PNG is written around them.
+
+    Eight-bit grey or colour, or one-bit grey. Anything else is None.
+    """
+    dictionary = _dictionary_before(data, match.start())
+    if not re.search(rb"/Subtype\s*/Image\b", dictionary):
+        return None
+    if b"/FlateDecode" not in dictionary or b"/DCTDecode" in dictionary \
+            or b"/ImageMask true" in dictionary:
+        return None
+    widths = _WIDTH.findall(dictionary)
+    heights = _HEIGHT.findall(dictionary)
+    bits = _BITS.findall(dictionary)
+    if not (widths and heights and bits):
+        return None
+    width, height, depth = int(widths[-1]), int(heights[-1]), int(bits[-1])
+    if width * height < MIN_PAGE_PIXELS or depth not in (1, 8):
+        return None
+    end = data.find(b"endstream", match.end())
+    if end == -1 or end - match.end() > MAX_IMAGE_BYTES:
+        return None
+    predictor = _PREDICTOR.findall(dictionary)
+    rowed = bool(predictor) and int(predictor[-1]) >= 10
+    if predictor and not rowed and int(predictor[-1]) != 1:
+        return None                      # TIFF prediction: not handled
+    if b"/DeviceRGB" in dictionary:
+        choices = (3,)
+    elif b"/DeviceGray" in dictionary:
+        choices = (1,)
+    else:
+        choices = (3, 1)                 # an ICC profile: told by the size
+    try:
+        raw = zlib.decompressobj().decompress(
+            data[match.end():end], width * height * 3 + height + 1024)
+    except zlib.error:
+        return None
+    for components in choices:
+        if depth == 1 and components != 1:
+            continue
+        row = (width * components * depth + 7) // 8 + (1 if rowed else 0)
+        if len(raw) >= row * height:
+            break
+    else:
+        return None
+    rows = raw[:row * height]
+    if not rowed:
+        rows = b"".join(b"\x00" + rows[index:index + row]
+                        for index in range(0, len(rows), row))
+    return _png(rows, width, height, depth, components), width, height
+
+
+def _png(rows, width, height, depth, components):
+    import struct
+
+    def chunk(kind, body):
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", width, height, depth,
+                         2 if components == 3 else 0, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
+
+
 def _fold_word(word):
     decomposed = unicodedata.normalize("NFKD", word.lower())
     return "".join(char for char in decomposed
@@ -1481,14 +1556,14 @@ _HEIGHT = re.compile(rb"/Height\s+(\d{1,6})")
 
 
 def page_image(data):
-    """The largest embedded JPEG that is big enough to be a page.
+    """The largest embedded picture that is big enough to be a page.
 
-    Returns `(bytes, width, height)` or None. Only DCTDecode, and
-    deliberately: a JPEG inside a PDF is a JPEG, copied out byte for byte
-    with no decoding, no colour management and no third-party library. The
-    other filters would each need a decoder written here to produce an image
-    anything else could read, which is a great deal of code for the one file
-    in twenty that uses them.
+    Returns `(bytes, width, height)` or None; the bytes are a JPEG or a PNG.
+    A JPEG inside a PDF is a JPEG, copied out byte for byte. A page stored
+    as compressed pixels (`FlateDecode`) is zlib and raw rows, which is
+    what a PNG is made of too, so it is rewrapped as one -- see
+    `_flate_page`. Other encodings are left alone: each would need a
+    decoder written here, for the rare file that uses them.
 
     Largest rather than first. Nearly every scanned page arrives with the
     sender's logo in front of it, and the first image in the file is that
@@ -1504,9 +1579,19 @@ def page_image(data):
         if data is None:
             return None
     best = None
+    # Largest, and between pictures of one size the one with the most in
+    # it: a page often comes with a soft mask of exactly its own size, and
+    # the mask -- nearly blank -- came first and was read instead.
+    best_key = None
     for match in _STREAM.finditer(data):
         head = data[max(0, match.start() - _DICT_LOOKBACK):match.start()]
         if b"/DCTDecode" not in head:
+            flate = _flate_page(data, match)
+            if flate is not None:
+                end = data.find(b"endstream", match.end())
+                key = (flate[1] * flate[2], end - match.end())
+                if best_key is None or key > best_key:
+                    best, best_key = flate, key
             continue
         end = data.find(b"endstream", match.end())
         if end == -1:
@@ -1530,6 +1615,7 @@ def page_image(data):
         pixels = width * height
         if pixels < MIN_PAGE_PIXELS:
             continue
-        if best is None or pixels > best[1] * best[2]:
-            best = (body, width, height)
+        key = (pixels, len(body))
+        if best_key is None or key > best_key:
+            best, best_key = (body, width, height), key
     return best

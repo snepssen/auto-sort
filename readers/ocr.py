@@ -37,6 +37,7 @@ folder of holiday photographs of menus.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -148,14 +149,38 @@ def read(path, record):
     record.set("read_by", "ocr", "ocr", CERTAIN)
     record.set("words_read", len(text.split()), "ocr", CERTAIN)
     from .document import heading_of
-    heading = heading_of(text)
+    heading = heading_of(_past_the_border(text))
     if heading:
         record.set("heading", heading[:80], "ocr", LIKELY)
     record.reader_ran("ocr", "%d words from a %s" % (len(text.split()), detail))
     return True
 
 
-def read_image(data, suffix=".jpg", languages=""):
+_TOKEN_LETTERS = re.compile(r"[^\W\d_]", re.UNICODE)
+
+
+def _wordlike(token):
+    """Three letters or more, and mostly letters: not `iS}`, `=z`, `#`."""
+    letters = len(_TOKEN_LETTERS.findall(token))
+    return letters >= 3 and letters >= 0.75 * len(token)
+
+
+def _past_the_border(text):
+    """OCR text from where the words begin.
+
+    A certificate's decorative border reads, to OCR, as `ray Es Ss iS} Ea
+    iS` -- and the heading is taken from the top, so that was the heading.
+    Words start at the first run of three word-like tokens; if there is no
+    such run the text is returned as it was.
+    """
+    tokens = text.split()
+    for index in range(len(tokens) - 2):
+        if all(_wordlike(token) for token in tokens[index:index + 3]):
+            return " ".join(tokens[index:])
+    return text
+
+
+def read_image(data, suffix=None, languages=""):
     """Text from an image held in memory: "" when the page has none, None
     when it could not be read at all.
 
@@ -166,6 +191,8 @@ def read_image(data, suffix=".jpg", languages=""):
     program = available()
     if not program or not data:
         return None
+    if suffix is None:
+        suffix = ".png" if data.startswith(b"\x89PNG") else ".jpg"
     handle = None
     try:
         handle = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
@@ -193,7 +220,8 @@ def read_file(path, languages=""):
 # How a page is asked for, as part of what a kept reading is kept against
 # (see `jobs._method`). 2: pages are turned the right way up first.
 # 3: a page with nothing on it is recorded as read, not left waiting.
-METHOD = 3
+# 4: pages stored as compressed pixels are read; headings skip the border.
+METHOD = 4
 
 # Whether this install can tell which way up a page is, per program path.
 _turns = {}
