@@ -315,24 +315,28 @@ unchanged for `settle_seconds`. Pulling a removable watched volume retains its
 queue. Paths produced by sorting are excluded from subsequent scans, including
 destinations inside a watched folder.
 
-The first real background sort for a folder and exact rules revision creates a
-preview, prints every proposed destination, and pauses. Review it, then run:
+The background sorter moves files three ways: new downloads in a watched
+folder, documents promoted out of a holding folder, and filed files refiled
+because the rules or the reader changed. Under a rules revision somebody
+wrote -- any edit to the file, however small -- the first of those to have
+something to move makes a preview instead, prints every proposed
+destination, and pauses. Nothing moves under that revision, by any of the
+three, until you resume; resuming is the approval, and after it all three
+carry on normally. Review it, then run:
 
 ```sh
 auto-sort resume
 auto-sort sort-now
 ```
 
-That is for a revision somebody wrote: any edit to the file, however small,
-gets its preview and its pause. A category auto-sort adds by itself does
-not. When the background sorter or `adopt --apply` adds a learnt rule to a
-file whose previous revision was already previewed for a folder, the ledger
+A category auto-sort adds by itself is not an edit somebody has to review.
+When the background sorter or `adopt --apply` adds a learnt rule to a file
+whose previous revision was already approved for a folder, the ledger
 records a run for that folder saying "no preview needed: only a learnt
-category was added", and sorting carries on -- the waiting documents move
-into their new folder within seconds, and the next download is sorted as
-usual. A folder nobody had previewed yet still gets its first preview, and
-an edit made to the file in the meantime is not carried over with the
-learnt rule.
+category was added", and nothing pauses -- the waiting documents move into
+their new folder within seconds, and the next download is sorted as usual.
+A folder nobody had approved yet still gets its first preview, and an edit
+made to the file in the meantime is not carried over with the learnt rule.
 
 `pause` and `resume` are durable state, not signals, so the choice survives a
 restart. `status` reports whether the loopback single-instance port is live and

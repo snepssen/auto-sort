@@ -99,10 +99,24 @@ class Learning(unittest.TestCase):
             journal.finish_run(run, "completed")
         return path
 
-    def write(self, setting=""):
+    def write(self, setting="", approved=True):
+        """The rules, as a person wrote them -- and, unless `approved` is
+        false, previewed and resumed, as their first preview asks."""
         with open(self.rules, "w") as handle:
             handle.write(RULES.format(root=self.root, out=self.out,
                                       setting=setting))
+        if approved:
+            self.approve_current_rules()
+
+    def approve_current_rules(self):
+        """What reviewing a preview and resuming leaves behind."""
+        with ledger.Ledger(self.state) as journal:
+            run = journal.start_run("sort", source_root=self.root,
+                                    dry_run=True)
+            journal.finish_run(run, "completed")
+            journal.record_preview(self.root,
+                                   sorter.rules_hash(rules.load(self.rules)),
+                                   run)
 
     def text(self):
         with open(self.rules) as handle:
@@ -151,8 +165,14 @@ class Learning(unittest.TestCase):
         end = text.index("\n\n", start) + 2
         with open(self.rules, "w") as handle:
             handle.write(text[:start] + text[end:])
+        # Deleting a rule is a person's edit: its payslips go back to
+        # waiting under a preview, which waits for Resume.
+        messages = self.run_daemon([4000, 4001])
+        with ledger.Ledger(self.state) as journal:
+            self.assertTrue(journal.paused(), messages)
+            journal.set_paused(False)
         # Half an hour and more later, and again the day after.
-        self.run_daemon([4000, 4001, 4002, 90000, 90001])
+        self.run_daemon([4002, 4003, 90000, 90001])
         self.assertNotIn("calls itself: Payslip]", self.text())
         with ledger.Ledger(self.state) as journal:
             self.assertIn("Payslip",
@@ -220,16 +240,6 @@ class AfterLearning(Learning):
     only luck of the order that the promotion pass usually got there first.
     """
 
-    def approve_current_rules(self):
-        """What reviewing the first preview and resuming leaves behind."""
-        with ledger.Ledger(self.state) as journal:
-            run = journal.start_run("sort", source_root=self.root,
-                                    dry_run=True)
-            journal.finish_run(run, "completed")
-            journal.record_preview(self.root,
-                                   sorter.rules_hash(rules.load(self.rules)),
-                                   run)
-
     def arrive(self, name="arrived.txt"):
         path = os.path.join(self.root, name)
         with open(path, "w") as handle:
@@ -252,6 +262,25 @@ class AfterLearning(Learning):
         self.assertIn("no preview needed: only a learnt category was added",
                       summaries)
 
+    def test_a_learnt_revision_promotes_and_sorts_without_pausing(self):
+        """The exemption holds with promotions on: what was waiting moves
+        into the learnt folders and the next download is sorted, with
+        nobody asked to resume anything."""
+        self.write()
+        self.approve_current_rules()
+        messages = self.run_daemon(range(1000, 1010))
+        for word in ("Invoice", "Contract", "Payslip"):
+            self.assertEqual(
+                len(os.listdir(os.path.join(self.documents, word))), 4,
+                messages)
+        arrived = self.arrive()
+        messages = self.run_daemon(range(2000, 2020), messages)
+        self.assertFalse(os.path.exists(arrived), messages)
+        with ledger.Ledger(self.state) as journal:
+            self.assertFalse(journal.paused(), messages)
+        self.assertFalse(any("daemon paused" in message
+                             for message in messages), messages)
+
     def test_an_edit_by_a_person_still_gets_its_preview(self):
         self.write("regroup = report")
         self.approve_current_rules()
@@ -268,7 +297,7 @@ class AfterLearning(Learning):
     def test_learning_before_anything_was_approved_skips_nothing(self):
         """Only a revision already approved is carried over: a learnt
         category added to rules nobody has previewed yet is still new."""
-        self.write("regroup = report")
+        self.write("regroup = report", approved=False)
         self.run_daemon(range(1000, 1006))
         with ledger.Ledger(self.state) as journal:
             self.assertFalse(journal.has_preview(

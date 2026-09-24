@@ -24,6 +24,19 @@ import daemon                                            # noqa: E402
 import ledger                                            # noqa: E402
 import regroup                                           # noqa: E402
 
+def approving(service, moments):
+    """Cycle at each moment, resuming whenever a preview has paused it.
+
+    Rules a test writes are a person's rules, so their first preview
+    pauses the daemon until Resume. This is that person approving each
+    one, for the tests that are about something else.
+    """
+    for moment in moments:
+        service.cycle(now_value=moment)
+        if service.journal.paused():
+            service.journal.set_paused(False)
+
+
 BEFORE = """
 [settings]
 dry_run = no
@@ -105,20 +118,41 @@ class RefilingByItself(unittest.TestCase):
             self.assertTrue(os.path.exists(self.filed))
             self.write(AFTER)
             # The first apply for new rules is a preview, as every first
-            # apply is; the one after it moves.
+            # apply is, and it waits for Resume; the cycle after that moves.
             service.cycle(now_value=101)
+            self.assertTrue(service.journal.paused())
+            service.journal.set_paused(False)
             service.cycle(now_value=102)
         self.assertFalse(os.path.exists(self.filed))
         self.assertTrue(os.path.exists(self.letter()))
         self.assertTrue(any(message.startswith("Refiled 1 item")
                             for message in messages), messages)
 
+    def test_a_hand_edit_is_refiled_only_after_resume(self):
+        """A preview made under rules a person wrote is theirs to approve,
+        whichever pass made it. The refile's preview used to be applied a
+        cycle later, and counted as approval for new downloads too."""
+        self.write(BEFORE)
+        messages = []
+        with self.service(messages) as service:
+            service.cycle(now_value=100)
+            self.write(AFTER)
+            for moment in range(101, 106):
+                service.cycle(now_value=moment)
+            self.assertTrue(service.journal.paused(), messages)
+            self.assertTrue(os.path.exists(self.filed))
+            self.assertTrue(any("daemon paused" in message
+                                for message in messages), messages)
+            service.journal.set_paused(False)
+            service.cycle(now_value=106)
+        self.assertFalse(os.path.exists(self.filed))
+        self.assertTrue(os.path.exists(self.letter()))
+
     def test_it_happens_once_for_each_change_not_on_a_clock(self):
         self.write(AFTER)
         messages = []
         with self.service(messages) as service:
-            for moment in range(100, 104):
-                service.cycle(now_value=moment)
+            approving(service, range(100, 104))
             self.assertTrue(os.path.exists(self.letter()))
             asked = []
             original = regroup.filed
@@ -187,8 +221,7 @@ class RefilingByItself(unittest.TestCase):
             service.REFILE_BATCH = 3
             review.refresh_held = counting
             try:
-                for moment in range(100, 112):
-                    service.cycle(now_value=moment)
+                approving(service, range(100, 112))
             finally:
                 review.refresh_held = original
         self.assertTrue(read and max(read) <= 3, read)
@@ -213,8 +246,7 @@ class RefilingByItself(unittest.TestCase):
                                      side_effect=AssertionError(
                                          "read in the daemon's process")):
                 service.reader.enabled = True
-                for moment in range(100, 103):
-                    service.cycle(now_value=moment)
+                approving(service, range(100, 103))
         self.assertIn("offer letter.txt", read)
         self.assertTrue(os.path.exists(self.letter()))
 
@@ -298,9 +330,32 @@ class PromotedWhenARuleArrives(unittest.TestCase):
                                   output=messages.append) as service:
             service.cycle(now_value=1000)
             self.write(ADOPTED)
-            # Seconds later, far inside the half-hour between checks.
+            # Seconds later, far inside the half-hour between checks: a
+            # preview, since a person wrote the rule, and the move as soon
+            # as they resume.
             service.cycle(now_value=1005)
+            self.assertTrue(service.journal.paused(), messages)
+            service.journal.set_paused(False)
             service.cycle(now_value=1010)
+        self.assertFalse(os.path.exists(self.waiting))
+        self.assertTrue(os.path.exists(
+            os.path.join(self.out, "Letters", "offer letter.txt")), messages)
+
+    def test_a_hand_edit_is_promoted_only_after_resume(self):
+        self.write(HOLDING)
+        messages = []
+        with daemon.PollingDaemon(self.rules, self.state, port=0,
+                                  output=messages.append) as service:
+            service.cycle(now_value=1000)
+            self.write(ADOPTED)
+            for moment in range(1005, 1030, 5):
+                service.cycle(now_value=moment)
+            self.assertTrue(service.journal.paused(), messages)
+            self.assertTrue(os.path.exists(self.waiting))
+            self.assertTrue(any("daemon paused" in message
+                                for message in messages), messages)
+            service.journal.set_paused(False)
+            service.cycle(now_value=1030)
         self.assertFalse(os.path.exists(self.waiting))
         self.assertTrue(os.path.exists(
             os.path.join(self.out, "Letters", "offer letter.txt")), messages)
@@ -337,8 +392,7 @@ class PromotedWhenARuleArrives(unittest.TestCase):
             service.REFILE_BATCH = 3
             review.refresh_held = counting
             try:
-                for moment in range(1000, 1012):
-                    service.cycle(now_value=moment)
+                approving(service, range(1000, 1012))
             finally:
                 review.refresh_held = original
         self.assertTrue(read and max(read) <= 3, read)

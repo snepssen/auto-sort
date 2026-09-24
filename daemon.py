@@ -574,13 +574,22 @@ class PollingDaemon(object):
         return helpers
 
     def _run_plans(self, plans, rule_set, requested_dry, label):
-        """Carry the plans out; True when one was only a preview."""
+        """Carry the plans out; True when one was only a preview.
+
+        A forced preview pauses the daemon here exactly as it does in the
+        sweep. Resume is the approval, not the preview row: a promotion or
+        refile preview made under rules somebody had just edited used to be
+        applied a cycle later, and -- being a preview for that folder --
+        let new downloads through under the edit too, with nobody having
+        looked. A revision auto-sort wrote itself never gets this far: its
+        approval is carried over when it is written (`learning.write`).
+        """
         previewed = False
         for plan_root, plan in plans:
             result = sorter.execute(plan, rule_set, self.journal,
                                     dry_run=requested_dry)
-            previewed = previewed or (result.forced_preview
-                                      and not requested_dry)
+            forced = result.forced_preview and not requested_dry
+            previewed = previewed or forced
             self.output("%s %d item%s from %s"
                         % (label if not result.dry_run
                            else "Previewed", result.completed
@@ -588,6 +597,10 @@ class PollingDaemon(object):
                            "" if len(plan.items) == 1 else "s", plan_root))
             for message in result.messages:
                 self.output("  %s" % message)
+            if forced:
+                self.journal.set_paused(True)
+                self.output("Preview run %d created; daemon paused. Review "
+                            "it and run 'auto-sort resume'." % result.run_id)
         return previewed
 
     def _heartbeat(self, rule_set, now_value):
