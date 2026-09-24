@@ -160,7 +160,15 @@ def inventory():
         program = PROGRAMS[key]
         listing.append({"key": key, "purpose": program.purpose,
                         "installed": bool(find(key)),
-                        "install": program.install_line()})
+                        "install": program.install_line(),
+                        "install_note": ""})
+    # Said beside every command rather than only by the launcher: on a
+    # Steam Deck, `status` and the log page printed `sudo pacman -S`
+    # bare, and that is where somebody looks after the launcher is gone.
+    if any(row["install"] for row in listing) and immutable_root():
+        for row in listing:
+            if row["install"]:
+                row["install_note"] = IMMUTABLE_NOTE
     # On a Mac, scanned pages are read by what the system already has, and
     # telling somebody to install tesseract for it would be wrong.
     try:
@@ -196,6 +204,12 @@ def immutable_root():
     if os.path.exists("/run/ostree-booted"):
         return True
     return False
+
+
+IMMUTABLE_NOTE = ("This system's root filesystem is managed by the OS image, "
+                  "so the command below will fail until it is unlocked first "
+                  "(e.g. `steamos-readonly disable` on SteamOS). auto-sort "
+                  "works fully without these programs either way.")
 
 
 # ---------------------------------------------------------------------------

@@ -291,5 +291,34 @@ class BuiltIntoAMac(unittest.TestCase):
         self.assertEqual(row["install"], "")
 
 
+class OnALockedRoot(unittest.TestCase):
+    """`status` and the log page told a Steam Deck to run `sudo pacman -S`,
+    which a root filesystem SteamOS keeps read-only refuses. Only the
+    launcher said so; the two places people look afterwards did not."""
+
+    def rows(self, locked):
+        with mock.patch.object(platform_support, "current_manager",
+                               return_value="pacman"), \
+                mock.patch.object(platform_support, "locate",
+                                  return_value=None), \
+                mock.patch.object(platform_support, "immutable_root",
+                                  return_value=locked):
+            platform_support.forget()
+            listing = platform_support.inventory()
+        platform_support.forget()
+        return [row for row in listing if row["install"]]
+
+    def test_every_install_line_says_it_will_fail_until_unlocked(self):
+        rows = self.rows(locked=True)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIn("sudo pacman", row["install"])
+            self.assertIn("unlocked", row["install_note"])
+
+    def test_an_ordinary_root_gets_no_note(self):
+        for row in self.rows(locked=False):
+            self.assertEqual(row["install_note"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

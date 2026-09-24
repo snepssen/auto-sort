@@ -101,7 +101,10 @@ async function loadReading(){try{const data=await request('/api/reading');
     txt(state,p.built_in?'built in':p.installed?'installed':'not installed');
     row.append(state,name,what);
     if(!p.installed&&p.install){const how=document.createElement('code');
-      txt(how,p.install);how.className='how';row.appendChild(how)}
+      txt(how,p.install);how.className='how';
+      if(p.install_note){const warn=document.createElement('p');
+        warn.className='panel-note';txt(warn,p.install_note);row.appendChild(warn)}
+      row.appendChild(how)}
     box.appendChild(row)});
   if(data.filed_unread){const note=document.createElement('p');
     note.className='panel-note';

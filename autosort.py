@@ -685,6 +685,10 @@ def daemon_control(command, state_file=None, as_json=False):
         if absent:
             print("Not installed: %s" % ", ".join(
                 "%s (%s)" % (row["key"], row["purpose"]) for row in absent))
+            notes = [row.get("install_note") for row in absent
+                     if row["install"] and row.get("install_note")]
+            if notes:
+                print("    %s" % notes[0])
             for row in absent:
                 if row["install"]:
                     print("    %s" % row["install"])

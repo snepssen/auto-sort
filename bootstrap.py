@@ -101,10 +101,7 @@ def offer(assume_yes=False, quiet=False):
         if not quiet:
             print("This system needs administrator approval; auto-sort will not run sudo.")
             if programs.immutable_root():
-                print("This system's root filesystem is managed by the OS image, "
-                      "so the command below will fail until it is unlocked first "
-                      "(e.g. `steamos-readonly disable` on SteamOS). auto-sort "
-                      "works fully without these programs either way.")
+                print(programs.IMMUTABLE_NOTE)
             for program in missing:
                 command = describe(program, manager)
                 if not command.startswith("("):

@@ -483,6 +483,23 @@ class DaemonCli(unittest.TestCase):
         self.assertIn('"running": false', output)
         self.assertIn('"queue": {}', output)
 
+    def test_status_says_when_the_install_command_cannot_work_yet(self):
+        """A Steam Deck was told to run `sudo pacman -S`, bare."""
+        row = {"key": "exiftool", "purpose": "reading metadata",
+               "installed": False,
+               "install": "sudo pacman -S --noconfirm perl-image-exiftool",
+               "install_note": "This system's root filesystem is managed "
+                               "by the OS image, so the command below will "
+                               "fail until it is unlocked first."}
+        with mock.patch("daemon.wake", return_value=False), \
+                mock.patch("platform_support.inventory", return_value=[row]):
+            code, output, _errors = self.run_cli(
+                "status", "--state", self.state_file)
+        self.assertEqual(code, 0)
+        self.assertIn("unlocked first", output)
+        self.assertLess(output.index("unlocked first"),
+                        output.index("sudo pacman"))
+
     def test_sort_now_fails_clearly_when_daemon_is_absent(self):
         with mock.patch("daemon.wake", return_value=False):
             code, _output, errors = self.run_cli(
