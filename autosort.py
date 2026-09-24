@@ -1004,7 +1004,11 @@ def _wait_for_new_daemon(state, before, seconds):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         now = daemon_module.running_pid(state)
-        if now is not None and now != before:
+        # And answering: a new daemon records who it is before it has a
+        # port, and read in that moment the line printed was "Restarted.
+        # Not running." about a daemon that was starting perfectly well.
+        if now is not None and now != before and \
+                daemon_module.running_port(state):
             return True
         time.sleep(0.25)
     return False
