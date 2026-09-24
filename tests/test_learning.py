@@ -27,6 +27,7 @@ import daemon                                            # noqa: E402
 import ledger                                            # noqa: E402
 import learning                                          # noqa: E402
 import rules                                             # noqa: E402
+import sorter                                            # noqa: E402
 
 RULES = """
 [settings]
@@ -203,6 +204,75 @@ class Learning(unittest.TestCase):
         self.assertIn("[rule: what the page calls itself: Invoice]", text)
         self.assertIn("Added to", heard.getvalue())
         rules.load(self.rules)
+
+
+class AfterLearning(Learning):
+    """A learnt category is not a person's edit.
+
+    Every rules revision needs a preview before the background sorter moves
+    anything under it, and a preview in the sweep pauses the daemon. So a
+    category auto-sort added by itself paused sorting at the next download,
+    until somebody noticed and clicked Resume -- a program that stops the
+    moment it learns something. The gate exists for what a person writes.
+
+    With `regroup = report` nothing else previews the new revision first,
+    so every download after learning met the gate; with `apply` it was
+    only luck of the order that the promotion pass usually got there first.
+    """
+
+    def approve_current_rules(self):
+        """What reviewing the first preview and resuming leaves behind."""
+        with ledger.Ledger(self.state) as journal:
+            run = journal.start_run("sort", source_root=self.root,
+                                    dry_run=True)
+            journal.finish_run(run, "completed")
+            journal.record_preview(self.root,
+                                   sorter.rules_hash(rules.load(self.rules)),
+                                   run)
+
+    def arrive(self, name="arrived.txt"):
+        path = os.path.join(self.root, name)
+        with open(path, "w") as handle:
+            handle.write("Something new, just downloaded.\n")
+        os.utime(path, (900, 900))
+        return path
+
+    def test_a_download_after_learning_is_sorted_without_pausing(self):
+        self.write("regroup = report")
+        self.approve_current_rules()
+        messages = self.run_daemon(range(1000, 1006))
+        self.assertIn("calls itself: Invoice]", self.text())
+        arrived = self.arrive()
+        messages = self.run_daemon(range(2000, 2020), messages)
+        self.assertFalse(os.path.exists(arrived), messages)
+        with ledger.Ledger(self.state) as journal:
+            self.assertFalse(journal.paused(), messages)
+            summaries = [row["summary"] for row in journal.connection.execute(
+                "SELECT summary FROM runs WHERE action = 'learn'")]
+        self.assertIn("no preview needed: only a learnt category was added",
+                      summaries)
+
+    def test_an_edit_by_a_person_still_gets_its_preview(self):
+        self.write("regroup = report")
+        self.approve_current_rules()
+        self.run_daemon(range(1000, 1006))
+        with open(self.rules, "a") as handle:
+            handle.write("\n[rule: somebody's own]\nwhen = name = x\n"
+                         "into = %s/Mine\n" % self.out)
+        arrived = self.arrive()
+        messages = self.run_daemon(range(2000, 2020))
+        self.assertTrue(os.path.exists(arrived), messages)
+        with ledger.Ledger(self.state) as journal:
+            self.assertTrue(journal.paused(), messages)
+
+    def test_learning_before_anything_was_approved_skips_nothing(self):
+        """Only a revision already approved is carried over: a learnt
+        category added to rules nobody has previewed yet is still new."""
+        self.write("regroup = report")
+        self.run_daemon(range(1000, 1006))
+        with ledger.Ledger(self.state) as journal:
+            self.assertFalse(journal.has_preview(
+                self.root, sorter.rules_hash(rules.load(self.rules))))
 
 
 if __name__ == "__main__":

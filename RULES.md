@@ -323,6 +323,17 @@ auto-sort resume
 auto-sort sort-now
 ```
 
+That is for a revision somebody wrote: any edit to the file, however small,
+gets its preview and its pause. A category auto-sort adds by itself does
+not. When the background sorter or `adopt --apply` adds a learnt rule to a
+file whose previous revision was already previewed for a folder, the ledger
+records a run for that folder saying "no preview needed: only a learnt
+category was added", and sorting carries on -- the waiting documents move
+into their new folder within seconds, and the next download is sorted as
+usual. A folder nobody had previewed yet still gets its first preview, and
+an edit made to the file in the meantime is not carried over with the
+learnt rule.
+
 `pause` and `resume` are durable state, not signals, so the choice survives a
 restart. `status` reports whether the loopback single-instance port is live and
 counts queued items by state. Use `watch --once` for one observation cycle in a

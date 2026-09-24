@@ -15,12 +15,17 @@ putting back what it was told to take away.
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 import propose
 import review
 import rules
+import sorter
 import userdirs
+
+# What the ledger says about a revision that needed no preview, and why.
+LEARNT_ONLY = "no preview needed: only a learnt category was added"
 
 
 class Adoption(object):
@@ -84,13 +89,17 @@ def plan(journal, rule_set, waiting_only=False, refused=(), note=None):
                     review.adopt(text, blocks, beaten), rule_set.source)
 
 
-def write(adoption):
+def write(adoption, journal=None):
     """Add the rules; None, or a sentence saying why nothing changed.
 
     The file as it was is kept beside it, and the new one is read back
     before this says it worked: a file that would not load is put back
     exactly as it was, because a rules file that does not load stops all
     sorting.
+
+    With `journal`, a watched folder whose previous revision was already
+    previewed is recorded as needing no preview for this one: see
+    `_carry_preview`.
     """
     source = adoption.source
     backup = source + ".before-adopt"
@@ -102,13 +111,45 @@ def write(adoption):
     except OSError as error:
         return "could not write %s: %s" % (source, error)
     try:
-        rules.load(source)
+        written = rules.load(source)
     except rules.RuleError as error:
         with open(source, "w", encoding="utf-8") as handle:
             handle.write(adoption.text)
         return ("the file would not load afterwards, so it was put back "
                 "exactly as it was: %s" % error)
+    if journal is not None:
+        _carry_preview(journal, adoption.text, written)
     return None
+
+
+def _carry_preview(journal, before_text, written):
+    """Let an approved folder keep its approval across a learnt category.
+
+    Every rules revision needs a preview before the background sorter moves
+    anything under it, and a preview in the sweep pauses the daemon. The
+    gate exists for what a person writes. A category auto-sort added by
+    itself paused sorting at the next download until somebody clicked
+    Resume -- unnoticed only when the promotion pass happened to preview
+    first, and every time with `regroup = report`.
+
+    Only a folder already previewed under exactly the file this was added
+    to is carried over. The hash is of the text the rule was inserted into,
+    not of what the daemon last loaded, so an edit somebody made in between
+    is not waved through with it; and rules nobody has previewed yet are
+    no more approved for having had a category added.
+    """
+    before = sorter.rules_hash(rules.RuleSet(
+        None, None, [], written.source,
+        hashlib.sha256(before_text.encode("utf-8")).hexdigest()))
+    after = sorter.rules_hash(written)
+    for root in written.watch.folders:
+        root = os.path.abspath(root)
+        if not journal.has_preview(root, before):
+            continue
+        run = journal.start_run("learn", source_root=root, rules_hash=after,
+                                dry_run=True)
+        journal.finish_run(run, "completed", summary=LEARNT_ONLY)
+        journal.record_preview(root, after, run)
 
 
 def backup_name(adoption):

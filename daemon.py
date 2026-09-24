@@ -447,7 +447,7 @@ class PollingDaemon(object):
                                else "%d categories" % len(adoption.found),
                                described))
             return
-        problem = learning.write(adoption)
+        problem = learning.write(adoption, self.journal)
         if problem:
             self.output("Could not add %s to the rules: %s"
                         % (described, problem))

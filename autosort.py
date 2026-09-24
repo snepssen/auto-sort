@@ -1529,7 +1529,8 @@ def adopt_categories(rule_path=None, state=None, apply_changes=False,
         print()
         return 0
 
-    problem = learning.write(adoption)
+    with ledger_module.Ledger(state) as journal:
+        problem = learning.write(adoption, journal)
     if problem:
         print("  ! %s" % problem, file=sys.stderr)
         return 1
