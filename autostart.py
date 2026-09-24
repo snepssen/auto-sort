@@ -209,8 +209,19 @@ Keywords=files;sort;downloads;missing;backup;
 
 
 def _desktop_quote(value):
-    value = str(value)
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """One Exec argument, spelled the way the desktop entry spec asks.
+
+    Two layers, applied by a launcher in this order: the file's string
+    escapes, then the Exec quoting. So a character the quoting escapes with
+    one backslash is written with two, and a literal backslash with four.
+    `%` is doubled or it is a field code. Only `"` and `\\` were escaped
+    before, once: a rules file under a folder called `100%` wrote a field
+    code, and desktop-file-validate rejected the entry that was supposed to
+    start auto-sort at login.
+    """
+    quoted = "".join("\\" + char if char in '"`$\\' else char
+                     for char in str(value))
+    return '"' + quoted.replace("\\", "\\\\").replace("%", "%%") + '"'
 
 
 def _write_windows_shortcut(filename, arguments, runner):

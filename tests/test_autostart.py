@@ -76,5 +76,81 @@ class Autostart(unittest.TestCase):
                                   lambda *_args, **_kwargs: Result(1, stderr=b"bad"))
 
 
+def _read_exec(value):
+    """An Exec value read back the way the desktop entry spec says a
+    launcher must: string escapes first, then field codes, then quoting."""
+    unescaped, index = [], 0
+    while index < len(value):
+        if value[index] == "\\" and index + 1 < len(value):
+            nxt = value[index + 1]
+            unescaped.append({"s": " ", "n": "\n", "t": "\t", "r": "\r",
+                              "\\": "\\"}.get(nxt, "\\" + nxt))
+            index += 2
+        else:
+            unescaped.append(value[index])
+            index += 1
+    text = "".join(unescaped)
+    arguments, current, quoted, index = [], None, False, 0
+    while index < len(text):
+        char = text[index]
+        if char == "%":
+            if text[index + 1:index + 2] != "%":
+                raise ValueError("field code in %r" % value)
+            current = (current or "") + "%"
+            index += 2
+            continue
+        if quoted and char == "\\":
+            current += text[index + 1]
+            index += 2
+            continue
+        if char == '"':
+            quoted = not quoted
+            current = current or ""
+        elif char == " " and not quoted:
+            if current is not None:
+                arguments.append(current)
+            current = None
+        else:
+            if quoted and char in "`$":
+                raise ValueError("unescaped %r in %r" % (char, value))
+            current = (current or "") + char
+        index += 1
+    if current is not None:
+        arguments.append(current)
+    return arguments
+
+
+class DesktopEntryQuoting(unittest.TestCase):
+    """A path that reaches an Exec line has to come out of it unchanged.
+
+    Only `"` and `\\` were escaped, and only once. A rules file under a
+    folder called `100%` wrote a field code, `$` and a backtick were left
+    for a shell to expand, and desktop-file-validate rejected all three --
+    which is how an autostart entry quietly does not start anything.
+    """
+
+    AWKWARD = ["/home/John Smith/rules.ini", "/home/x/100%/rules.ini",
+               '/home/x/it"s/rules.ini', "/home/x/$HOME/rules.ini",
+               "/home/x/a`b/rules.ini", "/home/x/back\\slash/rules.ini"]
+
+    def exec_line(self, arguments):
+        entry = autostart._desktop_entry(arguments)
+        return [line[len("Exec="):] for line in entry.splitlines()
+                if line.startswith("Exec=")][0]
+
+    def test_every_path_comes_back_as_it_went_in(self):
+        for path in self.AWKWARD:
+            arguments = ["/usr/bin/python3", path, "watch"]
+            self.assertEqual(_read_exec(self.exec_line(arguments)),
+                             arguments, path)
+
+    def test_the_spec_spellings(self):
+        self.assertEqual(autostart._desktop_quote("100%"), '"100%%"')
+        self.assertEqual(autostart._desktop_quote("$HOME"), '"\\\\$HOME"')
+        self.assertEqual(autostart._desktop_quote("a`b"), '"a\\\\`b"')
+        self.assertEqual(autostart._desktop_quote('it"s'), '"it\\\\"s"')
+        self.assertEqual(autostart._desktop_quote("a\\b"), '"a\\\\\\\\b"')
+
+
 if __name__ == "__main__":
     unittest.main()
