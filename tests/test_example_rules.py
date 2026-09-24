@@ -24,6 +24,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -86,7 +87,7 @@ class StarterRules(unittest.TestCase):
                 decision, _miss = self.rule_set.decide(
                     record, source_root=self.directory)
                 self.assertRegex(os.path.dirname(decision.destination),
-                                 r"pdf/Encrypted/\d{4}-\d{2}-\d{2}$")
+                                 r"/Documents/PDF/Encrypted/\d{4}-\d{2}-\d{2}$")
             # One that opens is read, and goes wherever its words say.
             path = self.build("open.pdf", fixtures.text,
                               body=test_pdfcrypt._rc4_pdf())
@@ -247,6 +248,35 @@ class Init(unittest.TestCase):
         self.assertEqual(self.run_init(), 1)
         with open(self.target, "r", encoding="utf-8") as handle:
             self.assertIn("a change somebody made", handle.read())
+
+    def test_init_writes_this_machines_own_folders(self):
+        """A German Linux desktop's Bilder, not a second Pictures beside it."""
+        import userdirs
+        home = userdirs.home()
+        own = {"pictures": os.path.join(home, "Bilder"),
+               "video": os.path.join(home, "Videos"),
+               "music": os.path.join(home, "Musik"),
+               "documents": os.path.join(home, "Dokumente"),
+               "downloads": os.path.join(home, "Downloads")}
+        with mock.patch.object(userdirs, "all_dirs", return_value=own):
+            self.assertEqual(self.run_init(), 0)
+        with open(self.target, "r", encoding="utf-8") as handle:
+            body = handle.read()
+        self.assertIn("into = ~/Bilder/Screenshots/", body)
+        self.assertIn("into = ~/Dokumente/{ext:upper}\n", body)
+        self.assertNotIn("~/Pictures/", body)
+        self.assertNotIn("~/Documents/", body)
+        self.assertNotIn("~/Movies", body)
+
+    def test_one_name_for_the_video_folder(self):
+        """Movies on a Mac, Videos elsewhere -- never both in one file."""
+        import userdirs
+        body = userdirs.localise(open(paths.example_rules_file(),
+                                      encoding="utf-8").read())
+        video = userdirs.short(userdirs.path("video"))
+        other = "~/Videos" if video.endswith("Movies") else "~/Movies"
+        self.assertIn("into = %s/" % video, body)
+        self.assertNotIn(other + "/", body)
 
     def test_a_missing_rules_file_says_what_to_do(self):
         with self.assertRaises(rules.RuleError) as caught:

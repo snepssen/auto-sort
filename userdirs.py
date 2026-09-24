@@ -192,6 +192,32 @@ def catch_all_for(kind):
     return os.path.join(*parts)
 
 
+# How the starter rules file writes the standard folders, and which of them
+# each one is. Written once in English; `localise` makes it this machine's.
+_WRITTEN = {"Pictures": "pictures", "Videos": "video", "Movies": "video",
+            "Music": "music", "Documents": "documents",
+            "Downloads": "downloads"}
+_WRITTEN_PATH = re.compile(r"~/(%s)(?=[/\s,]|$)" % "|".join(_WRITTEN),
+                           re.M)
+
+
+def localise(text):
+    """A rules file's standard folders, as this machine has them.
+
+    The starter file says `~/Videos`, which on a Mac is a second, empty
+    folder beside the Movies the system made -- and `~/Pictures` on a
+    Linux desktop set up in German is not where its pictures go, `~/Bilder`
+    is. Written into the file rather than looked up at every run, so the
+    file says what it does and somebody reading it sees their own folders.
+    """
+    def swap(match):
+        found = path(_WRITTEN[match.group(1)])
+        if not found:
+            return match.group(0)
+        return short(found).replace(os.sep, "/")
+    return _WRITTEN_PATH.sub(swap, text)
+
+
 def short(target):
     """`~/Pictures` rather than the whole thing, for a file somebody reads."""
     if not target:

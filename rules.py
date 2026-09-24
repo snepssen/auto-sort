@@ -892,7 +892,11 @@ def _template_value(match, facts):
             raise _MissingFact(field)
     if colon:
         try:
-            if "%" in format_spec:
+            if format_spec.strip() in _CASES:
+                # `{ext:upper}` -- a folder called PDF, not pdf, for the
+                # extension somebody sees at the end of the file's name.
+                value = getattr(str(value), format_spec.strip())()
+            elif "%" in format_spec:
                 moment = _datetime(value)
                 if moment is None:
                     raise ValueError("not a date")
@@ -903,6 +907,9 @@ def _template_value(match, facts):
             raise RuleError("cannot format %s=%r with %r: %s"
                             % (field, value, format_spec, error))
     return str(value)
+
+
+_CASES = ("upper", "lower", "title")
 
 
 def _datetime(value):

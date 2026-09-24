@@ -128,15 +128,15 @@ into = ~/Videos/Subtitles
 
 [rule: 3d]
 when = kind = model3d
-into = ~/Models/{stem}
+into = ~/Documents/3D/{stem}
 
 [rule: installers]
 when = kind in app, disk-image
-into = ~/Downloads/Installers/{added:%Y-%m}
+into = ~/Documents/Installers/{added:%Y-%m}
 
 [rule: archives]
 when = kind = archive and size > 50mb
-into = ~/Downloads/Archives
+into = ~/Documents/Archives
 
 [rule: duplicates]
 when = duplicate_of is set
@@ -221,6 +221,8 @@ facts in braces.
 
 - `{taken:%Y-%m}` — a date fact with a `strftime` format.
 - `{track:02}` — a number, zero-padded.
+- `{ext:upper}` — `upper`, `lower` or `title` case: `Documents/{ext:upper}`
+  is `Documents/PDF` and `Documents/DOCX`.
 - `{artist|Unknown}` — a fallback for when the fact is unset. Without one, a
   rule whose template needs a missing fact does not match, and the next rule
   gets its turn. That is deliberate: it is how `[rule: tagged music]` hands
@@ -233,6 +235,12 @@ facts in braces.
 
 Relative destinations resolve against the item's `source_root`, so
 `into = Sorted/{kind}` on a USB stick sorts within the stick.
+
+The starter file written by `auto-sort init` (and by the first double-click)
+names the standard folders the way this machine has them: `~/Movies` on a
+Mac and `~/Videos` elsewhere, and a Linux desktop's own `~/Bilder` or
+`~/Téléchargements` where its `user-dirs.dirs` says so. The examples here
+use the English names.
 
 ## Per-rule options
 

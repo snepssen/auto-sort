@@ -66,6 +66,12 @@ class TemplatesAndPaths(unittest.TestCase):
                          os.path.join("Pictures", "2026-09", "Unknown",
                                       "07.flac"))
 
+    def test_a_folder_named_as_the_extension_is_written(self):
+        self.assertEqual(
+            rules.render_template("Documents/{ext:upper}/{kind:title}",
+                                  {"ext": "pdf", "kind": "document"}),
+            os.path.join("Documents", "PDF", "Document"))
+
     def test_missing_fact_does_not_become_unknown(self):
         with self.assertRaises(Exception) as caught:
             rules.render_template("Music/{artist}/{album}", {"artist": "A"})

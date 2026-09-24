@@ -1771,7 +1771,7 @@ def init(destination=None):
         return 1
     try:
         with open(example, "r", encoding="utf-8") as source:
-            body = source.read()
+            body = propose_module.userdirs.localise(source.read())
         paths.ensure(os.path.dirname(target))
         with open(target, "w", encoding="utf-8") as handle:
             handle.write(body)
