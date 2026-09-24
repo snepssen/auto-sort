@@ -73,6 +73,38 @@ class StarterRules(unittest.TestCase):
                          % (os.path.basename(path), actual, expected,
                             " (%s)" % why if why else ""))
 
+    def claim_from(self, path, origin):
+        """As `claim`, for a file the system says arrived by `origin`."""
+        import evidence
+        record = identify.identify(bundles.Item(os.path.abspath(path)))
+        record.set("origin", origin, "quarantine", evidence.STRONG)
+        decision, _miss = self.rule_set.decide(record,
+                                               source_root=self.directory)
+        return decision
+
+    def test_attachments_wait_with_the_attachments(self):
+        """Where a file came from, before a folder named only by its type,
+        and after every rule that knows what the file actually is."""
+        document = self.build("minutes.docx", fixtures.docx)
+        picture = self.build("image.png", fixtures.png, alpha=False)
+        photo = self.build("IMG_0001.JPG", fixtures.jpeg)
+        for path, origin, rule in (
+                (document, "email", "email attachments -- documents"),
+                (picture, "message", "message media -- images"),
+                (photo, "email", "camera photos")):
+            decision = self.claim_from(path, origin)
+            self.assertEqual(decision.rule.name if decision else None, rule,
+                             os.path.basename(path))
+        decision = self.claim_from(document, "email")
+        self.assertTrue(decision.rule.holding)
+        self.assertNotIn(os.sep + "Downloads" + os.sep, decision.destination)
+
+    def test_nothing_is_filed_back_into_downloads(self):
+        for rule in self.rule_set.rules:
+            if rule.into and rule.mode != "leave":
+                self.assertNotIn("/Downloads/", rule.into.replace(os.sep, "/"),
+                                 rule.name)
+
     def test_encrypted_pdfs_that_cannot_be_read_wait_apart(self):
         import test_pdfcrypt
         from readers import pdfcrypt
@@ -283,8 +315,8 @@ class Init(unittest.TestCase):
     def test_one_name_for_the_video_folder(self):
         """Movies on a Mac, Videos elsewhere -- never both in one file."""
         import userdirs
-        body = userdirs.localise(open(paths.example_rules_file(),
-                                      encoding="utf-8").read())
+        with open(paths.example_rules_file(), encoding="utf-8") as handle:
+            body = userdirs.localise(handle.read())
         video = userdirs.short(userdirs.path("video"))
         other = "~/Videos" if video.endswith("Movies") else "~/Movies"
         self.assertIn("into = %s/" % video, body)
