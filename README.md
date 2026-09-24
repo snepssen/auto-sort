@@ -347,7 +347,8 @@ heading style is called in any language is needed. A Markdown file's first
 `# ` line is its title. A Word 97–2003 `.doc` is a compound file holding a
 table of text pieces, 8-bit or UTF-16; it is read with the standard library
 too, text only, headed by the top of its first page. A Pages document is read
-through the PDF preview older ones keep; newer ones keep none.
+through the PDF preview older ones keep, or, in newer ones, from the text
+inside their Snappy-compressed archive, decompressed here too.
 
 **Encrypted is not the same as locked.** Payroll portals, banks and phone
 companies encrypt what they send, almost always with no password to open it:

@@ -180,5 +180,38 @@ class Word97(unittest.TestCase):
         self.assertEqual(worddoc.text(b"not a compound file"), "")
 
 
+
+class NewerPages(unittest.TestCase):
+    """The body of a newer Pages document is a UTF-8 string inside
+    Snappy-compressed protobuf."""
+
+    def test_snappy_literals_and_copies(self):
+        # "abc" as a literal, then six bytes copied from three back.
+        stream = bytes([9, (3 - 1) << 2]) + b"abc" + bytes([0x09, 3])
+        self.assertEqual(officetext._unsnappy(stream, 100), b"abcabcabc")
+
+    def test_a_copy_from_before_the_start_is_refused(self):
+        stream = bytes([6, 0x09, 3])
+        with self.assertRaises(ValueError):
+            officetext._unsnappy(stream, 100)
+
+    def test_it_will_not_grow_past_its_limit(self):
+        with self.assertRaises(ValueError):
+            officetext._unsnappy(bytes([0x80, 0x80, 0x80, 0x10]), 1000)
+
+    def test_the_longest_run_of_text_is_the_body(self):
+        body = ("Assessment of Pre-Settled Status Eligibility and what "
+                "follows from it for the applicant").encode("utf-8")
+        payload = b"\x0a\x02\x08\x01\x12" + bytes([len(body)]) + body \
+            + b"\x1a\x03abc"
+        literal = bytes([len(payload)]) + bytes([(len(payload) - 1) << 2]) \
+            if len(payload) <= 60 else bytes([len(payload), 60 << 2,
+                                              len(payload) - 1])
+        chunk = literal + payload
+        archive = b"\x00" + len(chunk).to_bytes(3, "little") + chunk
+        self.assertTrue(officetext._iwa_text(archive).startswith(
+            "Assessment of Pre-Settled Status"))
+
+
 if __name__ == "__main__":
     unittest.main()

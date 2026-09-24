@@ -338,7 +338,9 @@ def _markdown(data):
 
 
 def _pages(path):
-    """A Pages document keeps a picture of itself: a PDF, in older ones."""
+    """A Pages document: the PDF preview older ones keep, or the text of
+    newer ones, which is inside `Index/Document.iwa` -- Snappy-compressed
+    protobuf, where the body is a UTF-8 string of its own."""
     with zipfile.ZipFile(path) as archive:
         names = set(archive.namelist())
         for preview in ("QuickLook/Preview.pdf", "preview.pdf"):
@@ -346,6 +348,8 @@ def _pages(path):
                 data = _part(archive, preview)
                 break
         else:
+            if "Index/Document.iwa" in names:
+                return _iwa_text(_part(archive, "Index/Document.iwa")), []
             return "", []
 
     class _Peek(object):
@@ -356,3 +360,124 @@ def _pages(path):
     if not runs:
         return "", []
     return pdftext._keep_readable_fonts(runs)[:MAX_CHARS], runs
+
+
+# How far one Pages document may decompress. The text of a long report is
+# a few hundred kilobytes; this is well past it.
+MAX_IWA = 16 * 1024 * 1024
+
+
+def _iwa_text(data):
+    """The longest run of text in a Pages document's archive.
+
+    Without the schema, the body is recognisable anyway: it is by far the
+    longest stretch of the decompressed archive that is text -- on a real
+    document, 5,097 characters against nothing else over a few dozen.
+    """
+    out = bytearray()
+    at = 0
+    while at + 4 <= len(data):
+        length = int.from_bytes(data[at + 1:at + 4], "little")
+        chunk = data[at + 4:at + 4 + length]
+        at += 4 + length
+        try:
+            out += _unsnappy(chunk, MAX_IWA - len(out))
+        except (IndexError, ValueError):
+            break
+        if len(out) >= MAX_IWA:
+            break
+    return _longest_string(bytes(out))
+
+
+# Scanned for strings at most this far into the decompressed archive.
+MAX_IWA_SCAN = 4 * 1024 * 1024
+
+
+def _longest_string(data):
+    """The longest protobuf string field that is text.
+
+    Taken by the field's own length rather than as a run of printable
+    bytes: the length in front of a string is often a printable byte
+    itself, and read as a run the body began with it.
+    """
+    best = ""
+    limit = min(len(data), MAX_IWA_SCAN)
+    at = 0
+    while at < limit:
+        if data[at] & 7 != 2 or data[at] >> 3 == 0:
+            at += 1
+            continue
+        try:
+            length, start = _varint(data, at + 1)
+        except (IndexError, ValueError):
+            at += 1
+            continue
+        if length < 40 or length <= len(best) or start + length > len(data):
+            at += 1
+            continue
+        try:
+            candidate = data[start:start + length].decode("utf-8")
+        except UnicodeDecodeError:
+            at += 1
+            continue
+        printable = sum(1 for char in candidate
+                        if char.isprintable() or char in "\n\t\u2029")
+        if printable >= 0.95 * len(candidate):
+            best = candidate
+            at = start + length
+            continue
+        at += 1
+    return re.sub(r"\s+", " ", best).strip()[:MAX_CHARS]
+
+
+def _varint(data, at):
+    shift = result = 0
+    for _step in range(10):
+        byte = data[at]
+        at += 1
+        result |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return result, at
+        shift += 7
+    raise ValueError("varint too long")
+
+
+def _unsnappy(data, room):
+    """Snappy's raw format, which is all a Pages archive chunk is."""
+    expected, at = _varint(data, 0)
+    if expected > room:
+        raise ValueError("would decompress past the limit")
+    out = bytearray()
+    while at < len(data):
+        tag = data[at]
+        at += 1
+        kind = tag & 3
+        if kind == 0:
+            length = tag >> 2
+            if length >= 60:
+                size = length - 59
+                length = int.from_bytes(data[at:at + size], "little")
+                at += size
+            length += 1
+            out += data[at:at + length]
+            at += length
+            continue
+        if kind == 1:
+            length = ((tag >> 2) & 7) + 4
+            offset = ((tag >> 5) << 8) | data[at]
+            at += 1
+        elif kind == 2:
+            length = (tag >> 2) + 1
+            offset = int.from_bytes(data[at:at + 2], "little")
+            at += 2
+        else:
+            length = (tag >> 2) + 1
+            offset = int.from_bytes(data[at:at + 4], "little")
+            at += 4
+        if not 0 < offset <= len(out):
+            raise ValueError("copy from before the start")
+        for _index in range(length):
+            out.append(out[-offset])
+        if len(out) > expected:
+            raise ValueError("longer than it said")
+    return bytes(out)
