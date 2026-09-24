@@ -235,6 +235,36 @@ class Classification(unittest.TestCase):
         self.assertTrue(record.value("text_layer"))
         self.assertIn("RECHNUNG", record.value("heading"))
 
+    PAYSLIP = ("Lohnabrechnung\nJanuar 2024\nPersonalnummer 300\n"
+               "Brutto und Netto Bezuege des Arbeitnehmers im Monat")
+
+    def test_a_page_with_words_is_not_a_scan_whatever_it_is_called(self):
+        """Three payslips named `doc_7.pdf` went to Scans/<year>, a folder
+        nothing is ever learnt from, on the strength of a name that looks
+        like a scanner's -- while their own text said what they were."""
+        record = self.identify("doc_7.pdf", producer="DATEV",
+                               text=self.PAYSLIP)
+        self.assertTrue(record.value("text_layer"))
+        self.assertNotEqual(record.value("capture"), "scan")
+
+    def test_a_page_with_no_words_is_still_a_scan_by_its_name(self):
+        record = self.identify("doc_7.pdf", producer="DATEV",
+                               image_only=True)
+        self.assertEqual(record.value("capture"), "scan")
+
+    def test_too_few_words_to_be_read_do_not_outrank_the_name(self):
+        record = self.identify("doc_7.pdf", producer="DATEV",
+                               text="Seite 1")
+        self.assertFalse(record.value("text_layer"))
+        self.assertEqual(record.value("capture"), "scan")
+
+    def test_scanning_software_still_says_scan_over_a_text_layer(self):
+        """Only the name gives way. A scanner that writes its own OCR
+        layer is still a scanner."""
+        record = self.identify("doc_7.pdf", producer="HP ScanJet Pro firmware",
+                               text=self.PAYSLIP)
+        self.assertEqual(record.value("capture"), "scan")
+
     def test_the_reader_does_not_decide_what_the_document_is(self):
         """No classification happens here, in any language.
 

@@ -211,7 +211,18 @@ def _bytes(path, record, tier):
 
 def _name_and_provenance(item, record):
     found = names_module.read(record.value("name", ""), record.value("kind"))
+    # A page with words on it is not a scan, whatever it is called. Three
+    # payslips named `doc_7.pdf` went to Scans/<year> -- where nothing is
+    # ever learnt from -- on the strength of a name that looks like a
+    # scanner's, while their text said what they were. The name's hint
+    # counts only where no readable text layer was found; the text layer
+    # is pdftext's own verdict, so "readable" means one thing everywhere.
+    typed = record.value("text_layer") is True \
+        and record.source("text_layer") == "pdf-text"
     for name, value, confidence, source in found.facts:
+        if typed and name == "capture" and value == "scan":
+            record.note("named like a scan, but its text layer was read")
+            continue
         record.set(name, value, source, confidence)
     if found.facts:
         record.reader_ran("filename", "%d facts" % len(found.facts))
