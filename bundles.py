@@ -224,6 +224,40 @@ def _stem_key(name):
     return stem.lower()
 
 
+_SUBTITLE_EXTENSIONS = {"srt", "vtt", "ass", "ssa", "sub", "sbv", "ttml",
+                        "smi", "lrc"}
+_ONE_TAG = re.compile(r"^(?P<stem>.+)\.[a-z][a-z0-9-]{1,15}$")
+
+
+def _adopt_tagged_subtitles(by_stem):
+    """Give a subtitle with a tag of its own back to what it subtitles.
+
+    Language tags are stripped by `_stem_key`, but a subtitle can carry any
+    tag -- `Song.face.ass` beside `Song.ass` and `Song.wav`, a karaoke
+    version -- and on a real machine that one was filed alone into
+    Subtitles while its song went to Music. Stripping any tag from every
+    name would cost `My.Song.ass` its title, so one more tag comes off only
+    when that leaves the stem of something that is not itself a sidecar.
+    """
+    for stem in list(by_stem):
+        members = by_stem.get(stem)
+        if not members or not all(
+                _extension(os.path.basename(path)) in _SUBTITLE_EXTENSIONS
+                for path in members):
+            continue
+        match = _ONE_TAG.match(stem)
+        if not match:
+            continue
+        parent = match.group("stem")
+        others = by_stem.get(parent)
+        if parent == stem or not others or not any(
+                _extension(os.path.basename(path)) not in SIDECAR_EXTENSIONS
+                for path in others):
+            continue
+        others.extend(members)
+        del by_stem[stem]
+
+
 def _extension(name):
     return name.rsplit(".", 1)[-1].lower() if "." in name[1:] else ""
 
@@ -315,6 +349,8 @@ def group(directory, names=None):
         if path in claimed:
             continue
         by_stem.setdefault(_stem_key(os.path.basename(path)), []).append(path)
+
+    _adopt_tagged_subtitles(by_stem)
 
     for stem, members in by_stem.items():
         if len(members) == 1:

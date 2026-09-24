@@ -93,5 +93,41 @@ class KnowingAProjectWhenItSeesOne(unittest.TestCase):
         self.assertIn("cv.tex", names)
 
 
+class SubtitlesWithATagOfTheirOwn(unittest.TestCase):
+    """`Song.face.ass` was filed alone into Subtitles while its song went
+    to Music with `Song.ass`."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp(prefix="autosort-tagged-")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def grouped(self, *names):
+        import bundles
+        for name in names:
+            with open(os.path.join(self.dir, name), "w") as handle:
+                handle.write("x")
+        return dict((os.path.basename(item.primary),
+                     sorted(os.path.basename(m) for m in item.members))
+                    for item in bundles.group(self.dir))
+
+    def test_it_goes_with_what_it_subtitles(self):
+        found = self.grouped("Song.wav", "Song.ass", "Song.face.ass")
+        self.assertEqual(found, {"Song.wav": ["Song.ass", "Song.face.ass",
+                                              "Song.wav"]})
+
+    def test_a_dotted_title_keeps_its_name(self):
+        """Nothing called `My` here, so `My.Song.ass` is its own item."""
+        found = self.grouped("My.Song.ass", "Other.mkv")
+        self.assertIn("My.Song.ass", found)
+
+    def test_only_to_something_that_is_not_itself_a_sidecar(self):
+        found = self.grouped("Song.ass", "Song.face.ass")
+        self.assertEqual(len(found), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
