@@ -142,14 +142,21 @@ class WhenThereIsNothingInstalled(unittest.TestCase):
         self.assertNotIn("--psm", self.ran(["eng"]))
 
     def test_it_leaves_no_temporary_file_behind(self):
-        before = len(os.listdir(tempfile.gettempdir()))
-        with mock.patch.object(ocr, "available", return_value="/bin/false"), \
-                mock.patch("subprocess.run",
-                           return_value=mock.Mock(returncode=1, stdout=b"")):
-            for _ in range(5):
-                ocr.read_image(JPEG)
-        self.assertLessEqual(len(os.listdir(tempfile.gettempdir())),
-                             before + 2)
+        # A folder of its own: the shared temporary folder is written to by
+        # everything else on the machine, a running auto-sort included, and
+        # counting it made this test fail now and then for no reason here.
+        private = tempfile.mkdtemp(prefix="autosort-ocr-tmp-")
+        try:
+            with mock.patch.object(ocr, "available",
+                                   return_value="/bin/false"), \
+                    mock.patch.object(tempfile, "tempdir", private), \
+                    mock.patch("subprocess.run", return_value=mock.Mock(
+                        returncode=1, stdout=b"")):
+                for _ in range(5):
+                    ocr.read_image(JPEG)
+            self.assertEqual(os.listdir(private), [])
+        finally:
+            shutil.rmtree(private, ignore_errors=True)
 
 
 class WhatItRecords(unittest.TestCase):
