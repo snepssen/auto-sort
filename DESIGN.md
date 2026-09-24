@@ -149,6 +149,18 @@ planner, the same collision and volume checks, the same forced preview, the
 same ledger and the same undo — which is the only reason it is safe to let a
 background process do it at all.
 
+**The one exception is asked for, never automatic.** A specific decision was
+made on what the reader said the day the file arrived, and the reader
+improves: four contracts sat under their own letterhead because the reader of
+the day missed their titles. `refile` reads filed files again, records what
+they say now, and moves a file only when a real category claims it elsewhere
+— still never into a holding folder, never a file somebody moved, never a
+part of a bundle. A file whose rule has been deleted is decided afresh by
+every rule, because the rules file promises that deleting a line takes its
+folder with it. A placement ends when the program itself moves the file on,
+and undoing that move makes it stand again; without that, every regrouped
+file was counted twice by every report.
+
 ## Disagreement is the best evidence there is
 
 Everything else in this design reads files. A correction reads the person.
@@ -452,3 +464,32 @@ duplication is three files and it buys each tool the ability to stand alone.
     a surname is often also a word -- and the login and machine names with
     it, since a moniker is a word too. What settles those is that a word
     only ever found inside a path or an address was never used as one.
+19. A title by how big it is drawn. Official paperwork puts registration
+    numbers first and its title four hundred characters down; what it
+    always does is draw the title larger than the body. Page one is what
+    the page tree says, read with the fonts page one declares, and a
+    heading is the title and then the top of the page, so the sender's
+    rules keep matching.
+20. Every writer's way of spacing words. Qt places a glyph at a time,
+    Quartz gives each glyph a text block of its own, some writers step
+    glyph by glyph; with the fonts' own width tables, a string that starts
+    where the last ended continues its word. Uncompressed streams are
+    streams too. Each change measured against the reader before it on
+    every PDF on the machine; none lost a word.
+21. Encrypted is not locked. The standard security handler (RC4, AES-128)
+    written out in the standard library, the empty password checked
+    against the file's own check value and nothing else tried; a Mac's
+    PDFKit agrees file for file about which open. The owner may keep their
+    own passwords in the Keychain, never in the rules or the ledger.
+22. OCR that reaches what was already filed, turns a page the right way up,
+    reads pages kept as raw pixels by rewrapping them as PNG, and, on a
+    Mac, uses the text recognition the system already has, so reading a
+    scanned page needs nothing installed.
+23. Not only PDFs. Word (by style sizes), OpenDocument, RTF, Markdown and
+    text; Word 97 `.doc` through its compound file and piece table; newer
+    Pages through its Snappy-compressed archive; email by subject,
+    invitations by summary, saved pages by title.
+24. The reports tell the truth about the rules. A rule somebody wrote is
+    not outranked by a word the counting found; a rule is asked with all a
+    document's facts; a title word is counted only where it is written as
+    one; a learnt category is named by the phrase its documents share.
