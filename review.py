@@ -532,6 +532,13 @@ def _claimed_at(heading, rule, fact="heading"):
     """
     if rule is None:
         return _position(heading, None)
+    if not _learnt(rule):
+        # Somebody wrote this rule, or had it written, knowing what these
+        # documents are: nothing on the page outranks that. Offered as
+        # though it did, 19 hotel payslips filed by a hand-written payslips
+        # rule came back as a category called `Payments`, and three P60s
+        # in their own folder as one called `End`.
+        return -1
     places = []
     for comparison in rule.condition.comparisons():
         if getattr(comparison, "fact", None) != fact or \
@@ -543,6 +550,16 @@ def _claimed_at(heading, rule, fact="heading"):
     if places:
         return min(places)
     return _position(heading, rule.name.split(": ")[-1])
+
+
+# The names induction gives the rules it writes. Everything else was
+# written, or directed, by a person.
+_LEARNT_PREFIXES = ("what the page calls itself: ",
+                    "what these files are called: ")
+
+
+def _learnt(rule):
+    return str(getattr(rule, "name", "")).startswith(_LEARNT_PREFIXES)
 
 
 def _position_of_text(heading, text):

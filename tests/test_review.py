@@ -172,17 +172,26 @@ class WhereARuleClaimsAHeading(unittest.TestCase):
         finally:
             shutil.rmtree(os.path.dirname(path), ignore_errors=True)
 
-    def test_a_hand_written_rule_is_found_by_its_words(self):
-        rule = self.rule("[rule: payslips]\nwhen = heading contains Loonbrief"
+    def test_a_learnt_rule_is_found_by_its_words(self):
+        rule = self.rule("[rule: what the page calls itself: Payslip]\n"
+                         "when = heading contains Loonbrief"
                          " or heading contains Payslip\ninto = ~/P\n")
         self.assertEqual(review._claimed_at(
             "Payslip for Week Ending", rule), 0)
 
     def test_a_word_it_asks_for_inside_a_longer_one(self):
-        rule = self.rule("[rule: payslips]\nwhen = heading contains Payslip"
-                         "\ninto = ~/P\n")
+        rule = self.rule("[rule: what the page calls itself: Payslip]\n"
+                         "when = heading contains Payslip\ninto = ~/P\n")
         self.assertEqual(review._claimed_at(
             "Your ePayslip number", rule), 1)
+
+    def test_a_rule_somebody_wrote_is_not_outranked(self):
+        """19 hotel payslips filed by a hand-written payslips rule came
+        back as a category called `Payments`, the word before `Deductions`."""
+        rule = self.rule("[rule: payslips]\nwhen = heading contains "
+                         "Deductions\ninto = ~/P\n")
+        self.assertEqual(review._claimed_at(
+            "Payments Year to Date Deductions", rule), -1)
 
     def test_nothing_claims_it_means_the_end(self):
         self.assertEqual(review._claimed_at("one two three", None), 4)
@@ -407,8 +416,15 @@ class CategoriesThatArriveLater(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="autosort-emerge-")
         path = os.path.join(self.dir, "r.ini")
+        # Named as the induction names what it learns: these are rules the
+        # counting wrote, which a better word may yet outrank.
+        learnt = RULES
+        for word in ("Rechnung", "Stadtwerke", "Kontoauszug"):
+            learnt = learnt.replace("[rule: %s]" % word,
+                                    "[rule: what the page calls itself: %s]"
+                                    % word)
         with open(path, "w") as handle:
-            handle.write(RULES)
+            handle.write(learnt)
         self.rule_set = rules.load(path)
         self.journal = ledger.Ledger(os.path.join(self.dir, "state.db"))
         self.run = self.journal.start_run("sort", source_root=self.dir,
