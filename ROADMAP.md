@@ -276,10 +276,14 @@ What was built, and why it looks the way it does:
 
 Still open:
 
-- **Filters other than JPEG.** CCITT and JBIG2 fax images, and Flate raw
-  bitmaps, are skipped. Writing a PNM out of a Flate bitmap is not hard and
-  would need the colour space handled honestly; the fax codecs are a real
-  decoder each.
+- **Filters other than JPEG and Flate.** Flate bitmaps are now rewrapped as
+  a PNG (8-bit grey or colour, 1-bit grey): two certificates were exactly
+  that. CCITT and JBIG2 fax images are still skipped; the fax codecs are a
+  real decoder each.
+- **AES-256 encryption (revision 6).** Revisions 2 to 4 are read when a file
+  opens without a password or with one kept in the Keychain; revision 6
+  needs SHA-2 key hardening and AES *encryption* in the loop, and no file on
+  the machine this was built on uses it yet.
 - **Pages that are not images at all.** A PDF whose text cannot be decoded
   has nothing to OCR without rendering it first, which needs `pdftoppm` or
   equivalent. That is the natural second optional program, and item 5 may

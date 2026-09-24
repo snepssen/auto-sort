@@ -26,7 +26,9 @@ python3 autosort.py check-rules ./rules.ini
 python3 autosort.py sort ~/Downloads --rules ./rules.ini
 python3 autosort.py sort ~/Downloads --rules ./rules.ini --apply
 python3 autosort.py undo last
+python3 autosort.py undo all
 python3 autosort.py watch --rules ./rules.ini --apply
+python3 autosort.py restart
 python3 autosort.py status
 python3 autosort.py open-log
 python3 autosort.py pause
@@ -37,6 +39,8 @@ python3 autosort.py autostart install --rules ./rules.ini
 python3 autosort.py autostart remove
 python3 autosort.py propose ~/Downloads --out my-rules.ini
 python3 autosort.py regroup ~/Downloads
+python3 autosort.py refile
+python3 autosort.py costs
 python3 autosort.py corrections ~/Downloads
 python3 autosort.py adopt --apply
 python3 autosort.py duplicates ~/Music --apply
@@ -65,7 +69,11 @@ time zone. Column and manual destination preferences stay in that browser. Per
 row, it can reveal, copy, move, restore a recorded move, or move the current
 file to the system Trash/Recycle Bin; copy and move never overwrite, every
 operation is ledgered, and classification facts follow later file operations.
-`autostart` is deliberately separate from `watch`: `status` only reports the
+`restart` replaces a running daemon with one on the current code. `undo all`
+previews putting every sorted file back where it came from, and does it with
+`--apply`. `refile` reads filed files again and moves the ones a category now
+claims (see below). `costs` lists the files that were expensive to read, and
+why. `autostart` is deliberately separate from `watch`: `status` only reports the
 per-user login launcher, `install` first validates the rules file then adds it,
 and `remove` deactivates and deletes only that launcher. Nothing starts at
 login unless `install` is explicitly requested.
@@ -231,6 +239,22 @@ from being named after the payroll office's registration number to
 name of the software to `Lohn-/Gehalts-Abrechnung`. A large line ending in a
 comma is a greeting, not a title.
 
+The title is looked for on page one, and page one is what the file's page tree
+says it is, not whatever is stored first: six-page contracts kept a form from
+their back page ahead of their first, and were titled after its section
+heading, `Luik A`. A font is also read as the page that uses it defines it —
+`/F7` meant a two-byte Calibri on one page of those contracts and Times-Bold on
+page one, and the title drawn in Times-Bold went through Calibri's table and
+came out as nothing.
+
+The heading kept for a document is its title *and then* the top of the page it
+did not already say. The title says what a document is; the top of the page
+usually says who sent it, and a heading of the title alone lost every rule
+learnt from a sender — four CompTIA certificates titled `OF COMPLETION` no
+longer said CompTIA anywhere. Rules match with `contains`, so both halves
+count, and the induction reads positions, so the title, being first, still
+decides what a category is called.
+
 Where nothing on a page is drawn larger than the rest, the first words at the
 top are used instead, and only the first five hundred characters of a page are
 ever offered anywhere else in the program. A document announces what it is at the top and mentions
@@ -295,6 +319,43 @@ one folder from 151 documents read and 195 held, to **304 read and 22 held**
 — and of those 22, eight are real photographed pages and the rest are image
 formats nothing here can decode.
 
+**Every writer draws a page its own way, and the words are in the gaps.**
+Whether two strings are one word or two is decided by how far the pen moved
+between them, and each program moves it differently. Qt — behind every
+wkhtmltopdf document — draws one glyph per string and the spaces as glyphs of
+their own, so a stream that is mostly one-character strings is read that way,
+and a step the width of a letter is not a gap. A Mac's printed PDFs give each
+glyph or two a text block and a matrix of its own; there the font's own width
+table is read, and a string that starts where the last one ended, within
+fifteen hundredths of an em, continues its word — the pen is followed through
+a `TJ` and across content streams. Some writers step glyph by glyph with `Td`,
+compared the same way; a step *backwards* is never the same word, because a
+table's writer steps left to its next right-aligned column. And a stream need
+not be compressed at all: Qt stores its character maps plain, in the list form
+of `bfrange` that was being misread as ranges of its own, and the payslips it
+wrote were sent to OCR as though they were photographs. Every change here was
+measured against the reader before it on all 362 PDFs on the machine that found
+it, and none lost a word: `P a ym e n ts` became `Payments`, `An twerpen`
+`Antwerpen`, `he eft` `heeft`, and 25 documents that had read as empty were
+read.
+
+**Encrypted is not the same as locked.** Payroll portals, banks and phone
+companies encrypt what they send, almost always with no password to open it:
+the encryption forbids printing and editing, and every viewer opens the file
+without asking. To this reader they were bytes — nineteen payslips with no
+heading and a producer of ciphertext. The PDF standard security handler is
+implemented here (RC4 and AES-128, revisions 2 to 4), with AES decryption
+written out because the standard library has none; it is checked against the
+FIPS-197 vectors and OpenSSL. The key is derived from the empty password and
+checked against the file's own check value before a byte is decrypted, and
+nothing else is tried: of those nineteen, the eleven it opened are the eleven
+a Mac opens without asking, and the other eight are marked `needs_password`,
+which is an answer where a page of nothing was not. Anybody who wants their
+own locked documents read can keep the passwords in a login Keychain item
+named `auto-sort PDF passwords`, one per line — never in the rules file, the
+ledger or a log. AES-256 (revision 6) is not read yet; such a file reads as
+before, not at all.
+
 A page that is a photograph of a page — no text layer, however hard it is
 looked at — is told apart from one that simply has nothing to say. It gets
 `needs_ocr` and is held rather than guessed at, because there was nothing to
@@ -306,10 +367,21 @@ other document, with no new vocabulary anywhere — what comes back is text,
 and this program already knows what to do with text. The page image is lifted
 straight out of the PDF: a JPEG inside a PDF is a JPEG, copied byte for byte
 with nothing decoded, so no rasteriser and no third-party library is involved.
+A page stored as compressed pixels is zlib and raw rows, which is what a PNG
+is made of too, so it is rewrapped as one — two certificates that were a
+1408×1988 picture kept that way had nothing anybody could read until it was.
 The *largest* image, not the first, because nearly every scan arrives with the
 sender's logo in front of it — and only if it is page-sized, since OCR on a
 218×62 letterhead costs a process launch to learn the sender's name, which the
-rest of the document already said.
+rest of the document already said. Between pictures of one size, the one with
+the most in it: a page often comes with a soft mask of exactly its own size.
+
+Pages are turned the right way up first where tesseract has its orientation
+data — a form fed through the scanner upside down read `OTOZ JUN!` for "JUNI
+2020" — and a heading from OCR starts where the words do, past the
+`ray Es Ss iS}` a decorative border reads as. A page OCR looked at and found
+nothing on is recorded as read, not waiting; a crash or a timeout still
+leaves it waiting.
 
 What comes back is weaker evidence and is recorded that way: a heading from a
 text layer is what the document contains, and a heading from OCR is a
@@ -318,10 +390,11 @@ is the confidence model doing its job rather than a special case. `explain`
 says `read_by: ocr` so it is never a mystery where a word came from.
 
 Without tesseract, nothing changes: the scan is held exactly as before. It
-runs inside the identify worker, where it can be killed, with its own
-twenty-second limit well inside the worker's thirty. `ocr = off` in
-`[settings]` turns it off for somebody who has the program installed for
-other reasons.
+runs in a process of its own, with a minute's patience, and a page filed
+before tesseract was installed is read the next time held files are looked at
+again rather than never. What it said is kept against the file, so each page
+is paid for once. `ocr = off` in `[settings]` turns it off for somebody who
+has the program installed for other reasons.
 
 ## Categories nobody configured, in languages nobody taught it
 
@@ -680,6 +753,33 @@ like anything else. The daemon checks every half hour and reports; set
 The flag lives in the ledger, recorded when the file was placed, rather than
 being worked out later from the rule's name — names change every time a rules
 file is regenerated, and a file's history must not depend on that.
+
+### Reading filed files again
+
+The one exception is asked for by name. A file a category placed was judged by
+what the reader said on the day it arrived, and the reader improves: four
+employment contracts sat in a folder named after their own letterhead because
+the reader of the day missed their titles.
+
+```sh
+auto-sort refile            # read filed files again; show what would move
+auto-sort refile --apply
+```
+
+Each filed file is read again and what it says now is recorded — so `adopt`
+and `check-rules` learn from today's reading, not the one it arrived with —
+and it moves only when a real category now claims it somewhere else. Never
+back into a holding folder, never a file you moved yourself, and never one
+part of a bundle away from the rest. The exception to *that* is a file whose
+rule you deleted: the rules file says "delete any line you disagree with and
+its folder goes with it", and such a file is decided afresh by every rule,
+holding ones included, as a new arrival would be. Renaming a rule's folder
+works the same way — the files follow.
+
+A placement is over once auto-sort itself moves the file on, and undoing that
+move makes it stand again. Without that, every regrouped file was counted twice
+by the rule reports — 169 contracts read as 338 — and looked like a file
+somebody had moved away.
 
 ## Learning from what you moved back
 
