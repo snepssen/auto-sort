@@ -400,6 +400,12 @@ class PollingDaemon(object):
             return
         self._run_plans(plans, rule_set, requested_dry, "Regrouped")
 
+    # Filed files read again per cycle. The log page, the tray and a quit
+    # all wait on the same thread as a cycle, and the first pass after an
+    # update read 2,100 files in one go: minutes of an icon that did not
+    # answer. A few at a time, between cycles, costs nobody anything.
+    REFILE_BATCH = 25
+
     def _check_refile(self, rule_set, requested_dry):
         """Reconsider what a category placed, once the rules or reader change.
 
@@ -413,7 +419,9 @@ class PollingDaemon(object):
 
         Keyed on the rules and the reader, not on a clock, because reading
         every filed document again is the most expensive thing this does
-        and is pointless while neither has changed.
+        and is pointless while neither has changed. Newest first, a batch a
+        cycle, with where it got to kept in the ledger so a restart carries
+        on rather than starting over.
         """
         if rule_set.settings.regroup == "off":
             return
@@ -421,29 +429,46 @@ class PollingDaemon(object):
                           regroup_module.reader_mark())
         if self.journal.get_state("refiled_with") == mark:
             return
-        helpers = self._helpers(rule_set)
+        below, found = None, 0
+        progress = (self.journal.get_state("refile_progress") or "").split()
+        if len(progress) == 3 and progress[0] == mark:
+            below, found = int(progress[1]), int(progress[2])
         try:
-            filed = regroup_module.filed(self.journal, rule_set)
-            review.refresh_held(self.journal, helpers=helpers,
-                                rows=[candidate.row for candidate in filed])
-            plans = regroup_module.build(self.journal, rule_set,
-                                         pick=regroup_module.filed)
+            batch = [candidate for candidate
+                     in regroup_module.filed(self.journal, rule_set)
+                     if below is None or candidate.row["id"] < below]
+            batch = batch[:self.REFILE_BATCH]
         except Exception as error:           # noqa: BLE001
-            # Not tried again until something changes: every cycle would
-            # otherwise read every filed document again to fail the same way.
             self.output("Could not check filed files again: %s" % error)
             self.journal.set_state("refiled_with", mark)
             return
+        if not batch:
+            self.journal.set_state("refiled_with", mark)
+            self.journal.set_state("refile_progress", "")
+            if found and rule_set.settings.regroup != "apply":
+                self.output("%d filed file%s would go to a different "
+                            "category now. Run `auto-sort refile` to see, or "
+                            "set regroup = apply."
+                            % (found, "" if found == 1 else "s"))
+            return
+        lowest = min(candidate.row["id"] for candidate in batch)
+        try:
+            review.refresh_held(self.journal, helpers=self._helpers(rule_set),
+                                rows=[candidate.row for candidate in batch])
+            plans = regroup_module.build(self.journal, rule_set,
+                                         pick=regroup_module.filed,
+                                         only=batch)
+        except Exception as error:           # noqa: BLE001
+            # Past this batch rather than stuck on it: the next cycle
+            # would only fail the same way.
+            self.output("Could not check filed files again: %s" % error)
+            plans = []
         total = sum(len(plan.items) for _root, plan in plans)
-        if total and rule_set.settings.regroup != "apply":
-            self.output("%d filed file%s would go to a different category "
-                        "now. Run `auto-sort refile` to see, or set "
-                        "regroup = apply." % (total,
-                                              "" if total == 1 else "s"))
-        elif total and self._run_plans(plans, rule_set, requested_dry,
-                                       "Refiled"):
-            return                  # a preview: move them next time round
-        self.journal.set_state("refiled_with", mark)
+        if total and rule_set.settings.regroup == "apply":
+            if self._run_plans(plans, rule_set, requested_dry, "Refiled"):
+                return              # a preview: the same batch moves next
+        self.journal.set_state("refile_progress",
+                               "%s %d %d" % (mark, lowest, found + total))
 
     def _helpers(self, rule_set):
         helpers = self.reader.helpers

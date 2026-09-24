@@ -170,6 +170,32 @@ class RefilingByItself(unittest.TestCase):
         self.assertTrue(os.path.exists(moved))
         self.assertFalse(os.path.exists(self.letter()))
 
+    def test_a_few_at_a_time_so_the_icon_keeps_answering(self):
+        for number in range(2, 8):
+            self.place("letter %d.txt" % number)
+        self.write(AFTER)
+        messages = []
+        read = []
+        import review
+        original = review.refresh_held
+
+        def counting(journal, **kwargs):
+            read.append(len(kwargs.get("rows") or []))
+            return original(journal, **kwargs)
+        with self.service(messages) as service:
+            service.REFILE_BATCH = 3
+            review.refresh_held = counting
+            try:
+                for moment in range(100, 112):
+                    service.cycle(now_value=moment)
+            finally:
+                review.refresh_held = original
+        self.assertTrue(read and max(read) <= 3, read)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.out,
+                                                        "Letters"))),
+                         sorted(["offer letter.txt"]
+                                + ["letter %d.txt" % n for n in range(2, 8)]))
+
 
 class TheReaderMark(unittest.TestCase):
 

@@ -179,7 +179,8 @@ def promotable(rule_set):
                                 rule_set.source, rule_set.source_hash)
 
 
-def build(journal, rule_set, source_root=None, limit=20000, pick=None):
+def build(journal, rule_set, source_root=None, limit=20000, pick=None,
+          only=None):
     """[(root, plan)] describing every file that can be promoted.
 
     Grouped by the folder each file originally came from, so that a rule with
@@ -190,10 +191,15 @@ def build(journal, rule_set, source_root=None, limit=20000, pick=None):
     way the answer comes from the rules with their holding rules taken out,
     so a file is only ever moved to a category -- never back into a pen --
     unless the rule that placed it has been deleted.
+
+    `only` is a part of what `pick` would choose, already chosen: the
+    background sorter goes through filed files a few at a time.
     """
     pick = pick or candidates
     grouped = collections.defaultdict(list)
-    for candidate in pick(journal, rule_set, source_root, limit):
+    chosen = only if only is not None else pick(journal, rule_set,
+                                                source_root, limit)
+    for candidate in chosen:
         grouped[candidate.source_root].append(candidate)
     if not grouped:
         return []
