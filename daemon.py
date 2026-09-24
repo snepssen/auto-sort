@@ -379,10 +379,7 @@ class PollingDaemon(object):
         # the reader may have got better since. See `review.refresh_held`.
         # With the tools this daemon already runs, so that a page filed
         # before OCR was possible is read now rather than never.
-        helpers = self.reader.helpers
-        helpers.mode = getattr(rule_set.settings, "tools", "auto")
-        if helpers.journal is None:
-            helpers.journal = self.journal
+        helpers = self._helpers(rule_set)
         try:
             review.refresh_held(self.journal, helpers=helpers)
         except Exception as error:           # noqa: BLE001
@@ -401,14 +398,76 @@ class PollingDaemon(object):
                         "set regroup = apply." % (total,
                                                   "" if total == 1 else "s"))
             return
+        self._run_plans(plans, rule_set, requested_dry, "Regrouped")
+
+    def _check_refile(self, rule_set, requested_dry):
+        """Reconsider what a category placed, once the rules or reader change.
+
+        Files placed by a real category were judged by the rules and the
+        reader of their day. When either changes -- a rule is added, or the
+        reader learns to see a title it missed -- the old answer may no
+        longer be the one those rules would give, and a sorter called
+        auto-sort should not wait to be told to fix that. So each change is
+        answered once: the files are read again and any a category now
+        claims are moved, exactly as `auto-sort refile --apply` would.
+
+        Keyed on the rules and the reader, not on a clock, because reading
+        every filed document again is the most expensive thing this does
+        and is pointless while neither has changed.
+        """
+        if rule_set.settings.regroup == "off":
+            return
+        mark = "%s:%s" % (sorter.rules_hash(rule_set),
+                          regroup_module.reader_mark())
+        if self.journal.get_state("refiled_with") == mark:
+            return
+        helpers = self._helpers(rule_set)
+        try:
+            filed = regroup_module.filed(self.journal, rule_set)
+            review.refresh_held(self.journal, helpers=helpers,
+                                rows=[candidate.row for candidate in filed])
+            plans = regroup_module.build(self.journal, rule_set,
+                                         pick=regroup_module.filed)
+        except Exception as error:           # noqa: BLE001
+            # Not tried again until something changes: every cycle would
+            # otherwise read every filed document again to fail the same way.
+            self.output("Could not check filed files again: %s" % error)
+            self.journal.set_state("refiled_with", mark)
+            return
+        total = sum(len(plan.items) for _root, plan in plans)
+        if total and rule_set.settings.regroup != "apply":
+            self.output("%d filed file%s would go to a different category "
+                        "now. Run `auto-sort refile` to see, or set "
+                        "regroup = apply." % (total,
+                                              "" if total == 1 else "s"))
+        elif total and self._run_plans(plans, rule_set, requested_dry,
+                                       "Refiled"):
+            return                  # a preview: move them next time round
+        self.journal.set_state("refiled_with", mark)
+
+    def _helpers(self, rule_set):
+        helpers = self.reader.helpers
+        helpers.mode = getattr(rule_set.settings, "tools", "auto")
+        if helpers.journal is None:
+            helpers.journal = self.journal
+        return helpers
+
+    def _run_plans(self, plans, rule_set, requested_dry, label):
+        """Carry the plans out; True when one was only a preview."""
+        previewed = False
         for plan_root, plan in plans:
             result = sorter.execute(plan, rule_set, self.journal,
                                     dry_run=requested_dry)
-            self.output("Regrouped %d item%s from %s"
-                        % (result.completed or len(plan.items),
+            previewed = previewed or (result.forced_preview
+                                      and not requested_dry)
+            self.output("%s %d item%s from %s"
+                        % (label if not result.dry_run
+                           else "Previewed", result.completed
+                           or len(plan.items),
                            "" if len(plan.items) == 1 else "s", plan_root))
             for message in result.messages:
                 self.output("  %s" % message)
+        return previewed
 
     def _heartbeat(self, rule_set, now_value):
         last = self.journal.get_state("heartbeat_at")
@@ -503,6 +562,7 @@ class PollingDaemon(object):
         if not self.journal.paused():
             self._check_corrections(rule_set, now_value)
             self._check_regroup(rule_set, now_value, requested_dry)
+            self._check_refile(rule_set, requested_dry)
             self._drain_mirror()
             self._tidy_ledger(now_value)
             self._tidy_state_dir(now_value)

@@ -772,8 +772,9 @@ gap — `corrections` learns from it, and regrouping will not overrule it.
 
 A promotion is an ordinary move: same planner, same collision handling, same
 forced preview the first time, same ledger, and `auto-sort undo` reverses it
-like anything else. The daemon checks every half hour and reports; set
-`regroup = apply` in `[settings]` to let it act.
+like anything else. The background sorter checks every half hour and does it;
+set `regroup = report` in `[settings]` to have it only say so in the log, or
+`off` to never look.
 
 The flag lives in the ledger, recorded when the file was placed, rather than
 being worked out later from the rule's name — names change every time a rules
@@ -781,10 +782,12 @@ file is regenerated, and a file's history must not depend on that.
 
 ### Reading filed files again
 
-The one exception is asked for by name. A file a category placed was judged by
-what the reader said on the day it arrived, and the reader improves: four
-employment contracts sat in a folder named after their own letterhead because
-the reader of the day missed their titles.
+A file a category placed was judged by the rules and the reader of the day it
+arrived, and both improve: four employment contracts sat in a folder named
+after their own letterhead because the reader of the day missed their titles.
+So whenever the rules file changes, or auto-sort is updated with a better
+reader, the background sorter goes back over what it filed, once, and moves
+what a category now claims. The same thing on demand:
 
 ```sh
 auto-sort refile            # read filed files again; show what would move

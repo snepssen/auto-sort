@@ -14,18 +14,20 @@ known about it. That is enough to reconsider a decision without the file ever
 moving back.
 
 **Promotion only, and only out of holding.** A file placed by a rule marked
-`holding = yes` may be moved to a rule that is not. Nothing else is ever
-reconsidered. That single restriction is what stops this from becoming churn:
-a decision that was already specific is never relitigated, so editing a rules
-file cannot silently reshuffle a disk, and a file cannot ping-pong between two
-rules that both think they want it.
+`holding = yes` may be moved to a rule that is not, and never the other way.
+That restriction is what stops this from becoming churn: a file cannot
+ping-pong between two rules that both think they want it, and nothing is
+ever put back into a pen once it has left one.
 
-**`refile` is the one exception, and it is asked for.** It reconsiders
-files a category placed, because what they were judged on -- the reader
-of the day -- has improved since; four contracts sat under their own
-letterhead. It still only moves a file up into a category, except when
-the rule that placed it has been deleted, which is somebody saying that
-folder was wrong.
+**`refile` reconsiders files a category placed**, because what they were
+judged on has changed: the rules, or the reader of the day -- four
+contracts sat under their own letterhead until the reader learnt to see
+their title. The background sorter does this by itself, once for each new
+rules file and each new reader, and `auto-sort refile` shows it on demand.
+It still only moves a file up into a category, except when the rule that
+placed it has been deleted, which is somebody saying that folder was wrong.
+The answer is the one the same rules give a new arrival, so asking twice
+gives the same place and a file settles rather than wandering.
 
 **Anything the person touched is left alone.** If a file is not exactly where
 the ledger says it was put, they moved it, and that is an answer rather than a
@@ -127,6 +129,36 @@ def filed(journal, rule_set, source_root=None, limit=20000):
                                row["source_root"] or os.path.dirname(
                                    destination), facts))
     return found
+
+
+_READER_MARK = []
+
+
+def reader_mark():
+    """A fingerprint of the code that reads a file and says what it is.
+
+    What a filed file was judged on is only as good as the reader of the
+    day, so a new reader is a reason to judge again -- the same way a new
+    rules file is. The code itself is the most honest version number it
+    has: no one has to remember to bump anything.
+    """
+    if not _READER_MARK:
+        import hashlib
+        here = os.path.dirname(os.path.abspath(__file__))
+        digest = hashlib.sha256()
+        names = ["identify.py", "kinds.py"] + sorted(
+            os.path.join("readers", name)
+            for name in os.listdir(os.path.join(here, "readers"))
+            if name.endswith(".py"))
+        for name in names:
+            try:
+                with open(os.path.join(here, name), "rb") as handle:
+                    digest.update(name.encode("utf-8") + b"\0")
+                    digest.update(handle.read())
+            except OSError:
+                continue
+        _READER_MARK.append(digest.hexdigest()[:16])
+    return _READER_MARK[0]
 
 
 def promotable(rule_set):

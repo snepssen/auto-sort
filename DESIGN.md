@@ -125,15 +125,16 @@ The ledger makes it unnecessary. It records where each file was put, by which
 rule, and what was known about it, which is enough to ask the question again
 without the file moving anywhere first.
 
-Everything then turns on scope, because the obvious version of this feature is
-a disaster: reconsidering every placement whenever the rules change would
-reshuffle a disk endlessly and invisibly. So:
+Everything then turns on scope, because the careless version of this feature
+is a disaster: reconsidering every placement on a timer, with rules that
+disagree with each other, would reshuffle a disk endlessly and invisibly. So:
 
-**Only placements marked provisional are revisited.** A rule declares
-`holding = yes` when its destination is a waiting room rather than an answer,
-and only files it placed may be promoted — to a rule that is not a holding
-rule. A specific decision is never relitigated. This makes the operation
-idempotent by construction: run it twice and the second run finds nothing.
+**A file only ever moves up.** A rule declares `holding = yes` when its
+destination is a waiting room rather than an answer. Files it placed may be
+promoted to a rule that is not a holding rule, and nothing is ever put back
+into one. The answer comes from the same rules, in the same order, that a new
+arrival would meet, so asking twice gives the same place: run it twice and
+the second run finds nothing.
 
 **Provisionality is recorded, not re-derived.** The flag goes in the ledger
 when the move happens. Working it out later from the rule's name would tie a
@@ -149,13 +150,18 @@ planner, the same collision and volume checks, the same forced preview, the
 same ledger and the same undo — which is the only reason it is safe to let a
 background process do it at all.
 
-**The one exception is asked for, never automatic.** A specific decision was
-made on what the reader said the day the file arrived, and the reader
-improves: four contracts sat under their own letterhead because the reader of
-the day missed their titles. `refile` reads filed files again, records what
-they say now, and moves a file only when a real category claims it elsewhere
-— still never into a holding folder, never a file somebody moved, never a
-part of a bundle. A file whose rule has been deleted is decided afresh by
+**Filed files are reconsidered when what judged them changes.** A specific
+decision was made on the rules and the reader of the day it arrived, and both
+improve: four contracts sat under their own letterhead because the reader of
+the day missed their titles. The background sorter reads filed files again
+once for each new rules file and each new reader -- keyed on the rules' hash
+and a hash of the reader's own code, never on a clock -- records what they say
+now, and moves a file only when a real category claims it elsewhere: never
+into a holding folder, never a file somebody moved, never a part of a bundle.
+`auto-sort refile` shows the same thing on demand, and `regroup = report`
+turns both into a line in the log. A program called auto-sort that left the
+old mess alone until asked would be keeping half its promise.
+A file whose rule has been deleted is decided afresh by
 every rule, because the rules file promises that deleting a line takes its
 folder with it. A placement ends when the program itself moves the file on,
 and undoing that move makes it stand again; without that, every regrouped

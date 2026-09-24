@@ -1104,7 +1104,7 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
 
         holding = [rule.name for rule in rule_set.rules if rule.holding]
         print()
-        if not holding:
+        if not holding and not refile:
             print("  No rule is marked `holding = yes`, so nothing is")
             print("  waiting to be promoted. Catch-all rules written by")
             print("  `auto-sort propose` carry that mark.")

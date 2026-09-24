@@ -492,12 +492,13 @@ class Settings(object):
         self.unsorted = _choice(values.get("unsorted", "leave"),
                                 ("leave", "gather"), "unsorted")
         self.unsorted_into = values.get("unsorted_into", "~/Unsorted")
-        # What the background sorter does when files already filed into a
-        # holding folder could now be placed properly. `report` is the
-        # default because moving files nobody asked about, in the background,
-        # is a bigger promise than sorting new arrivals -- those were dropped
-        # into a funnel on purpose.
-        self.regroup = _choice(values.get("regroup", "report"),
+        # What the background sorter does when files it already filed could
+        # now be placed better: out of a holding folder once a pattern
+        # shows, or into a category a new rule or a better reader finds.
+        # `apply` is the default because the mess somebody installs this
+        # for is the old one as much as the new arrivals; every such move
+        # is in the ledger and undone like any other. `report` only says.
+        self.regroup = _choice(values.get("regroup", "apply"),
                                ("off", "report", "apply"), "regroup")
         self.on_collision = _choice(values.get("on_collision", "suffix"),
                                     ("suffix", "skip"), "on_collision")
