@@ -525,6 +525,115 @@ def _font_maps(data, objects=None, own=None):
     return maps, page_one
 
 
+_WIDTH_TOKEN = re.compile(rb"\[|\]|-?\d+(?:\.\d+)?")
+
+
+def _font_widths(data, objects, own):
+    """`{resource name: (widths by code, default, bytes per code)}`.
+
+    For page one's fonts only, and only where the file says: `/W` for a
+    font with two-byte codes, `/FirstChar` and `/Widths` for the rest. See
+    `_placed_gap` for what it is for.
+    """
+    def body(number, limit=65536):
+        span = objects.get(number)
+        if not span:
+            return b""
+        start, stop = span
+        return data[start:min(stop, start + limit)]
+
+    def array(text, key):
+        match = re.search(re.escape(key) + rb"\s*(\[|(\d+)\s+\d+\s+R)", text)
+        if not match:
+            return None
+        if match.group(2):
+            text = body(int(match.group(2)))
+            start = text.find(b"[")
+        else:
+            start = match.start(1)
+        if start == -1:
+            return None
+        depth = 0
+        for index in range(start, min(len(text), start + 65536)):
+            if text[index:index + 1] == b"[":
+                depth += 1
+            elif text[index:index + 1] == b"]":
+                depth -= 1
+                if depth == 0:
+                    return text[start:index + 1]
+        return None
+
+    found = {}
+    for name, number in own.items():
+        font = body(number, 4096)
+        if re.search(rb"/Subtype\s*/Type0\b", font):
+            descendant = re.search(rb"/DescendantFonts\s*\[?\s*(\d+)\s+\d+\s+R",
+                                   font)
+            if not descendant:
+                continue
+            cid = body(int(descendant.group(1)), 8192)
+            default = re.search(rb"/DW\s+(\d+)", cid)
+            widths = _cid_widths(array(cid, b"/W") or b"")
+            found[name] = (widths, float(default.group(1)) if default
+                           else 1000.0, 2)
+        else:
+            first = re.search(rb"/FirstChar\s+(\d+)", font)
+            listed = array(font, b"/Widths")
+            if not first or not listed:
+                continue
+            values = [float(token) for token in _WIDTH_TOKEN.findall(listed)
+                      if token not in (b"[", b"]")]
+            start = int(first.group(1))
+            missing = re.search(rb"/MissingWidth\s+(\d+)", font)
+            found[name] = (dict((start + index, value)
+                                for index, value in enumerate(values)),
+                           float(missing.group(1)) if missing else 0.0, 1)
+    return found
+
+
+def _cid_widths(listed):
+    """A `/W` array: `c [w1 w2 ...]` and `first last w`, mixed."""
+    tokens = _WIDTH_TOKEN.findall(listed)[1:-1] if listed else []
+    widths = {}
+    index = 0
+    while index < len(tokens):
+        try:
+            first = int(float(tokens[index]))
+        except ValueError:
+            index += 1
+            continue
+        if index + 1 < len(tokens) and tokens[index + 1] == b"[":
+            index += 2
+            code = first
+            while index < len(tokens) and tokens[index] != b"]":
+                widths[code] = float(tokens[index])
+                code += 1
+                index += 1
+            index += 1
+        elif index + 2 < len(tokens):
+            try:
+                last = int(float(tokens[index + 1]))
+                value = float(tokens[index + 2])
+            except ValueError:
+                index += 1
+                continue
+            if 0 <= last - first <= 65535:
+                for code in range(first, last + 1):
+                    widths[code] = value
+            index += 3
+        else:
+            break
+    return widths
+
+
+def _advance(raw, table):
+    """How far a string moves the pen, in thousandths of the font size."""
+    widths, default, size = table
+    return sum(widths.get(int.from_bytes(raw[index:index + size], "big"),
+                          default)
+               for index in range(0, len(raw) - size + 1, size))
+
+
 def _through(raw, codes, width):
     """One string's bytes mapped through a font's own table.
 
@@ -714,7 +823,7 @@ _GAP = object()
 _PAGE_END = object()
 
 
-def _page_runs(body, maps, current=None):
+def _page_runs(body, maps, current=None, widths=None):
     """One content stream as `([(font, text)], font in use at the end)`.
 
     The font in use is passed in and handed back because a page's content
@@ -731,8 +840,9 @@ def _page_runs(body, maps, current=None):
     switches = [(match.start(), match.group(1).decode("latin-1"),
                  _number(match.group(2)))
                 for match in _SIZED_FONT.finditer(body)]
+    matrices = list(_TEXT_MATRIX.finditer(body))
     scalings = [(match.start(), abs(_number(match.group(4)) or 1.0))
-                for match in _TEXT_MATRIX.finditer(body)]
+                for match in matrices]
     drawn_strings = []
     position = 0
     scaled = 0
@@ -756,25 +866,109 @@ def _page_runs(body, maps, current=None):
             # subsetting became universal -- and those are the old files
             # this exists for.
             drawn = _decode(raw)
-        drawn_strings.append((where, ends, current, size, scale, drawn))
+        drawn_strings.append((where, ends, current, size, scale, drawn, raw))
 
     # Judged over the whole stream: one writer draws it all the same way.
     singles = sum(1 for entry in drawn_strings if len(entry[5]) == 1)
+    placed = _placements(body, drawn_strings, matrices) if widths else {}
     glyph_at_a_time = (len(drawn_strings) >= _GLYPH_STRINGS
                        and singles >= len(drawn_strings) * _GLYPH_AT_A_TIME)
 
     runs = []
     previous_end = None
-    for where, ends, font, drawn_size, drawn_scale, drawn in drawn_strings:
-        if previous_end is not None and _gap_is_a_space(
-                body[previous_end:where],
-                (drawn_size or 1.0) if glyph_at_a_time else 0.0):
-            runs.append((_GAP, " ", 0.0))
+    previous = None
+    for index, (where, ends, font, drawn_size, drawn_scale, drawn,
+                raw) in enumerate(drawn_strings):
+        if previous_end is not None:
+            gap = body[previous_end:where]
+            spaced = _placed_gap(gap, placed.get(index - 1),
+                                 placed.get(index), previous, widths)
+            if spaced is None:
+                spaced = _gap_is_a_space(
+                    gap, (drawn_size or 1.0) if glyph_at_a_time else 0.0)
+            if spaced:
+                runs.append((_GAP, " ", 0.0))
         previous_end = ends
+        previous = (font, drawn_size, raw)
         if drawn:
             runs.append((font, drawn,
                          round((drawn_size or 0.0) * drawn_scale, 1)))
     return runs, (current, size)
+
+
+def _signed(raw):
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+# Only these move the pen between a text matrix and the string after it.
+_RELATIVE = re.compile(rb"\bT[dD*]\b|['\"]")
+
+
+def _placements(body, drawn_strings, matrices):
+    """`{string index: (x, y, horizontal scale)}` for strings set by `Tm`.
+
+    Only a string drawn straight after its own text matrix, with no other
+    string and no relative move in between, has a position known without
+    following the whole text state -- and that is exactly how the writers
+    that need this draw: Quartz, behind every PDF a Mac prints, gives each
+    glyph or two a text block and a matrix of its own.
+    """
+    placed = {}
+    matrix_at = 0
+    last_string_end = -1
+    for index, entry in enumerate(drawn_strings):
+        where = entry[0]
+        latest = None
+        while matrix_at < len(matrices) and matrices[matrix_at].start() < where:
+            latest = matrices[matrix_at]
+            matrix_at += 1
+        if latest is not None and latest.start() > last_string_end and \
+                not _RELATIVE.search(body[latest.end():where]):
+            x = _signed(latest.group(5))
+            y = _signed(latest.group(6))
+            a = _signed(latest.group(1))
+            if x is not None and y is not None and a:
+                placed[index] = (x, y, a)
+        last_string_end = entry[1]
+    return placed
+
+
+# Of an em: a step past the end of the last glyph larger than this is a
+# space. A space is a quarter of an em or more in every text face; kerning
+# and rounding are a few hundredths.
+_PLACED_SPACE = 0.15
+
+
+def _placed_gap(gap, before, after, previous, widths):
+    """Is there a space between two strings set by `Tm`? None if unknown.
+
+    Decided by where the second begins against where the first ended,
+    which needs the first one's width -- from the font's own table. A Mac's
+    printed PDFs read, without this, as `P a ym e n ts to Deduc ns`.
+    """
+    if not widths or before is None or after is None or previous is None:
+        return None
+    if b"Tm" not in gap:
+        return None
+    font, size, raw = previous
+    table = widths.get(font)
+    if table is None or not size:
+        return None
+    x, y, a = before
+    em = abs(a) * size
+    if not em:
+        return None
+    end = x + (_advance(raw, table) / 1000.0) * size * a
+    next_x, next_y, _next_a = after
+    if abs(next_y - y) > 0.3 * em:
+        return True                              # another line
+    step = (next_x - end) if a > 0 else (end - next_x)
+    if step < -0.5 * em:
+        return True                              # back to another column
+    return step > _PLACED_SPACE * em
 
 
 def _page_text(body, maps, current=None):
@@ -1085,7 +1279,15 @@ def _collect(peek):
     if not data:
         return None, False, data
     if b"/Encrypt" in data[-2048:] or b"/Encrypt" in data[:2048]:
-        return None, False, data
+        # Most encrypted documents open without a password; the encryption
+        # forbids printing, not reading. Those are read like any other.
+        from . import pdfcrypt
+        try:
+            data = pdfcrypt.decrypted(data)
+        except (ValueError, IndexError, OverflowError):
+            data = None
+        if data is None:
+            return None, False, b""
 
     try:
         objects = _objects(data)
@@ -1099,6 +1301,10 @@ def _collect(peek):
         maps, page_one_maps = _font_maps(data, objects, own)
     except (re.error, ValueError, OverflowError, zlib.error):
         maps, page_one_maps = {}, {}
+    try:
+        widths = _font_widths(data, objects, own) if own else {}
+    except (re.error, ValueError, OverflowError):
+        widths = {}
 
     runs = []
     total = 0
@@ -1126,7 +1332,8 @@ def _collect(peek):
             continue
         if not _is_page_content(data, match.start(), body):
             continue
-        found, current = _page_runs(body, fonts, current)
+        found, current = _page_runs(body, fonts, current,
+                                    widths if index < on_page_one else None)
         runs.extend(found)
         runs.append((_GAP, " ", 0.0))
         total += sum(len(text) for _font, text, _size in found)
@@ -1187,6 +1394,15 @@ def page_image(data):
     sender's logo in front of it, and the first image in the file is that
     logo every time.
     """
+    if b"/Encrypt" in data[-2048:] or b"/Encrypt" in data[:2048]:
+        # A scan in an encrypted file is encrypted too; see `pdfcrypt`.
+        from . import pdfcrypt
+        try:
+            data = pdfcrypt.decrypted(data, pictures=True)
+        except (ValueError, IndexError, OverflowError):
+            data = None
+        if data is None:
+            return None
     best = None
     for match in _STREAM.finditer(data):
         head = data[max(0, match.start() - _DICT_LOOKBACK):match.start()]

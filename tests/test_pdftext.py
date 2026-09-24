@@ -424,6 +424,42 @@ class WhatQtWrites(unittest.TestCase):
         self.assertEqual(pdftext._page_text(body, {}), "Betrag 12345678901234567")
 
 
+class WhatAMacPrints(unittest.TestCase):
+    """Quartz gives each glyph or two a text block and a matrix of its own,
+    and read block by block a payslip said `P a ym e n ts`."""
+
+    widths = {"F1": ({ord("P"): 600, ord("a"): 500, ord("y"): 500,
+                      ord("s"): 450}, 500.0, 1)}
+
+    def drawn(self, *placed):
+        return b" ".join(
+            b"BT 10 0 0 10 %s 700 Tm /F1 1 Tf (%s) Tj ET"
+            % (str(x).encode(), glyph.encode()) for x, glyph in placed)
+
+    def runs(self, body, widths):
+        runs, _current = pdftext._page_runs(body, {}, None, widths)
+        return pdftext._keep_readable_fonts(runs)
+
+    def test_a_glyph_that_starts_where_the_last_ended_joins_it(self):
+        # P is 600 wide at size 10: it ends at 106, where `a` begins.
+        body = self.drawn((100, "P"), (106, "a"), (111, "y"), (120, "s"))
+        self.assertEqual(self.runs(body, self.widths), "Pay s")
+
+    def test_without_widths_nothing_changes(self):
+        body = self.drawn((100, "P"), (106, "a"))
+        self.assertEqual(self.runs(body, None), "P a")
+
+    def test_a_new_line_is_a_gap(self):
+        body = (b"BT 10 0 0 10 100 700 Tm /F1 1 Tf (P) Tj ET "
+                b"BT 10 0 0 10 106 680 Tm /F1 1 Tf (a) Tj ET")
+        self.assertEqual(self.runs(body, self.widths), "P a")
+
+    def test_cid_widths_in_both_forms(self):
+        self.assertEqual(pdftext._cid_widths(b"[1 [500 600] 10 12 250]"),
+                         {1: 500.0, 2: 600.0, 10: 250.0, 11: 250.0,
+                          12: 250.0})
+
+
 class TablesThatSayLessThanTheyShould(unittest.TestCase):
     """Character maps as real writers leave them, not as the spec has them."""
 

@@ -44,6 +44,42 @@ def _pdf_text(raw):
     return text.decode("latin-1", "replace").strip()
 
 
+def _encrypted_info(peek, found):
+    """Put right what was read from an encrypted file's information record.
+
+    Its strings are encrypted like everything else, and taken as they came
+    they were recorded as a producer of `\xbc\xf7-,\xa9...`. Decrypted
+    when the file opens without a password; otherwise dropped, and the file
+    is marked as one that needs one -- which is an answer, where a page of
+    nothing was not.
+    """
+    from . import pdfcrypt
+    for key in ("producer", "creator", "title", "author", "creationdate",
+                "moddate"):
+        found.pop(key, None)
+    data = peek.at(0, _MAX_DECRYPT_READ)
+    try:
+        opener = pdfcrypt.handler(data)
+    except (ValueError, IndexError, OverflowError):
+        opener = None
+    if opener is None:
+        found["needs_password"] = True
+        return
+    found["opens_without_password"] = True
+    for key, raw in pdfcrypt.info(data, opener).items():
+        if raw.startswith(b"\xfe\xff"):
+            text = raw[2:].decode("utf-16-be", "replace")
+        else:
+            text = raw.decode("latin-1", "replace")
+        text = text.strip()
+        if text and text.isprintable():
+            found[key] = text
+
+
+# How much of an encrypted file is read to find its key and information.
+_MAX_DECRYPT_READ = 4 * 1024 * 1024
+
+
 def _pdf(peek):
     found = {}
     version = _PDF_VERSION.match(peek.head)
@@ -83,6 +119,7 @@ def _pdf(peek):
             found["pages"] = pages
     if b"/Encrypt" in window:
         found["encrypted"] = True
+        _encrypted_info(peek, found)
     if b"/Linearized" in peek.head:
         found["linearised"] = True
     return found
@@ -206,7 +243,7 @@ def read(peek, fmt, record):
     for key in ("pages", "words", "slides", "lines", "pdf_version"):
         if found.get(key):
             record.set(key, found[key], source, CERTAIN)
-    for key in ("encrypted", "linearised"):
+    for key in ("encrypted", "linearised", "needs_password"):
         if found.get(key):
             record.set(key, True, source, CERTAIN)
 
@@ -231,7 +268,7 @@ def read(peek, fmt, record):
             record.set("capture", "printed-web-page", "producer", LIKELY)
         elif _OFFICE_PRODUCERS.search(made_by):
             record.set("capture", "authored", "producer", LIKELY)
-    if fmt == "pdf" and not found.get("encrypted"):
+    if fmt == "pdf" and not found.get("needs_password"):
         _read_the_page(peek, record)
     record.reader_ran("document:" + fmt, "%d fields" % len(found))
     return True
