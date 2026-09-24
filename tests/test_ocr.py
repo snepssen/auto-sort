@@ -125,13 +125,13 @@ class WhenThereIsNothingInstalled(unittest.TestCase):
 
     def ran(self, languages):
         """The command tesseract was given, on an install with `languages`."""
-        ocr._turns.clear()
+        ocr._installed.clear()
         done = mock.Mock(returncode=0, stdout=b"words")
         with mock.patch.object(ocr, "languages_installed",
                                return_value=languages), \
                 mock.patch("subprocess.run", return_value=done) as run:
             ocr._run("/usr/bin/tesseract", "/tmp/page.jpg")
-        ocr._turns.clear()
+        ocr._installed.clear()
         return run.call_args[0][0]
 
     def test_a_page_upside_down_is_turned_first(self):
@@ -141,6 +141,18 @@ class WhenThereIsNothingInstalled(unittest.TestCase):
 
     def test_without_orientation_data_it_is_not_asked_for(self):
         self.assertNotIn("--psm", self.ran(["eng"]))
+
+    def test_an_install_without_english_reads_what_it_has(self):
+        """SteamOS ships tesseract with Afrikaans and orientation data and
+        no English, and tesseract asked for nothing asks for English: every
+        page failed, and every scan waited for a program that was there."""
+        command = self.ran(["afr", "osd"])
+        self.assertEqual(command[command.index("-l") + 1], "afr")
+        command = self.ran(["deu", "fra", "osd"])
+        self.assertEqual(command[command.index("-l") + 1], "deu+fra")
+
+    def test_an_install_with_english_is_left_to_its_default(self):
+        self.assertNotIn("-l", self.ran(["afr", "eng", "osd"]))
 
     def test_it_leaves_no_temporary_file_behind(self):
         # A folder of its own: the shared temporary folder is written to by
@@ -341,7 +353,7 @@ class PagesStoredAsPixels(unittest.TestCase):
                 mock.patch.object(ocr, "languages_installed",
                                   return_value=[]), \
                 mock.patch("subprocess.run", side_effect=run):
-            ocr._turns.clear()
+            ocr._installed.clear()
             ocr.read_image(b"\x89PNG\r\n\x1a\nrest")
         self.assertTrue(seen[-1].endswith(".png"))
 
@@ -389,7 +401,7 @@ class VisionOnAMac(unittest.TestCase):
                                   return_value=[]), \
                 mock.patch("subprocess.run", return_value=mock.Mock(
                     returncode=0, stdout=b"read by tesseract")):
-            ocr._turns.clear()
+            ocr._installed.clear()
             self.assertEqual(ocr._run(ocr.VISION, "/tmp/page.png"),
                              "read by tesseract")
 

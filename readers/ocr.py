@@ -290,20 +290,40 @@ def read_file(path, languages=""):
 # 6: the border is stepped over in tesseract's readings only.
 METHOD = 6
 
-# Whether this install can tell which way up a page is, per program path.
-_turns = {}
+# Which languages this install has, per program path.
+_installed = {}
+
+
+def _languages_of(program):
+    """Asked once per program and remembered: it costs a process."""
+    if program not in _installed:
+        _installed[program] = languages_installed()
+    return _installed[program]
 
 
 def _can_turn_pages(program):
     """True when orientation detection is installed.
 
-    Asked once per program and remembered: it costs a process. Without the
-    `osd` data, asking for orientation detection is an error on some
-    versions, so it is only asked for when it can be answered.
+    Without the `osd` data, asking for orientation detection is an error
+    on some versions, so it is only asked for when it can be answered.
     """
-    if program not in _turns:
-        _turns[program] = "osd" in languages_installed()
-    return _turns[program]
+    return "osd" in _languages_of(program)
+
+
+def _default_languages(program):
+    """What to read a page in when nobody said.
+
+    Tesseract asked for nothing asks for English, and fails outright where
+    English is not installed. SteamOS ships it with Afrikaans and the
+    orientation data and nothing else, so on a Steam Deck every page came
+    back as a failure and every scan waited, for good, for a program that
+    was right there. Where English is missing, whatever is installed is
+    better than nothing: every language it has, orientation aside.
+    """
+    installed = _languages_of(program)
+    if "eng" in installed:
+        return ""
+    return "+".join(name for name in installed if name != "osd")
 
 
 # Which engine produced the last reading: Vision's output is clean, and
@@ -324,6 +344,7 @@ def _run(program, path, languages=""):
             return None
     last_engine = "tesseract"
     command = [program, path, "stdout"]
+    languages = languages or _default_languages(program)
     if languages:
         command += ["-l", languages]
     # A page fed through the scanner the wrong way up reads, without this,
