@@ -858,8 +858,18 @@ def running_port(state_file=None):
     """
     try:
         with ledger_module.Ledger(state_file) as journal:
-            port = int(journal.get_state("daemon_port", DEFAULT_PORT))
+            recorded = journal.get_state("daemon_port")
     except (OSError, TypeError, ValueError):
+        return None
+    # A ledger no daemon has ever run from has no daemon. Guessing the
+    # default port found whichever daemon was listening there -- somebody
+    # else's, for any ledger but the one it runs from -- and the test suite,
+    # run beside a live daemon, answered differently while it restarted.
+    if not recorded:
+        return None
+    try:
+        port = int(recorded)
+    except (TypeError, ValueError):
         return None
     try:
         connection = socket.create_connection(("127.0.0.1", port), timeout=1)
@@ -889,7 +899,12 @@ def running_pid(state_file=None):
 def wake(state_file=None, command="wake"):
     try:
         with ledger_module.Ledger(state_file) as journal:
-            port = int(journal.get_state("daemon_port", DEFAULT_PORT))
+            recorded = journal.get_state("daemon_port")
+        # As in `running_port`: no daemon has run from this ledger, so there
+        # is none to wake -- not whichever one has the default port.
+        if not recorded:
+            return False
+        port = int(recorded)
         connection = socket.create_connection(("127.0.0.1", port), timeout=1)
         connection.sendall((command + "\n").encode("ascii"))
         connection.recv(16)

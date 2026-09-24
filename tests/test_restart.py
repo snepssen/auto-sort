@@ -77,14 +77,25 @@ class Reporting(unittest.TestCase):
     def test_the_old_process_answering_is_not_a_restart(self):
         # `running_pid` keeps returning the pid we asked to go away, so the
         # wait must not be satisfied by it.
-        with mock.patch.object(daemon, "running_pid", return_value=77):
+        with mock.patch.object(daemon, "running_pid", return_value=77), \
+                mock.patch.object(daemon, "running_port", return_value=47653):
             self.assertFalse(
                 autosort._wait_for_new_daemon(self.state, 77, 0.6))
 
     def test_a_different_pid_is_a_restart(self):
-        with mock.patch.object(daemon, "running_pid", return_value=78):
+        with mock.patch.object(daemon, "running_pid", return_value=78), \
+                mock.patch.object(daemon, "running_port", return_value=47653):
             self.assertTrue(
                 autosort._wait_for_new_daemon(self.state, 77, 2))
+
+    def test_a_replacement_is_waited_for_until_it_answers(self):
+        """It records who it is before it has a port; read in between,
+        the line said "Restarted. Not running." about a healthy daemon."""
+        with mock.patch.object(daemon, "running_pid", return_value=88), \
+                mock.patch.object(daemon, "running_port",
+                                  side_effect=[None, None, 47653]):
+            self.assertTrue(
+                autosort._wait_for_new_daemon(self.state, 77, 3))
 
     def test_a_failed_service_restart_is_reported(self):
         with mock.patch.object(autostart, "restart",
@@ -291,3 +302,24 @@ class RestartingItself(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class OnlyItsOwnDaemon(unittest.TestCase):
+    """A ledger no daemon has run from has no daemon -- not whichever one is
+    listening on the default port. Tests run beside a live daemon found it,
+    and answered differently while it restarted."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.state = os.path.join(self.directory, "state.db")
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def test_no_recorded_port_is_no_daemon(self):
+        import socket
+        with mock.patch.object(socket, "create_connection") as connect:
+            self.assertIsNone(daemon.running_port(self.state))
+            self.assertIsNone(daemon.running_pid(self.state))
+            self.assertFalse(daemon.wake(self.state, "status"))
+        connect.assert_not_called()
