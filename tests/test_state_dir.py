@@ -186,5 +186,20 @@ class TheDaemonSayingSo(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.dir, "old-run.db")))
 
 
+class TheLogSaysWhen(unittest.TestCase):
+    """Old "sorting paused" lines read exactly like a daemon stuck now."""
+
+    def test_each_line_carries_the_time(self):
+        import contextlib
+        import io
+        import re
+        import daemon
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            daemon._stamped("Loaded 46 rules")
+        self.assertRegex(out.getvalue(),
+                         r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d Loaded 46 rules\n$")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,18 @@ DEFAULT_PORT = 47653
 QUEUE_LIMIT = 100
 
 
+def _stamped(message):
+    """One line of the daemon's log, with the time it was said.
+
+    Without it the log could not tell yesterday's rules error from today's:
+    fifteen "sorting paused" lines about a rule that no longer existed read
+    exactly like a daemon that was stuck now.
+    """
+    import time
+    print("%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message),
+          flush=True)
+
+
 class AlreadyRunning(Exception):
     pass
 
@@ -103,7 +115,7 @@ class PollingDaemon(object):
         self.rule_path = rule_path
         self.journal = ledger_module.Ledger(state_file)
         self.dry_run = dry_run
-        self.output = output or (lambda message: print(message, flush=True))
+        self.output = output or _stamped
         try:
             self.lock = DaemonLock(self.journal, port)
         except Exception:
