@@ -206,7 +206,9 @@ record. Also `title`, `season`, `episode`, `year` when a scene-style name parses
 **Audio** — `duration`, `channels`, `samplerate`, `bitrate`, `lossless`,
 `artist`, `album`, `title`, `track`, `genre`, `year`.
 
-**Documents** — `pages`, `producer`, `author`, `doc_title`, `encrypted`.
+**Documents** — `pages`, `producer`, `author`, `doc_title`, `encrypted`,
+`needs_password` (a PDF whose password is not known), `encryption_unread`
+(a PDF locked in a way this does not open).
 
 **Content** — `duplicate_of`, and `labels.*` if a Tier 3 classifier plugin is
 installed. Nothing ships one; rules referencing `labels.*` are inert without

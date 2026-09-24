@@ -63,7 +63,14 @@ def _encrypted_info(peek, found):
     except (ValueError, IndexError, OverflowError):
         opener = None
     if opener is None:
-        found["needs_password"] = True
+        try:
+            locked = pdfcrypt.understood(data)
+        except (ValueError, IndexError, OverflowError):
+            locked = False
+        # A password that was tried and is not known, or encryption this
+        # does not read at all: different news for the person, since the
+        # second may open in their viewer without a question.
+        found["needs_password" if locked else "encryption_unread"] = True
         return
     found["opens_without_password"] = True
     for key, raw in pdfcrypt.info(data, opener).items():
@@ -251,7 +258,8 @@ def read(peek, fmt, record):
     for key in ("pages", "words", "slides", "lines", "pdf_version"):
         if found.get(key):
             record.set(key, found[key], source, CERTAIN)
-    for key in ("encrypted", "linearised", "needs_password"):
+    for key in ("encrypted", "linearised", "needs_password",
+                "encryption_unread"):
         if found.get(key):
             record.set(key, True, source, CERTAIN)
 

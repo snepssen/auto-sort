@@ -280,18 +280,20 @@ Still open:
   a PNG (8-bit grey or colour, 1-bit grey): two certificates were exactly
   that. CCITT and JBIG2 fax images are still skipped; the fax codecs are a
   real decoder each.
-- **AES-256 encryption (revision 6).** Revisions 2 to 4 are read when a file
-  opens without a password or with one kept in the Keychain; revision 6
-  needs SHA-2 key hardening and AES *encryption* in the loop, and no file on
-  the machine this was built on uses it yet.
+- **AES-256 encryption (revision 6)** -- not planned. Revisions 2 to 4 are
+  read when a file opens without a password or with one kept in the
+  Keychain. A revision 6 file is marked `encryption_unread` and, like one
+  whose password is not known, waits in `Documents/PDF/Encrypted/<day>` as
+  a holding folder. Locked PDFs are rare enough that setting them apart is
+  the right size of answer; SHA-2 key hardening and AES encryption in the
+  loop are not.
 - **Pages that are not images at all.** A PDF whose text cannot be decoded
   has nothing to OCR without rendering it first, which needs `pdftoppm` or
   equivalent. That is the natural second optional program, and item 5 may
   make it unnecessary.
-- **macOS has far better OCR built in** (the Vision framework), reachable
-  through `ctypes` the same way the tray is. Worth doing after tesseract,
-  not instead of it: one platform only, and the machine this tool is aimed
-  at is more often a Windows box.
+- **macOS's own OCR** -- built. The Vision framework is used through
+  `osascript`, preferred over tesseract on macOS 10.15 and later, with
+  tesseract kept for everywhere else.
 
 ---
 

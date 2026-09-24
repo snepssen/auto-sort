@@ -284,5 +284,42 @@ class Proposals(unittest.TestCase):
             propose.MAX_DISTINCT = original
 
 
+class EncryptedPDFs(unittest.TestCase):
+    """A rule for PDFs nothing can read -- only where there are some."""
+
+    def setUp(self):
+        from readers import pdfcrypt
+        pdfcrypt._known = []
+        self.directory = tempfile.mkdtemp()
+
+    def tearDown(self):
+        from readers import pdfcrypt
+        pdfcrypt.forget()
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def render(self):
+        found = propose.survey(self.directory, tier=identify.TIER_HEADER)
+        return propose.render(found, propose.assess(found))
+
+    def test_written_before_the_document_catch_all(self):
+        import test_pdfcrypt
+        fixtures.text(os.path.join(self.directory, "a.pdf"),
+                      test_pdfcrypt._rc4_pdf(user=bytes(32)))
+        fixtures.text(os.path.join(self.directory, "b.pdf"),
+                      test_pdfcrypt._aes_256_pdf())
+        fixtures.docx(os.path.join(self.directory, "notes.docx"))
+        body = self.render()
+        self.assertIn("; 2 encrypted PDFs that could not be read", body)
+        self.assertIn("[rule: encrypted PDFs]", body)
+        self.assertIn(os.path.join("PDF", "Encrypted", "{added:%Y-%m-%d}"),
+                      body)
+        self.assertLess(body.index("[rule: encrypted PDFs]"),
+                        body.index("[rule: remaining document]"))
+
+    def test_not_written_when_there_are_none(self):
+        fixtures.docx(os.path.join(self.directory, "notes.docx"))
+        self.assertNotIn("encrypted PDFs", self.render())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

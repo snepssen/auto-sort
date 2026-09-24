@@ -327,7 +327,8 @@ READ_FACTS = frozenset((
     "scan_pixels", "scan_of", "doc_title", "author", "producer", "pages",
     # Readable only since encrypted files could be opened: before that a
     # producer and creator of ciphertext, and no word of a locked file.
-    "creator", "encrypted", "needs_password", "title_drawn",
+    "creator", "encrypted", "needs_password", "encryption_unread",
+    "title_drawn",
 ))
 
 

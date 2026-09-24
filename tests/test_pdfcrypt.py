@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import struct
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import identify                                          # noqa: E402
 from readers import pdfcrypt                             # noqa: E402
 from readers import pdftext                              # noqa: E402
 
@@ -260,6 +263,46 @@ class OpeningWithoutAPassword(unittest.TestCase):
 
     def test_an_unencrypted_file_has_no_handler(self):
         self.assertIsNone(pdfcrypt.handler(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n"))
+
+
+
+def _aes_256_pdf():
+    """Revision 6, which is not read here: what it says is unknown."""
+    zeros = ("<" + "00" * 48 + ">").encode()
+    encrypt = (b"<</Filter/Standard/V 5/R 6/Length 256/P -4/O " + zeros
+               + b"/U " + zeros + b"/OE <" + b"00" * 32 + b">/UE <"
+               + b"00" * 32 + b">/Perms <" + b"00" * 16 + b">>>")
+    return _pdf(encrypt, b"\x8f\x13 ciphertext, not a page")
+
+
+class WhatAnUnreadFileIsCalled(unittest.TestCase):
+    """A password nobody gave, or a lock this does not open: not the same."""
+
+    def setUp(self):
+        pdfcrypt._known = []
+        self.folder = tempfile.mkdtemp(prefix="autosort-locked-")
+
+    def tearDown(self):
+        pdfcrypt.forget()
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+    def facts(self, data):
+        path = os.path.join(self.folder, "statement.pdf")
+        with open(path, "wb") as handle:
+            handle.write(data)
+        record = identify.identify(path, tier=identify.TIER_HEADER)
+        return (record.value("needs_password"),
+                record.value("encryption_unread"))
+
+    def test_a_password_that_is_not_known(self):
+        self.assertEqual(self.facts(_rc4_pdf(user=bytes(32))), (True, None))
+
+    def test_a_lock_this_does_not_open(self):
+        self.assertFalse(pdfcrypt.understood(_aes_256_pdf()))
+        self.assertEqual(self.facts(_aes_256_pdf()), (None, True))
+
+    def test_one_that_opens_is_neither(self):
+        self.assertEqual(self.facts(_rc4_pdf()), (None, None))
 
 
 if __name__ == "__main__":

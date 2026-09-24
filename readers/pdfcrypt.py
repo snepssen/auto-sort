@@ -76,6 +76,21 @@ class Handler(object):
         return rc4(key, data)
 
 
+def understood(data):
+    """Whether the file's encryption is a kind `handler` can open.
+
+    The difference between "this needs a password" and "this is locked in
+    a way not read here" -- AES-256, or a certificate instead of a
+    password. Only the first is somebody's password problem; a file of the
+    second kind may well open in any viewer without asking.
+    """
+    dictionary = _encrypt_dictionary(data)
+    if dictionary is None or not re.search(rb"/Filter\s*/Standard\b",
+                                           dictionary):
+        return False
+    return _int(rb"/R", dictionary) in (2, 3, 4)
+
+
 def handler(data, passwords=None):
     """A `Handler` if `data` is encrypted and can be opened.
 

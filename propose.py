@@ -595,9 +595,9 @@ def render(found, proposals):
         "; The catch-alls. Everything above is a better answer than these,",
         "; and they are marked `holding = yes`, which means a file they",
         "; placed can be promoted out later: when enough more files arrive",
-        "; for a pattern to show, `auto-sort regroup` moves the ones already",
-        "; filed here into it, without anybody putting them back in",
-        "; Downloads first.",
+        "; for a pattern to show, the background sorter moves the ones",
+        "; already filed here into it by itself, without anybody putting",
+        "; them back in Downloads first.",
         "; and these exist so that nothing is left where it was: a sorter",
         "; that keeps back what it did not recognise has not emptied",
         "; anything. Dated, because an undated holding folder becomes the",
@@ -608,6 +608,8 @@ def render(found, proposals):
     for kind, count in found.kinds.most_common():
         if not kind:
             continue
+        if kind == "document":
+            lines.extend(locked_rule(found))
         lines.append("; %d item%s" % (count, "" if count == 1 else "s"))
         lines.append("[rule: remaining %s]" % kind)
         lines.append("when = kind = %s" % kind)
@@ -704,6 +706,38 @@ def _rule_name(facet, found):
             "scan-page": "scanned paperwork",
             "scan-print": "scanned photographs",
             "duration": "video by length"}.get(facet.key, facet.key)
+
+
+def locked_rule(found):
+    """PDFs that cannot be read for their encryption, set apart.
+
+    Nothing inside one can be read, so no category above can claim it
+    except by its name, and in the general pile it is the file that will
+    not open when somebody goes looking. So it waits on its own, by the day
+    it arrived, marked as holding: once its password is kept where auto-sort
+    can use it -- or the reader learns its kind of lock -- it is read like
+    any other and moves on by itself. Written only when the folder has one:
+    a rule that never fires is a line somebody has to wonder about.
+    """
+    locked = sum(found.groups("needs_password").values()) \
+        + sum(found.groups("encryption_unread").values())
+    if not locked:
+        return []
+    return [
+        "; %d encrypted PDF%s that could not be read: a password that is not"
+        % (locked, "" if locked == 1 else "s"),
+        "; known, or a lock this program does not open. They wait apart, by",
+        "; the day they arrived, and move on by themselves once they can be",
+        "; read.",
+        "[rule: encrypted PDFs]",
+        "when = format = pdf and (needs_password is set"
+        " or encryption_unread is set)",
+        "into = %s" % userdirs.short(os.path.join(
+            destination_root(found, "document"), "PDF", "Encrypted",
+            "{added:%Y-%m-%d}")),
+        "holding = yes",
+        "",
+    ]
 
 
 def _size(count):

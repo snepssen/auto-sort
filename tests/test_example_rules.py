@@ -72,6 +72,28 @@ class StarterRules(unittest.TestCase):
                          % (os.path.basename(path), actual, expected,
                             " (%s)" % why if why else ""))
 
+    def test_encrypted_pdfs_that_cannot_be_read_wait_apart(self):
+        import test_pdfcrypt
+        from readers import pdfcrypt
+        pdfcrypt._known = []
+        try:
+            for name, data in (
+                    ("locked.pdf", test_pdfcrypt._rc4_pdf(user=bytes(32))),
+                    ("aes256.pdf", test_pdfcrypt._aes_256_pdf())):
+                path = self.build(name, fixtures.text, body=data)
+                self.assertClaimedBy(path, "encrypted PDFs")
+                record = identify.identify(bundles.Item(path))
+                decision, _miss = self.rule_set.decide(
+                    record, source_root=self.directory)
+                self.assertRegex(os.path.dirname(decision.destination),
+                                 r"pdf/Encrypted/\d{4}-\d{2}-\d{2}$")
+            # One that opens is read, and goes wherever its words say.
+            path = self.build("open.pdf", fixtures.text,
+                              body=test_pdfcrypt._rc4_pdf())
+            self.assertNotEqual(self.claim(path)[0], "encrypted PDFs")
+        finally:
+            pdfcrypt.forget()
+
     # -- the file parses and is internally sound --------------------------
 
     def test_the_example_parses(self):

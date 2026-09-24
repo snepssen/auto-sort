@@ -373,8 +373,16 @@ a Mac opens without asking, and the other eight are marked `needs_password`,
 which is an answer where a page of nothing was not. Anybody who wants their
 own locked documents read can keep the passwords in a login Keychain item
 named `auto-sort PDF passwords`, one per line — never in the rules file, the
-ledger or a log. AES-256 (revision 6) is not read yet; such a file reads as
-before, not at all.
+ledger or a log. AES-256 (revision 6) is not read; such a file is marked
+`encryption_unread` rather than `needs_password`, because it may well open in
+any viewer without asking and saying it wants a password would be a guess.
+
+Either way nothing inside it can be read, so nothing claims it except its
+name. The starter rules and `propose` set those aside in
+`Documents/PDF/Encrypted/<the day it arrived>` — `propose` only when the
+folder has one — as a holding folder, so the day one can be read it is
+filed like any other, by itself. How many people keep locked PDFs is a fair
+question; this is the whole of the answer for the ones who do.
 
 A page that is a photograph of a page — no text layer, however hard it is
 looked at — is told apart from one that simply has nothing to say. It gets
