@@ -8,3 +8,5 @@ dist/
 # ledger of every file this machine has moved.
 state.db
 rules.ini
+# Backups of it: the same rules, learnt from one person's files.
+rules.ini.*
