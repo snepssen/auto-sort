@@ -130,19 +130,30 @@ class MovePrimitives(unittest.TestCase):
         self.assertTrue(os.path.exists(package))
         self.assertEqual(mover.hash_path(destination), expected)
 
-    @unittest.skipUnless(sys.platform == "darwin", "macOS metadata API")
+    @unittest.skipUnless(sys.platform == "darwin" or hasattr(os, "setxattr"),
+                         "no extended attributes on this platform")
     def test_native_copy_preserves_extended_attributes(self):
-        import ctypes
+        # On Linux this is where a browser keeps the download's origin, and
+        # a copy that dropped it would destroy the provenance the rules read.
         source = self.write("source.bin", b"metadata")
-        attribute = b"com.example.autosort-test"
         value = b"kept"
-        libc = ctypes.CDLL(None, use_errno=True)
-        libc.setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p,
-                                 ctypes.c_void_p, ctypes.c_size_t,
-                                 ctypes.c_uint32, ctypes.c_int]
-        buffer = ctypes.create_string_buffer(value)
-        result = libc.setxattr(os.fsencode(source), attribute, buffer,
-                               len(value), 0, 0)
+        if sys.platform == "darwin":
+            import ctypes
+            attribute = b"com.example.autosort-test"
+            libc = ctypes.CDLL(None, use_errno=True)
+            libc.setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p,
+                                     ctypes.c_void_p, ctypes.c_size_t,
+                                     ctypes.c_uint32, ctypes.c_int]
+            buffer = ctypes.create_string_buffer(value)
+            result = libc.setxattr(os.fsencode(source), attribute, buffer,
+                                   len(value), 0, 0)
+        else:
+            attribute = b"user.xdg.origin.url"
+            try:
+                os.setxattr(source, attribute, value)
+                result = 0
+            except OSError:
+                result = -1
         if result != 0:
             self.skipTest("temporary filesystem does not support xattrs")
         destination = self.path("copied.bin")
