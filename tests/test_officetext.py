@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import fixtures                                          # noqa: E402
 import identify                                          # noqa: E402
 from readers import officetext                           # noqa: E402
 
@@ -140,6 +142,76 @@ class Markdown(unittest.TestCase):
             + b"the thing " * 30)
         self.assertEqual(officetext.known_title(runs), "Meeting notes, June")
         self.assertTrue(text.startswith("Some preamble"))
+
+
+class Excel97(unittest.TestCase):
+    """A `.xls` from before 2007: records in a compound file."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp(prefix="autosort-xls-")
+
+    def tearDown(self):
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+    @staticmethod
+    def narrow(value, flags=0):
+        return struct.pack("<HB", len(value), flags) + value.encode("latin-1")
+
+    def sheet(self, name):
+        return fixtures.biff(0x0085, struct.pack("<IBB", 0, 0, 0)
+                             + struct.pack("<BB", len(name), 0)
+                             + name.encode("latin-1"))
+
+    def read(self, records):
+        path = fixtures.xls(os.path.join(self.folder, "book.xls"), records)
+        return officetext.read(path, "excel")[0]
+
+    def test_the_shared_strings_in_order(self):
+        table = (struct.pack("<II", 3, 3) + self.narrow("Kontoauszug")
+                 # A string with formatting runs and extra data to step over.
+                 + struct.pack("<HBHI", 5, 0x0C, 1, 3) + b"Datum"
+                 + b"\x00" * 4 + b"xyz"
+                 + self.narrow("Betrag"))
+        self.assertEqual(self.read([self.sheet("Blatt1"),
+                                    fixtures.biff(0x00FC, table)]),
+                         "Kontoauszug Datum Betrag")
+
+    def test_a_string_carried_on_in_the_next_record(self):
+        # "Überweisung Café" cut after "Überweis": the rest starts again
+        # with a byte saying it is now two bytes a character.
+        whole = "\u00dcberweisung Caf\u00e9 \u2013 Miete"
+        head = struct.pack("<II", 2, 2) + self.narrow("Buchungen") \
+            + struct.pack("<HB", len(whole), 0) \
+            + whole[:8].encode("latin-1")
+        rest = b"\x01" + whole[8:].encode("utf-16-le")
+        text = self.read([fixtures.biff(0x00FC, head),
+                          fixtures.biff(0x003C, rest)])
+        self.assertEqual(text, "Buchungen " + whole)
+
+    def test_sheet_names_when_there_is_no_text(self):
+        self.assertEqual(self.read([self.sheet("Januar"),
+                                    self.sheet("Februar")]),
+                         "Januar Februar")
+
+    def test_an_encrypted_workbook_is_an_empty_answer(self):
+        table = struct.pack("<II", 1, 1) + self.narrow("Geheim")
+        self.assertEqual(self.read([fixtures.biff(0x002F, b"\x00" * 6),
+                                    fixtures.biff(0x00FC, table)]), "")
+
+    def test_a_cut_off_table_keeps_what_came_before(self):
+        table = struct.pack("<II", 2, 2) + self.narrow("Rechnung") \
+            + struct.pack("<HB", 40, 0) + b"abc"
+        self.assertEqual(self.read([fixtures.biff(0x00FC, table)]),
+                         "Rechnung")
+
+    def test_it_heads_the_document(self):
+        table = struct.pack("<II", 2, 2) + self.narrow("Lohnabrechnung 2009") \
+            + self.narrow("Brutto")
+        path = fixtures.xls(os.path.join(self.folder, "abrechnung.xls"),
+                            [fixtures.biff(0x00FC, table)])
+        record = identify.identify(path, tier=identify.TIER_HEADER)
+        self.assertTrue(record.value("heading").startswith(
+            "Lohnabrechnung"))
 
 
 class Word97(unittest.TestCase):

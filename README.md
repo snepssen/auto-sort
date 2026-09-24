@@ -354,8 +354,10 @@ calendar invitation by its event's summary, and a saved web page by its
 `<title>` — stated outright, so used as they are rather than looked for.
 A spreadsheet is its text in the order it was typed — an Excel workbook's
 shared strings (a statement's title cell, its column headings), a CSV's first
-rows, a Numbers document's archive as Pages is read. Legacy `.xls` is not read
-yet.
+rows, a Numbers document's archive as Pages is read. An Excel 97-2003 `.xls`
+is the same shared strings, found in the binary records inside the same kind
+of compound file a `.doc` is; one saved by Excel 5 or 95 keeps its text in
+the cells themselves, and that is read too.
 
 **Encrypted is not the same as locked.** Payroll portals, banks and phone
 companies encrypt what they send, almost always with no password to open it:

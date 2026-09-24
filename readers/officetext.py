@@ -19,6 +19,7 @@ document whose first page is further in than that has a stranger problem.
 from __future__ import annotations
 
 import re
+import struct
 import zipfile
 from xml.etree import ElementTree
 
@@ -66,6 +67,10 @@ def read(path, fmt, head=b""):
         if fmt == "delimited":
             return _plain(_whole(path, MAX_CHARS * 4))
         if fmt == "excel":
+            with open(path, "rb") as handle:
+                start = handle.read(8)
+            if start == worddoc.MAGIC:
+                return _xls(_whole(path, worddoc.MAX_FILE)), []
             return _xlsx(path)
         if fmt == "numbers":
             return _numbers(path)
@@ -648,6 +653,174 @@ def _xlsx(path):
     if not text:
         text = " ".join(sheets)
     return text, []
+
+
+_BIFF_BOF = 0x0809
+_BIFF_EOF = 0x000A
+_BIFF_FILEPASS = 0x002F
+_BIFF_SHEET = 0x0085
+_BIFF_SST = 0x00FC
+_BIFF_CONTINUE = 0x003C
+_BIFF_LABEL = 0x0204
+
+
+def _xls(data):
+    """An Excel 97-2003 workbook: the same text as `_xlsx`, from records.
+
+    The workbook is a stream of records inside a compound file -- the one
+    `worddoc` already reads. Excel 97 onwards keeps every piece of cell text
+    once, in a shared string table, in the order it was first typed; Excel
+    5 and 95 wrote each into the cell itself. Either way it is the text,
+    not the numbers, that says what the file is. An encrypted workbook is
+    an empty answer, as an encrypted `.doc` is.
+    """
+    if len(data) > worddoc.MAX_FILE:
+        return ""
+    try:
+        compound = worddoc._Compound(data)
+        for name in ("Workbook", "Book"):
+            if name in compound.entries:
+                stream = compound.stream(name)
+                break
+        else:
+            return ""
+        strings, sheets = _biff_strings(stream)
+    except (ValueError, KeyError, IndexError, struct.error):
+        return ""
+    text = re.sub(r"\s+", " ", " ".join(strings)).strip()[:MAX_CHARS]
+    return text or " ".join(sheets)
+
+
+def _biff_records(stream):
+    at = 0
+    while at + 4 <= len(stream):
+        kind, length = struct.unpack_from("<HH", stream, at)
+        yield kind, stream[at + 4:at + 4 + length]
+        at += 4 + length
+
+
+def _biff_strings(stream):
+    """([cell text], [sheet names]) from a workbook stream."""
+    strings, sheets = [], []
+    records = list(_biff_records(stream))
+    modern = True                    # BIFF8, Excel 97 onwards
+    total = 0
+    for index, (kind, body) in enumerate(records):
+        if kind == _BIFF_BOF and index == 0 and len(body) >= 2:
+            modern = struct.unpack_from("<H", body, 0)[0] >= 0x0600
+        elif kind == _BIFF_FILEPASS:
+            return [], []
+        elif kind == _BIFF_SHEET and len(body) > 7:
+            count = body[6]
+            if modern:
+                wide = body[7] & 1
+                raw = body[8:8 + count * (2 if wide else 1)]
+                sheets.append(raw.decode("utf-16-le" if wide else "latin-1",
+                                         "replace"))
+            else:
+                sheets.append(body[7:7 + count].decode("cp1252", "replace"))
+        elif kind == _BIFF_SST:
+            parts = [body[8:]]
+            for follow, more in records[index + 1:]:
+                if follow != _BIFF_CONTINUE:
+                    break
+                parts.append(more)
+            for value in _Segments(parts).strings(MAX_CHARS):
+                if value.strip():
+                    strings.append(value)
+                    total += len(value)
+            if total >= MAX_CHARS:
+                break
+        elif kind == _BIFF_LABEL and len(body) > 8:
+            count = struct.unpack_from("<H", body, 6)[0]
+            if modern:
+                wide = body[8] & 1
+                raw = body[9:9 + count * (2 if wide else 1)]
+                value = raw.decode("utf-16-le" if wide else "latin-1",
+                                   "replace")
+            else:
+                value = body[8:8 + count].decode("cp1252", "replace")
+            if value.strip():
+                strings.append(value)
+                total += len(value)
+                if total >= MAX_CHARS:
+                    break
+    return strings, sheets
+
+
+class _Segments(object):
+    """The shared string table, read across the records it is split over.
+
+    A record holds at most 8224 bytes, so a long table goes on in CONTINUE
+    records -- and a string cut in the middle of its characters starts
+    again with one byte saying whether the rest is one byte a character or
+    two. Everything else simply carries on.
+    """
+
+    def __init__(self, parts):
+        self.parts = [part for part in parts]
+        self.index = 0
+        self.at = 0
+
+    def _next(self):
+        self.index += 1
+        self.at = 0
+        if self.index >= len(self.parts):
+            raise ValueError("the string table ends early")
+
+    def take(self, count):
+        out = []
+        while count > 0:
+            part = self.parts[self.index]
+            if self.at >= len(part):
+                self._next()
+                continue
+            piece = part[self.at:self.at + count]
+            out.append(piece)
+            self.at += len(piece)
+            count -= len(piece)
+        return b"".join(out)
+
+    def characters(self, count, wide):
+        out = []
+        while count > 0:
+            part = self.parts[self.index]
+            if self.at >= len(part):
+                self._next()
+                wide = self.parts[self.index][:1] == b"\x01"
+                self.at = 1
+                continue
+            width = 2 if wide else 1
+            fits = min(count, (len(part) - self.at) // width)
+            if fits <= 0:
+                raise ValueError("a character split across records")
+            raw = part[self.at:self.at + fits * width]
+            out.append(raw.decode("utf-16-le" if wide else "latin-1",
+                                  "replace"))
+            self.at += fits * width
+            count -= fits
+        return "".join(out)
+
+    def strings(self, limit):
+        """Each string in turn; a damaged table ends where it breaks."""
+        total = 0
+        while total < limit:
+            part = self.parts[self.index]
+            if self.at >= len(part) and self.index + 1 >= len(self.parts):
+                return
+            try:
+                count = struct.unpack("<H", self.take(2))[0]
+                flags = self.take(1)[0]
+                runs = struct.unpack("<H", self.take(2))[0] \
+                    if flags & 8 else 0
+                extra = struct.unpack("<I", self.take(4))[0] \
+                    if flags & 4 else 0
+                value = self.characters(count, flags & 1)
+                self.take(4 * runs + extra)
+            except (ValueError, IndexError, struct.error):
+                return
+            total += len(value)
+            yield value
 
 
 def _numbers(path):

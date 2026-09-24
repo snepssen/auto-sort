@@ -232,6 +232,49 @@ def mp4(path, width=1920, height=1080, seconds=42.0, audio_tracks=1):
     return _write(path, ftyp + moov + box(b"mdat", b"\x00" * 1024))
 
 
+def compound(name, stream):
+    """A compound file holding one stream, laid out as the format says.
+
+    Sector 0 is the allocation table, sector 1 the directory, the stream
+    follows; padded past the 4096-byte cutoff so it is not a mini stream.
+    """
+    end, free, fat_sector = 0xFFFFFFFE, 0xFFFFFFFF, 0xFFFFFFFD
+    stream = stream + b"\x00" * max(0, 4096 - len(stream))
+    stream += b"\x00" * (-len(stream) % 512)
+    count = len(stream) // 512
+    header = bytearray(512)
+    header[0:8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+    struct.pack_into("<HHHHH", header, 0x18, 0x3E, 3, 0xFFFE, 9, 6)
+    struct.pack_into("<IIIIIIIII", header, 0x28, 0, 1, 1, 0, 4096, end, 0,
+                     end, 0)
+    struct.pack_into("<109I", header, 0x4C, 0, *([free] * 108))
+    chain = [fat_sector, end] + [3 + n for n in range(count - 1)] + [end]
+    fat = struct.pack("<128I", *(chain + [free] * (128 - len(chain))))
+
+    def entry(label, kind, start, size, child=free):
+        raw = bytearray(128)
+        encoded = (label + "\x00").encode("utf-16-le")
+        raw[:len(encoded)] = encoded
+        struct.pack_into("<HBB", raw, 64, len(encoded), kind, 1)
+        struct.pack_into("<III", raw, 68, free, free, child)
+        struct.pack_into("<II", raw, 116, start, size)
+        return bytes(raw)
+    directory = (entry("Root Entry", 5, end, 0, child=1)
+                 + entry(name, 2, 2, len(stream)) + b"\x00" * 256)
+    return bytes(header) + fat + directory + stream
+
+
+def biff(kind, body):
+    return struct.pack("<HH", kind, len(body)) + body
+
+
+def xls(path, records):
+    """A workbook from BIFF records, with a BOF before and EOF after."""
+    stream = (biff(0x0809, struct.pack("<HHHHII", 0x0600, 5, 0, 0, 0, 0))
+              + b"".join(records) + biff(0x000A, b""))
+    return _write(path, compound("Workbook", stream))
+
+
 def text(path, body):
     return _write(path, body.encode("utf-8") if isinstance(body, str)
                   else body)
