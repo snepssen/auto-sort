@@ -320,6 +320,11 @@ class WhatThisMachineCanRead(unittest.TestCase):
             os.path.join(self.dir, "out", "f%d.pdf" % number),
             10, "", "done", facts=facts)
         self.journal.update_move(move, "done")
+        placed = os.path.join(self.dir, "out", "f%d.pdf" % number)
+        os.makedirs(os.path.dirname(placed), exist_ok=True)
+        with open(placed, "w") as handle:
+            handle.write("%PDF")
+        return placed
 
     def test_it_lists_every_optional_program(self):
         keys = [row["key"] for row in self.ask()["programs"]]
@@ -335,6 +340,11 @@ class WhatThisMachineCanRead(unittest.TestCase):
         self.filed(2, {"kind": "document", "needs_ocr": True})
         self.filed(3, {"kind": "document", "heading": "Rechnung"})
         self.assertEqual(self.ask()["filed_unread"], 2)
+
+    def test_a_page_moved_away_by_hand_is_not_waiting(self):
+        self.filed(1, {"kind": "document", "needs_ocr": True})
+        os.remove(self.filed(2, {"kind": "document", "needs_ocr": True}))
+        self.assertEqual(self.ask()["filed_unread"], 1)
 
     def test_a_folder_where_everything_was_read_says_nothing(self):
         self.filed(1, {"kind": "document", "heading": "Rechnung"})

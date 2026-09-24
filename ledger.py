@@ -18,7 +18,7 @@ import time
 import paths
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def _days_ago(days):
@@ -43,6 +43,19 @@ def _larger(fresh, kept):
     if kept is None:
         return fresh
     return max(fresh, kept)
+
+
+# A placement is over once this program itself took the file on from where
+# it was put: a regroup out of `Unfiled`, a duplicate sent to the bin. Left
+# standing, the old placement counts the file a second time -- a rule
+# report read 169 regrouped contracts as 338 -- and says it sits somewhere
+# it does not, which is exactly what somebody moving it would look like.
+# Undoing that later move makes the placement stand again, by itself.
+_STILL_THERE = (
+    " AND NOT EXISTS (SELECT 1 FROM moves later"
+    "  WHERE later.source = m.destination AND later.id > m.id"
+    "    AND later.status = 'done' AND later.undone_at IS NULL"
+    "    AND later.operation IN ('move', 'rename', 'trash'))")
 
 
 class Ledger(object):
@@ -287,6 +300,17 @@ class Ledger(object):
 
                     PRAGMA user_version = 9;
                 """)
+            version = 9
+        if version == 9:
+            with self.connection:
+                # Finding the move that took a file on from where an earlier
+                # one put it. See `_STILL_THERE`.
+                self.connection.executescript("""
+                    CREATE INDEX IF NOT EXISTS moves_by_source
+                        ON moves(source);
+
+                    PRAGMA user_version = 10;
+                """)
 
     def record_directories(self, run_id, directories):
         """Remember the folders a run had to create, so undo can remove them.
@@ -337,7 +361,7 @@ class Ledger(object):
         sql = ("SELECT m.*, r.source_root FROM moves m "
                "JOIN runs r ON r.id = m.run_id "
                "WHERE m.status IN ('done', 'copied') "
-               "AND m.undone_at IS NULL AND r.action = 'sort'")
+               "AND m.undone_at IS NULL AND r.action = 'sort'" + _STILL_THERE)
         parameters = []
         if source_root:
             sql += " AND r.source_root = ?"
@@ -538,10 +562,10 @@ class Ledger(object):
     def held_moves(self, limit=5000):
         """Files sitting in holding folders, newest first, with their facts."""
         return self.connection.execute(
-            "SELECT id, destination, facts_json FROM moves "
-            " WHERE holding = 1 AND status IN ('done','copied') "
-            "   AND undone_at IS NULL "
-            " ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+            "SELECT m.id, m.destination, m.facts_json FROM moves m "
+            " WHERE m.holding = 1 AND m.status IN ('done','copied') "
+            "   AND m.undone_at IS NULL" + _STILL_THERE +
+            " ORDER BY m.id DESC LIMIT ?", (int(limit),)).fetchall()
 
     def set_facts(self, move_id, facts):
         with self.connection:
@@ -557,19 +581,28 @@ class Ledger(object):
         Counting them is what lets the log page say "twenty-two pages are
         waiting for a program you have not installed" instead of leaving
         somebody to wonder why their post is not sorting itself.
+
+        Filings only. Every undo is a move too, and on a real machine the
+        197 of them that put scans back into Downloads were being counted
+        as 197 pages filed without being read.
         """
         rows = self.connection.execute(
-            "SELECT facts_json FROM moves "
-            " WHERE status IN ('done','copied') AND undone_at IS NULL "
-            "   AND facts_json LIKE '%needs_ocr%' "
-            " ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+            "SELECT m.destination, m.facts_json FROM moves m "
+            "  JOIN runs r ON r.id = m.run_id "
+            " WHERE m.status IN ('done','copied') AND m.undone_at IS NULL "
+            "   AND r.action = 'sort' "
+            "   AND m.facts_json LIKE '%needs_ocr%'" + _STILL_THERE +
+            " ORDER BY m.id DESC LIMIT ?", (int(limit),)).fetchall()
         waiting = 0
         for row in rows:
             try:
                 facts = json.loads(row["facts_json"] or "{}")
             except (TypeError, ValueError):
                 continue
-            if isinstance(facts, dict) and facts.get("needs_ocr"):
+            # Only what is still there to be read. A page somebody moved
+            # away by hand is theirs now, not a page waiting on a program.
+            if (isinstance(facts, dict) and facts.get("needs_ocr")
+                    and os.path.exists(row["destination"])):
                 waiting += 1
         return waiting
 
