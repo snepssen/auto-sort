@@ -93,12 +93,12 @@ async function loadReading(){try{const data=await request('/api/reading');
   const box=el('reading-box');box.replaceChildren();
   data.programs.forEach(p=>{const row=document.createElement('div');
     row.className='backup-row';
-    const name=document.createElement('b');txt(name,p.key);
+    const name=document.createElement('b');txt(name,p.built_in||p.key);
     const what=document.createElement('span');
     txt(what,' \u2014 '+p.purpose);
     const state=document.createElement('span');
     state.className='badge '+(p.installed?'done':'waiting');
-    txt(state,p.installed?'installed':'not installed');
+    txt(state,p.built_in?'built in':p.installed?'installed':'not installed');
     row.append(state,name,what);
     if(!p.installed&&p.install){const how=document.createElement('code');
       txt(how,p.install);how.className='how';row.appendChild(how)}

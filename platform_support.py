@@ -161,6 +161,19 @@ def inventory():
         listing.append({"key": key, "purpose": program.purpose,
                         "installed": bool(find(key)),
                         "install": program.install_line()})
+    # On a Mac, scanned pages are read by what the system already has, and
+    # telling somebody to install tesseract for it would be wrong.
+    try:
+        from readers import ocr
+        built_in = ocr.available() == ocr.VISION
+    except Exception:                        # noqa: BLE001
+        built_in = False
+    if built_in:
+        for row in listing:
+            if row["key"] == "tesseract":
+                row["installed"] = True
+                row["built_in"] = "macOS text recognition"
+                row["install"] = ""
     return listing
 
 

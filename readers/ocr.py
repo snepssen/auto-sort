@@ -79,11 +79,70 @@ def mode():
     return _mode
 
 
+# Vision, the text recognition every Mac has had since 10.15, reached
+# through `osascript` -- which every Mac also has -- so that reading a
+# scanned page needs nothing installed. Measured on real pages against
+# tesseract: `Werkpostfiche` where tesseract read `Werkoostfiche`, and a
+# certificate with a decorative border read as its words rather than as
+# `ray Es Ss iS}`. The first call on a machine prepares the models and was
+# measured at two minutes; every call after, under half a second a page.
+VISION = "vision"
+VISION_TIMEOUT_SECONDS = 300
+_VISION_SCRIPT = r"""
+ObjC.import("Vision");
+function run(argv) {
+  var url = $.NSURL.fileURLWithPath(argv[0]);
+  var handler = $.VNImageRequestHandler.alloc.initWithURLOptions(url, $());
+  var request = $.VNRecognizeTextRequest.alloc.init;
+  request.recognitionLevel = 0;
+  request.usesLanguageCorrection = true;
+  if (request.respondsToSelector("setAutomaticallyDetectsLanguage:")) {
+    request.automaticallyDetectsLanguage = true;
+  }
+  if (!handler.performRequestsError($([request]), $())) { return ""; }
+  var results = request.results, lines = [];
+  for (var i = 0; i < results.count; i++) {
+    var best = results.objectAtIndex(i).topCandidates(1).firstObject;
+    if (best) { lines.push(ObjC.unwrap(best.string)); }
+  }
+  return lines.join("\n");
+}
+"""
+
+
+def _vision_here():
+    """Whether this Mac has Vision's text recognition (10.15 and later)."""
+    if sys.platform != "darwin" or not os.path.exists("/usr/bin/osascript"):
+        return False
+    import platform
+    try:
+        major, minor = (int(part) for part in
+                        (platform.mac_ver()[0].split(".") + ["0"])[:2])
+    except ValueError:
+        return False
+    return (major, minor) >= (10, 15)
+
+
 def available():
-    """The OCR program, or None -- which is a perfectly ordinary answer."""
+    """What reads pages here -- `VISION` or tesseract's path -- or None.
+
+    None is a perfectly ordinary answer. On a Mac it is Vision, which
+    reads better than tesseract and is already there; anywhere else it is
+    tesseract, if somebody installed it.
+    """
     if _mode == "off":
         return None
+    if _vision_here():
+        return VISION
     return platform_support.find("tesseract")
+
+
+def engine_name():
+    """For `explain` and the log page: which engine reads pages here."""
+    found = available()
+    if found == VISION:
+        return "macOS text recognition"
+    return "tesseract" if found else ""
 
 
 def wanted(record):
@@ -149,10 +208,16 @@ def read(path, record):
     record.set("read_by", "ocr", "ocr", CERTAIN)
     record.set("words_read", len(text.split()), "ocr", CERTAIN)
     from .document import heading_of
-    heading = heading_of(_past_the_border(text))
+    # Only tesseract reads a certificate's border as `ray Es Ss iS}`; the
+    # same stepping-over cut "HollCert Opleiding & Training" off Vision's
+    # clean reading of a page, because `&` is not a word.
+    heading = heading_of(text if last_engine == VISION
+                         else _past_the_border(text))
     if heading:
         record.set("heading", heading[:80], "ocr", LIKELY)
-    record.reader_ran("ocr", "%d words from a %s" % (len(text.split()), detail))
+    record.reader_ran("ocr", "%d words from a %s, read by %s" % (
+        len(text.split()), detail,
+        "macOS text recognition" if last_engine == VISION else "tesseract"))
     return True
 
 
@@ -221,7 +286,9 @@ def read_file(path, languages=""):
 # (see `jobs._method`). 2: pages are turned the right way up first.
 # 3: a page with nothing on it is recorded as read, not left waiting.
 # 4: pages stored as compressed pixels are read; headings skip the border.
-METHOD = 4
+# 5: on a Mac, pages are read by Vision rather than tesseract.
+# 6: the border is stepped over in tesseract's readings only.
+METHOD = 6
 
 # Whether this install can tell which way up a page is, per program path.
 _turns = {}
@@ -239,7 +306,23 @@ def _can_turn_pages(program):
     return _turns[program]
 
 
+# Which engine produced the last reading: Vision's output is clean, and
+# only tesseract's needs the decorative border stepped over.
+last_engine = ""
+
+
 def _run(program, path, languages=""):
+    global last_engine
+    if program == VISION:
+        text = _run_vision(path)
+        if text is not None:
+            last_engine = VISION
+            return text
+        # Vision failing is not the end: tesseract, where it is installed.
+        program = platform_support.find("tesseract")
+        if not program:
+            return None
+    last_engine = "tesseract"
     command = [program, path, "stdout"]
     if languages:
         command += ["-l", languages]
@@ -254,6 +337,22 @@ def _run(program, path, languages=""):
         done = subprocess.run(
             command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    text = (done.stdout or b"").decode("utf-8", "replace")
+    return " ".join(text.split())[:MAX_CHARS]
+
+
+def _run_vision(path):
+    try:
+        done = subprocess.run(
+            ["/usr/bin/osascript", "-l", "JavaScript", "-e", _VISION_SCRIPT,
+             path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=VISION_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return None
     except (OSError, subprocess.SubprocessError):

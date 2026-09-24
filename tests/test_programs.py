@@ -271,5 +271,25 @@ class TheSharedRunner(unittest.TestCase):
             self.assertIsNone(platform_support.output("ffprobe", ["-x"]))
 
 
+class BuiltIntoAMac(unittest.TestCase):
+    """Reading scanned pages needs nothing installed on a Mac, and the list
+    of programs must not say otherwise."""
+
+    def test_the_ocr_row_says_it_is_built_in(self):
+        from unittest import mock
+        import platform_support
+        from readers import ocr
+        with mock.patch.object(ocr, "_vision_here", return_value=True), \
+                mock.patch.object(platform_support, "locate",
+                                  return_value=None):
+            platform_support.forget()
+            row = [entry for entry in platform_support.inventory()
+                   if entry["key"] == "tesseract"][0]
+        platform_support.forget()
+        self.assertTrue(row["installed"])
+        self.assertEqual(row["built_in"], "macOS text recognition")
+        self.assertEqual(row["install"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

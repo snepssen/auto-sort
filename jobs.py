@@ -296,7 +296,10 @@ class Helpers(object):
     """
 
     # How long each tool may take over one file before it is assumed lost.
-    PATIENCE = {"ffprobe": 25.0, "exiftool": 25.0, "tesseract": 60.0}
+    # OCR's is long for the first page a Mac ever reads: Vision prepares
+    # its models then, which was measured at two minutes. After that it is
+    # under a second, and a page that takes five minutes is lost anyway.
+    PATIENCE = {"ffprobe": 25.0, "exiftool": 25.0, "tesseract": 330.0}
     DEFAULT_PATIENCE = 30.0
 
     # Idle time before a tool worker is stopped again. Long enough to serve

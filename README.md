@@ -361,8 +361,15 @@ looked at — is told apart from one that simply has nothing to say. It gets
 `needs_ocr` and is held rather than guessed at, because there was nothing to
 find, which is a different fact from finding nothing.
 
-**Unless something is installed that can read it.** With `tesseract` present,
-a photographed page is read and the words go to the same induction as any
+**Unless something here can read it.** On a Mac that is always true: the
+text recognition every Mac has had since 10.15 (Vision) is reached through
+`osascript`, which every Mac also has, so nothing needs installing. It reads
+better than tesseract did on the same pages — `Werkpostfiche` where tesseract
+read `Werkoostfiche`, and a certificate's decorative border not at all where
+tesseract read it as `ray Es Ss iS}` — in under half a second a page, after a
+first call that prepares its models and was measured at two minutes.
+Elsewhere, and on a Mac if Vision fails, it is `tesseract` if installed. With
+either, a photographed page is read and the words go to the same induction as any
 other document, with no new vocabulary anywhere — what comes back is text,
 and this program already knows what to do with text. The page image is lifted
 straight out of the PDF: a JPEG inside a PDF is a JPEG, copied byte for byte
@@ -1057,7 +1064,7 @@ name first:
 
 | | What it adds | Without it |
 | --- | --- | --- |
-| `tesseract` | reads pages that were scanned rather than typed, so they can be filed by what they say | a scanned page is held, with a note saying why |
+| `tesseract` | reads pages that were scanned rather than typed, so they can be filed by what they say — not needed on a Mac, which has this built in | a scanned page is held, with a note saying why |
 | `ffprobe` | durations and frame sizes for containers the built-in parsers decline | those facts are absent, and rules needing them decline |
 | `exiftool` | metadata from uncommon cameras and RAW formats | the same, for a smaller set of files |
 

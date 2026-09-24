@@ -82,7 +82,8 @@ class WhenThereIsNothingInstalled(unittest.TestCase):
         platform_support.forget()
 
     def test_no_program_means_no_ocr_and_no_error(self):
-        with mock.patch.object(platform_support, "locate", return_value=None):
+        with mock.patch.object(platform_support, "locate", return_value=None), \
+                mock.patch.object(ocr, "_vision_here", return_value=False):
             self.assertIsNone(ocr.available())
             self.assertIsNone(ocr.read_image(JPEG))
             self.assertIsNone(ocr.read_file("/tmp/whatever.jpg"))
@@ -343,6 +344,79 @@ class PagesStoredAsPixels(unittest.TestCase):
             ocr._turns.clear()
             ocr.read_image(b"\x89PNG\r\n\x1a\nrest")
         self.assertTrue(seen[-1].endswith(".png"))
+
+
+class VisionOnAMac(unittest.TestCase):
+    """Reading a scanned page with nothing installed, on a Mac."""
+
+    def setUp(self):
+        ocr.configure("auto")
+        platform_support.forget()
+
+    def tearDown(self):
+        ocr.configure("auto")
+        platform_support.forget()
+
+    def test_a_mac_reads_pages_with_what_it_has(self):
+        with mock.patch.object(ocr, "_vision_here", return_value=True), \
+                mock.patch.object(platform_support, "locate",
+                                  return_value=None):
+            self.assertEqual(ocr.available(), ocr.VISION)
+            self.assertEqual(ocr.engine_name(), "macOS text recognition")
+
+    def test_it_is_preferred_to_tesseract_where_both_are_here(self):
+        with mock.patch.object(ocr, "_vision_here", return_value=True), \
+                mock.patch.object(platform_support, "locate",
+                                  return_value="/usr/bin/tesseract"):
+            self.assertEqual(ocr.available(), ocr.VISION)
+
+    def test_elsewhere_it_is_tesseract_or_nothing(self):
+        with mock.patch.object(ocr, "_vision_here", return_value=False), \
+                mock.patch.object(platform_support, "locate",
+                                  return_value="/usr/bin/tesseract"):
+            self.assertEqual(ocr.available(), "/usr/bin/tesseract")
+
+    def test_off_is_still_off(self):
+        ocr.configure("off")
+        with mock.patch.object(ocr, "_vision_here", return_value=True):
+            self.assertIsNone(ocr.available())
+
+    def test_a_failed_reading_falls_back_to_tesseract(self):
+        with mock.patch.object(ocr, "_run_vision", return_value=None), \
+                mock.patch.object(platform_support, "find",
+                                  return_value="/usr/bin/tesseract"), \
+                mock.patch.object(ocr, "languages_installed",
+                                  return_value=[]), \
+                mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=b"read by tesseract")):
+            ocr._turns.clear()
+            self.assertEqual(ocr._run(ocr.VISION, "/tmp/page.png"),
+                             "read by tesseract")
+
+    def test_what_vision_says_is_one_line_of_words(self):
+        with mock.patch("subprocess.run", return_value=mock.Mock(
+                returncode=0, stdout=b"Werkpostfiche\nuitzendarbeid\n")):
+            self.assertEqual(ocr._run_vision("/tmp/page.png"),
+                             "Werkpostfiche uitzendarbeid")
+
+    def test_a_clean_reading_keeps_its_first_words(self):
+        """`HollCert Opleiding & Training` was cut to `Waalwijk...` by the
+        border-stepping meant for tesseract."""
+        record = evidence.Record("/tmp/scan.jpg")
+        record.set("needs_ocr", True, "image", evidence.STRONG)
+
+        def vision(_program, _path, _languages=""):
+            ocr.last_engine = ocr.VISION
+            return "HollCert Opleiding & Training HOLLCERT Certificaat"
+        with mock.patch.object(ocr, "available", return_value=ocr.VISION), \
+                mock.patch.object(ocr, "_run", side_effect=vision):
+            ocr.read("/tmp/scan.jpg", record)
+        self.assertTrue(record.value("heading").startswith("HollCert"))
+
+    def test_a_vision_that_fails_says_nothing(self):
+        with mock.patch("subprocess.run",
+                        return_value=mock.Mock(returncode=1, stdout=b"")):
+            self.assertIsNone(ocr._run_vision("/tmp/page.png"))
 
 
 class PastTheBorder(unittest.TestCase):
