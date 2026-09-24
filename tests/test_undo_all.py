@@ -93,5 +93,24 @@ class PuttingEverythingBack(unittest.TestCase):
         self.assertEqual(os.listdir(self.inbox), ["b.txt"])
 
 
+class FittingARuleName(unittest.TestCase):
+    """`...itself: Detail 3` read as a name with a 3 in it."""
+
+    def test_a_long_generated_name_shows_the_part_after_the_colon(self):
+        import autosort
+        self.assertEqual(
+            autosort._fit("what the page calls itself: Details", 34),
+            "Details")
+
+    def test_a_short_name_is_left_alone(self):
+        import autosort
+        self.assertEqual(autosort._fit("contracts: Konvert", 34),
+                         "contracts: Konvert")
+
+    def test_what_still_does_not_fit_says_it_was_cut(self):
+        import autosort
+        self.assertTrue(autosort._fit("x" * 50, 34).endswith("…"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1112,7 +1112,7 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
         print()
         print("  By rule")
         for name, count in by_rule:
-            print("    %-34s %s" % (name[:34], "{:,}".format(count)))
+            print("    %-34s %s" % (_fit(name, 34), "{:,}".format(count)))
 
         if not apply_changes:
             print()
@@ -1318,6 +1318,22 @@ def duplicate_scan(folders=None, rule_path=None, state=None,
         print("  %d could not be moved and are untouched." % failed)
     print()
     return 0
+
+
+def _fit(name, width):
+    """A rule's name in `width` columns, without cutting a word silently.
+
+    Cut at the column, "what the page calls itself: Details" printed as
+    `...itself: Detail 3` -- a count of three that read as part of the
+    name. A generated name that does not fit is shown by the half after
+    the colon, which is the part anybody reads; anything still too long
+    ends in an ellipsis.
+    """
+    if len(name) > width:
+        name = name.split(": ")[-1]
+    if len(name) > width:
+        name = name[:width - 1] + "\u2026"
+    return name
 
 
 def _refresh_held(journal, rule_set):
