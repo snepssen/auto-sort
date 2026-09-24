@@ -557,7 +557,9 @@ def render(found, proposals):
         for word, count in terms:
             lines.extend(term_rule(fact, title, word, count, unit,
                                    destination_root(found, "document"),
-                                   others))
+                                   others,
+                                   found.headings if fact == "heading"
+                                   else None))
 
     for proposal in accepted:
         facet = proposal.facet
@@ -652,13 +654,21 @@ def render(found, proposals):
     return "\n".join(lines)
 
 
-def term_rule(fact, title, word, count, unit, root, others=()):
+def term_rule(fact, title, word, count, unit, root, others=(), values=None):
     """The lines for one learnt-word rule.
 
     Shared so that a rule adopted later is written exactly the way the same
     rule would have been written on the first run. Two renderers for one
     kind of rule is two things to keep in step and one of them to forget.
+
+    `values` -- the headings the word was learnt from -- lets the folder be
+    named after the phrase they all say rather than the one word that finds
+    them: see `shapes.shared_phrase`. The rule is still found by the word.
     """
+    name = word
+    if values:
+        name = shapes.shared_phrase(
+            word, values, exclude=owner.names() | owner.account())
     inside = [other for other in others
               if other.lower() != word.lower()
               and word.lower() in other.lower()]
@@ -676,8 +686,10 @@ def term_rule(fact, title, word, count, unit, root, others=()):
                      % (word, ", ".join(inside[:3])))
     else:
         lines.append("when = %s contains %s" % (fact, word))
-    lines.append("into = %s" % userdirs.short(os.path.join(root, word)))
+    lines.append("into = %s" % userdirs.short(os.path.join(root, name)))
     lines.append("; %d %s" % (count, unit))
+    if name != word:
+        lines.append("; named after what they all say: %s" % name)
     lines.append("")
     return lines
 

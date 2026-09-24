@@ -1387,9 +1387,15 @@ def adopt_categories(rule_path=None, state=None, apply_changes=False,
     existing = [rule.name.split(": ")[-1] for rule in rule_set.rules]
     others = [word for word, _count in found] + existing
     root = userdirs.home_for("document")
+    # What the filed documents say, so each folder can be named after the
+    # phrase they share rather than the one word that finds them.
+    with ledger_module.Ledger(state) as journal:
+        said = [review._facts_of(row).get("heading")
+                for row in journal.placed_moves()]
+    said = [heading for heading in said if heading]
     blocks = [propose_module.term_rule("heading", "what the page calls itself",
                                        word, count, "documents say it",
-                                       root, others)
+                                       root, others, said)
               for word, count in found]
 
     print("  Learnt from %d filed documents:" % headings)

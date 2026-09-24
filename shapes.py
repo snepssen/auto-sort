@@ -660,3 +660,73 @@ def learn(stems, fields=FIELDS, min_support=MIN_SUPPORT):
         conventions.append(convention)
     conventions.sort(key=lambda convention: (-convention.count,))
     return conventions
+
+
+# ---------------------------------------------------------------------------
+# What to call the folder
+# ---------------------------------------------------------------------------
+
+# How long a folder's name may grow from its word.
+PHRASE_WORDS = 6
+# The share of a word's documents that must say the whole phrase.
+PHRASE_SHARE = 0.9
+_PHRASE_TOKEN = re.compile(r"[^\W\d_][\w’'-]*", re.UNICODE)
+
+
+def shared_phrase(word, values, exclude=()):
+    """The run of words around `word` that its documents all say, or `word`.
+
+    A word is what a category is found by, and often a poor name for it.
+    Three UK tax forms were learnt as `Details` -- the first word of
+    "Details of employee leaving work", which is printed at the top of
+    every one of them -- and a folder called `Details` says nothing. The
+    documents had named themselves; the name was just longer than a word.
+
+    So the folder is named after the longest run of words, around the one
+    that was learnt, that nearly all of its documents share. It is still
+    found by the word alone. Nothing here knows any language: the phrase is
+    whatever the documents repeat. Owner names (`exclude`) are never part
+    of it, and it neither starts nor ends on a word of two letters, which
+    in every alphabet is a joining word more often than a name.
+    """
+    target = _fold(word)
+    banned = set(_fold(name) for name in exclude)
+    matching = []
+    for value in values:
+        tokens = _PHRASE_TOKEN.findall(str(value or ""))
+        folded = [_fold(token) for token in tokens]
+        if target in folded:
+            matching.append((tokens, folded))
+    if len(matching) < MIN_OCCURRENCES:
+        return word
+    needed = max(MIN_OCCURRENCES, int(len(matching) * PHRASE_SHARE + 0.999))
+
+    def said_by(window):
+        size = len(window)
+        count = 0
+        for _tokens, folded in matching:
+            if any(folded[start:start + size] == window
+                   for start in range(len(folded) - size + 1)):
+                count += 1
+        return count
+
+    tokens, folded = matching[0]
+    best = None
+    for at in [index for index, token in enumerate(folded)
+               if token == target]:
+        for size in range(PHRASE_WORDS, 1, -1):
+            for start in range(max(0, at - size + 1),
+                               min(at, len(folded) - size) + 1):
+                window = folded[start:start + size]
+                if banned.intersection(window):
+                    continue
+                if len(window[0]) < 3 or len(window[-1]) < 3:
+                    continue
+                if best is not None and size <= len(best[1]):
+                    continue
+                if said_by(window) >= needed:
+                    best = (start, window)
+    if best is None:
+        return word
+    start, window = best
+    return " ".join(tokens[start:start + len(window)])

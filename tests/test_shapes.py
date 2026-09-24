@@ -341,3 +341,55 @@ class TheSoftwareIsNotTheDocument(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class WhatToCallTheFolder(unittest.TestCase):
+    """A word finds a category; the documents often say what it is called."""
+
+    def test_the_phrase_they_all_say(self):
+        """Three UK tax forms were learnt as `Details`."""
+        headings = ["Part Details of employee leaving work",
+                    "Part Details of employee leaving work",
+                    "Details of employee leaving work Part"]
+        self.assertEqual(shapes.shared_phrase("Details", headings),
+                         "Details of employee leaving work")
+
+    def test_a_word_with_nothing_shared_around_it_stays_a_word(self):
+        headings = ["Rechnung Stadtwerke", "Rechnung Telekom",
+                    "Rechnung vom Mai"]
+        self.assertEqual(shapes.shared_phrase("Rechnung", headings),
+                         "Rechnung")
+
+    def test_a_straggler_does_not_shorten_it(self):
+        """Nine in ten is agreement; OCR and variants make the tenth."""
+        headings = (["ARBEIDSOVEREENKOMST VOOR UITZENDARBEID"] * 20
+                    + ["ARBEIDSOVEREENKOMST VOOR"])
+        self.assertEqual(shapes.shared_phrase("ARBEIDSOVEREENKOMST",
+                                              headings),
+                         "ARBEIDSOVEREENKOMST VOOR UITZENDARBEID")
+
+    def test_it_does_not_end_on_a_joining_word(self):
+        headings = ["Rechnung Nr 1", "Rechnung Nr 2", "Rechnung Nr 3"]
+        self.assertEqual(shapes.shared_phrase("Rechnung", headings),
+                         "Rechnung")
+
+    def test_the_owners_name_is_never_part_of_it(self):
+        headings = ["Loonbrief Tamas Torok"] * 5
+        self.assertEqual(shapes.shared_phrase(
+            "Loonbrief", headings, exclude={"tamas", "torok"}), "Loonbrief")
+
+    def test_too_few_to_say_anything(self):
+        self.assertEqual(shapes.shared_phrase(
+            "Details", ["Details of employee leaving work"] * 2), "Details")
+
+
+class TheRuleForIt(unittest.TestCase):
+
+    def test_found_by_the_word_and_filed_under_the_phrase(self):
+        import propose
+        lines = propose.term_rule(
+            "heading", "what the page calls itself", "Details", 3,
+            "documents say it", "/Docs", values=[
+                "Details of employee leaving work"] * 3)
+        self.assertIn("when = heading contains Details", lines)
+        self.assertIn("into = /Docs/Details of employee leaving work", lines)
