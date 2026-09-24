@@ -146,6 +146,40 @@ class StarterRules(unittest.TestCase):
             autosort._report_unpromotable(self.rule_set)
         self.assertEqual(heard.getvalue(), "")
 
+    def test_scans_wait_to_be_read(self):
+        """`Scans/<year>` names a folder only by how the file was made,
+        which is a waiting room -- `propose` already says so of its own
+        scan facet -- and a scanned invoice read by OCR has to be able to
+        leave it for `Invoice` like any other invoice."""
+        rule = [rule for rule in self.rule_set.rules
+                if rule.name == "scanned paperwork"][0]
+        import ledger
+        import review
+        with ledger.Ledger(os.path.join(self.directory, "state.db")) \
+                as journal:
+            run = journal.start_run("sort", source_root=self.directory,
+                                    dry_run=False)
+            number = 0
+            for word, rule_name in (("Invoice", "scanned paperwork"),
+                                    ("Contract", "documents"),
+                                    ("Payslip", "documents")):
+                for sender in ("Acme Widgets", "Northwind", "Globex"):
+                    number += 1
+                    journal.add_move(
+                        run, number, 1, "move", rule_name,
+                        os.path.join(self.directory, "d%d.pdf" % number),
+                        os.path.join(self.directory, "o", "d%d.pdf" % number),
+                        1, "", status="done",
+                        holding=[rule.holding for rule in self.rule_set.rules
+                                 if rule.name == rule_name][0],
+                        facts={"kind": "document", "capture": "scan",
+                               "heading": "%s %d from %s" % (
+                                   word, number, sender)})
+            found, _seen = review.emerging(journal, self.rule_set,
+                                           waiting_only=True)
+        self.assertIn("Invoice", [word for word, _count in found])
+        self.assertTrue(rule.holding)
+
     def test_every_rule_has_a_destination_or_says_leave(self):
         for rule in self.rule_set.rules:
             if rule.mode == "leave":
