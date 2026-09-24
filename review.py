@@ -328,7 +328,7 @@ READ_FACTS = frozenset((
 ))
 
 
-def refresh_held(journal, limit=5000, tier=None, helpers=None):
+def refresh_held(journal, limit=5000, tier=None, helpers=None, rows=None):
     """Read the files in holding folders again, with the reader as it is now.
 
     Facts are recorded when a file is filed and never looked at again, which
@@ -342,6 +342,9 @@ def refresh_held(journal, limit=5000, tier=None, helpers=None):
     Only holding files, only files still where they were put, and only the
     facts that come from reading. Returns how many records changed.
 
+    `rows` reads others instead -- `refile` passes the files a category
+    placed, whose readings are otherwise frozen on the day they were filed.
+
     `helpers` (a `jobs.Helpers`) lets the optional programs fill the gaps
     that remain, as they would for a new arrival. Without it a page filed
     before tesseract was installed -- or before OCR existed at all -- was
@@ -351,7 +354,7 @@ def refresh_held(journal, limit=5000, tier=None, helpers=None):
     import identify
     changed = 0
     tier = identify.TIER_HEADER if tier is None else tier
-    for row in journal.held_moves(limit):
+    for row in (journal.held_moves(limit) if rows is None else rows):
         path = row["destination"]
         if not path or not os.path.exists(path):
             continue

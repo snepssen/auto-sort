@@ -163,6 +163,30 @@ class PageOnesOwnFonts(unittest.TestCase):
         self.assertIn("werkgever", text)
 
 
+class TheHeadingKeepsTheSender(unittest.TestCase):
+    """Four CompTIA certificates headed only "OF COMPLETION" no longer said
+    CompTIA anywhere, and every rule learnt from a sender stopped matching."""
+
+    def test_the_title_comes_first_and_the_top_of_the_page_after(self):
+        from readers import document
+        self.assertEqual(
+            document._title_then_top(
+                "OF COMPLETION", "Tamas Torok CompTIA FC0-U61: IT"),
+            "OF COMPLETION Tamas Torok CompTIA FC0-U61: IT")
+
+    def test_what_the_title_said_is_not_said_twice(self):
+        from readers import document
+        self.assertEqual(
+            document._title_then_top("Lohn-/Gehalts-Abrechnung",
+                                     "Lohn-/Gehalts-Abrechnung zvoove"),
+            "Lohn-/Gehalts-Abrechnung zvoove")
+
+    def test_no_title_is_the_top_of_the_page(self):
+        from readers import document
+        self.assertEqual(document._title_then_top("", "Rechnung Nr 4711"),
+                         "Rechnung Nr 4711")
+
+
 class DropCapitals(unittest.TestCase):
     """A capital drawn large on its own, and the pen jump after it."""
 

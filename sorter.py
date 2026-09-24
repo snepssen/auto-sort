@@ -268,7 +268,7 @@ def build_plan(root, rule_set, exclude=(), items=None, journal=None,
             continue
 
         sources = [os.path.abspath(member) for member in item.members]
-        if all(os.path.normcase(source) == os.path.normcase(destination)
+        if all(paths.same_file(source, destination)
                for source, destination in zip(sources, destinations)):
             skipped.append((item.primary, "already at its destination"))
             continue

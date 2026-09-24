@@ -1052,7 +1052,7 @@ def start(rule_path=None, state=None, port=None, once=False):
 
 
 def regroup(root=None, rule_path=None, state=None, apply_changes=False,
-            dry_run=None, as_json=False):
+            dry_run=None, as_json=False, refile=False):
     """Move already-filed files into structure that has since become visible.
 
     The point of the whole exercise: a folder teaches auto-sort gradually, and
@@ -1060,6 +1060,14 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
     folder because there was nothing better to do with them. Without this they
     stay there while only new arrivals benefit, and the only remedy is
     dragging them back into Downloads, which is absurd.
+
+    `refile` is the same for files a category already placed. They are
+    judged by what the reader said on the day they were filed, and the
+    reader has got better since: four employment contracts sat in a folder
+    named after their letterhead because the reader of the day missed the
+    title. Each is read again, what it says now is recorded, and it moves
+    only if a real category -- never a holding folder -- now claims it
+    somewhere else. A file somebody moved is left alone.
     """
     try:
         rule_set = rules.load(rule_path)
@@ -1067,10 +1075,17 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
         print("Rules error: %s" % error, file=sys.stderr)
         return 1
 
+    source = os.path.abspath(root) if root else None
     with ledger_module.Ledger(state) as journal:
-        _refresh_held(journal, rule_set)
-        plans = regroup_module.build(journal, rule_set,
-                                     os.path.abspath(root) if root else None)
+        if refile:
+            filed = regroup_module.filed(journal, rule_set, source)
+            _refresh_held(journal, rule_set,
+                          rows=[candidate.row for candidate in filed])
+            plans = regroup_module.build(journal, rule_set, source,
+                                         pick=regroup_module.filed)
+        else:
+            _refresh_held(journal, rule_set)
+            plans = regroup_module.build(journal, rule_set, source)
         total, by_rule, by_destination = regroup_module.summarise(plans)
 
         if as_json:
@@ -1091,15 +1106,26 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
             print("  `auto-sort propose` carry that mark.")
             print()
             return 0
+        if not total and refile:
+            print("  Nothing to refile: every filed file is where the rules")
+            print("  would put it today, or no category claims it instead.")
+            print()
+            return 0
         if not total:
             print("  Nothing to regroup: every file in a holding folder is")
             print("  still there because nothing better has been learnt yet.")
             print()
             return 0
 
-        print("  %s file%s can move out of a holding folder into structure"
-              % ("{:,}".format(total), "" if total == 1 else "s"))
-        print("  that has become visible since they were filed.")
+        if refile:
+            print("  %s filed file%s would go to a different category,"
+                  % ("{:,}".format(total), "" if total == 1 else "s"))
+            print("  read again with the reader and rules as they are now.")
+        else:
+            print("  %s file%s can move out of a holding folder into "
+                  "structure" % ("{:,}".format(total),
+                                 "" if total == 1 else "s"))
+            print("  that has become visible since they were filed.")
         print()
         print("  Into")
         for folder, count in by_destination:
@@ -1131,8 +1157,9 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
                      "" if len(plan.items) == 1 else "s",
                      propose_module.userdirs.short(plan_root)))
             if result.forced_preview:
-                print("  ! first regroup for this folder was a preview; "
-                      "run it again to move")
+                print("  ! first %s for this folder was a preview; "
+                      "run it again to move"
+                      % ("refile" if refile else "regroup"))
             for message in result.messages:
                 print("    %s" % message)
         print()
@@ -1336,7 +1363,7 @@ def _fit(name, width):
     return name
 
 
-def _refresh_held(journal, rule_set):
+def _refresh_held(journal, rule_set, rows=None):
     """`review.refresh_held`, with the optional programs this machine has.
 
     Started for the one pass and stopped after it. A page waiting for OCR
@@ -1349,7 +1376,7 @@ def _refresh_held(journal, rule_set):
     helpers = jobs.Helpers(mode=getattr(rule_set.settings, "tools", "auto"),
                            ocr=ocr_mode, journal=journal)
     try:
-        return review.refresh_held(journal, helpers=helpers)
+        return review.refresh_held(journal, helpers=helpers, rows=rows)
     finally:
         helpers.close()
 
@@ -1777,6 +1804,8 @@ USAGE = """auto-sort %s
   auto-sort propose [FOLDER]    survey a folder and derive the rules it needs
   auto-sort corrections [FOLDER] what you moved afterwards, and what it implies
   auto-sort regroup [FOLDER]    re-file what was filed before the pattern showed
+  auto-sort refile [FOLDER]     read filed files again; move those a better
+                                category now claims
   auto-sort duplicates [FOLDER] find files stored twice; --apply bins the spares
   auto-sort adopt               add a rule for a category that has since emerged
   auto-sort check-rules [FILE]  validate a rules file without changing anything
@@ -1891,9 +1920,10 @@ def main(argv=None):
         return restart(rule_path, state_file, port)
     if command == "start":
         return start(rule_path, state_file, port, once)
-    if command == "regroup":
+    if command in ("regroup", "refile"):
         return regroup(targets[0] if targets else None, rule_path,
-                       state_file, dry_run is False, dry_run, as_json)
+                       state_file, dry_run is False, dry_run, as_json,
+                       refile=command == "refile")
     if command == "adopt":
         return adopt_categories(rule_path, state_file, dry_run is False,
                                 as_json)

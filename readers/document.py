@@ -22,6 +22,7 @@ from . import pdftext
 
 LETTERHEAD = 500                # characters of the top of the page to read
 HEADING_WORDS = 6               # of those, how many make up the heading
+HEADING_CHARS = 160             # a title and the top of the page after it
 
 _PDF_INFO = re.compile(
     rb"/(Producer|Creator|Title|Author|Subject|Keywords|CreationDate|"
@@ -291,10 +292,28 @@ def _read_the_page(peek, record):
     # position -- and why the owner's own name is never taken for it.
     if drawn_title:
         record.set("title_drawn", drawn_title[:80], "pdf-text", STRONG)
-    heading = " ".join(drawn_title.split()[:HEADING_WORDS]) if drawn_title \
-        else heading_of(text)
+    heading = _title_then_top(drawn_title, heading_of(text))
     if heading:
-        record.set("heading", heading[:80], "pdf-text", STRONG)
+        record.set("heading", heading[:HEADING_CHARS], "pdf-text", STRONG)
+
+
+def _title_then_top(title, top):
+    """The drawn title, then the top of the page it did not already say.
+
+    The title says what a document is; the top of the page usually says
+    who sent it. A heading of the title alone lost the sender, and with it
+    every rule learnt from one: four CompTIA certificates, headed "OF
+    COMPLETION" once their titles were found, no longer said CompTIA
+    anywhere and would have been moved in with somebody's holiday
+    certificates. Rules match with `contains`, so both halves count; the
+    induction reads positions, so the title, being first, still wins.
+    """
+    if not title:
+        return top
+    words = title.split()[:HEADING_WORDS]
+    said = set(word.lower() for word in words)
+    rest = [word for word in (top or "").split() if word.lower() not in said]
+    return " ".join(words + rest[:HEADING_WORDS])
 
 
 def _owner_words():

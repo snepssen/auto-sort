@@ -295,6 +295,24 @@ def emptied(sources, stop_at):
                              for other in tops))
 
 
+def same_file(first, second):
+    """Do these two paths lead to one file?
+
+    Not string equality. A Mac's disk ignores case, so `Documents/LOONBRIEF`
+    and `Documents/Loonbrief` are one folder, and on a real machine nine
+    payslips already in it were planned to be moved into it -- where a
+    collision check would have found each one in its own way and renamed
+    it `(2)`. `normcase` does not help: it folds case only on Windows.
+    """
+    if os.path.normcase(os.path.abspath(first)) == \
+            os.path.normcase(os.path.abspath(second)):
+        return True
+    try:
+        return os.path.samefile(first, second)
+    except (OSError, ValueError):
+        return False
+
+
 def emptied_of_our_own(sources, made):
     """Hollow folders this program made, that moving `sources` emptied.
 

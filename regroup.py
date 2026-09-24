@@ -84,6 +84,44 @@ def candidates(journal, rule_set, source_root=None, limit=20000):
     return found
 
 
+def filed(journal, rule_set, source_root=None, limit=20000):
+    """Files a real category placed, still exactly where it put them.
+
+    What `refile` reconsiders, and everything `candidates` is not. The same
+    restraint applies: a file somebody moved is their answer, and it is
+    left alone. So is a file that went as one part of a bundle -- a video
+    and its subtitles went together and are not split up afterwards.
+    """
+    named = set(rule.name for rule in rule_set.rules if rule.holding)
+    named.add("[unsorted]")
+    corrected = set(row["move_id"] for row in journal.corrections(None))
+    bundled = set(
+        (row[0], row[1]) for row in journal.connection.execute(
+            "SELECT run_id, item_number FROM moves "
+            " WHERE status IN ('done','copied') "
+            " GROUP BY run_id, item_number HAVING COUNT(*) > 1"))
+    found = []
+    for row in journal.placed_moves(source_root, limit):
+        recorded = row["holding"] if "holding" in row.keys() else 0
+        if recorded or row["rule_name"] in named:
+            continue
+        if row["id"] in corrected:
+            continue
+        if (row["run_id"], row["item_number"]) in bundled:
+            continue
+        destination = row["destination"]
+        if not destination or not os.path.isfile(destination):
+            continue
+        try:
+            facts = json.loads(row["facts_json"] or "{}")
+        except (TypeError, ValueError):
+            facts = {}
+        found.append(Candidate(row, destination,
+                               row["source_root"] or os.path.dirname(
+                                   destination), facts))
+    return found
+
+
 def promotable(rule_set):
     """The same rule set with its holding rules taken out.
 
@@ -102,14 +140,20 @@ def promotable(rule_set):
                                 rule_set.source, rule_set.source_hash)
 
 
-def build(journal, rule_set, source_root=None, limit=20000):
+def build(journal, rule_set, source_root=None, limit=20000, pick=None):
     """[(root, plan)] describing every file that can be promoted.
 
     Grouped by the folder each file originally came from, so that a rule with
     a relative destination resolves the way it did the first time round.
+
+    `pick` chooses the files considered: `candidates` (the default, files
+    in holding folders) or `filed` (files a real category placed). Either
+    way the answer comes from the rules with their holding rules taken out,
+    so a file is only ever moved to a category -- never back into a pen.
     """
+    pick = pick or candidates
     grouped = collections.defaultdict(list)
-    for candidate in candidates(journal, rule_set, source_root, limit):
+    for candidate in pick(journal, rule_set, source_root, limit):
         grouped[candidate.source_root].append(candidate)
     if not grouped:
         return []
