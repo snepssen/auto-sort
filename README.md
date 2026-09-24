@@ -972,6 +972,25 @@ time and wrong every time after — it would discard whatever you had since
 written, reordered or deleted. `adopt` is how the rules keep learning without
 that cost.
 
+**And by itself.** The background sorter takes that last step without being
+asked, for one kind of case: documents still waiting in a holding folder —
+`Documents/PDF`, `Unfiled`, `From Email` — that turn out to be headed the
+same way. Three invoices waiting in `Documents/PDF` become an `Invoice`
+rule, and the new rules file moves them into it within seconds. It looks
+soon after anything new is filed, and every half hour otherwise; reading
+only the ledger, a look costs tens of milliseconds.
+
+It never learns from a document that already has a category, which is what
+keeps it from inventing the kind of folder somebody has to clean up: on the
+machine this was built on, the one word `check-rules` still offers — `The`,
+at the top of three documents with nothing else in common — heads only one
+document that is waiting, so it is not added. Each rule it adds carries a
+comment saying so, and the file as it was is kept beside it as
+`rules.ini.before-adopt`. Delete one and it stays deleted: the word is
+remembered and never added again, and its documents go back to waiting.
+`learn = report` in `[settings]` only says so in the log; `learn = off`
+never looks.
+
 ## Two copies of the same file is one too many
 
 macOS has no cut-and-paste for files, so tidying by hand means copy, then

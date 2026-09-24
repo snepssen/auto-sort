@@ -21,12 +21,14 @@ do not nest.
 
 | File | Owner | Written by |
 | --- | --- | --- |
-| `rules.ini` | You | Only you. auto-sort reads it and never writes it. |
+| `rules.ini` | You | You -- and auto-sort for one thing: a category learnt from documents waiting in a holding folder, added with a note saying so and the previous file kept beside it. Delete one and it stays deleted. `learn = report` or `off` stops it. |
 | `state.db` | auto-sort | Watched folders, port, paused flag, the ledger, the queue. |
 
 The split exists because `configparser` cannot write a file back without
 eating the comments. Anything the tray or the log window can change lives in
-`state.db`, so the file you hand-edit is never rewritten underneath you.
+`state.db`, so the file you hand-edit is never rewritten underneath you. A
+learnt category is inserted, not rewritten: every other line stays byte for
+byte what you wrote.
 
 Location: `~/.config/auto-sort/rules.ini` on Linux,
 `~/Library/Application Support/auto-sort/rules.ini` on macOS,

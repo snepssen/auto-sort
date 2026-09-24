@@ -499,3 +499,10 @@ duplication is three files and it buys each tool the ability to stand alone.
     not outranked by a word the counting found; a rule is asked with all a
     document's facts; a title word is counted only where it is written as
     one; a learnt category is named by the phrase its documents share.
+25. Nothing left for a person to type. Filed files are judged again when
+    the rules or the reader change; what waits in a holding folder moves the
+    moment a rule claims it; a category the waiting documents show is added
+    to the rules file by itself, with a note, and one somebody deletes stays
+    deleted. All of it a batch per cycle, through the supervised reader, so
+    a decade of Downloads never stops the tray answering. The starter file
+    names this machine's own folders and passes its own check.

@@ -474,7 +474,7 @@ _SETTINGS_KEYS = {
     "dry_run", "unsorted", "unsorted_into", "on_collision",
     "min_confidence", "settle_seconds", "poll_seconds", "preserve_dates",
     "ocr", "tools",
-    "regroup",
+    "regroup", "learn",
 }
 _WATCH_KEYS = {"folders", "ignore", "depth"}
 _RULE_KEYS = {
@@ -500,6 +500,11 @@ class Settings(object):
         # is in the ledger and undone like any other. `report` only says.
         self.regroup = _choice(values.get("regroup", "apply"),
                                ("off", "report", "apply"), "regroup")
+        # Whether the background sorter adds a category to this file by
+        # itself, once enough waiting documents have shown it -- the one
+        # thing it ever writes here. `report` says so in the log instead.
+        self.learn = _choice(values.get("learn", "apply"),
+                             ("off", "report", "apply"), "learn")
         self.on_collision = _choice(values.get("on_collision", "suffix"),
                                     ("suffix", "skip"), "on_collision")
         self.min_confidence = _bounded_float(

@@ -29,6 +29,7 @@ import mirror
 import paths
 import rules
 import corrections as corrections_module
+import learning
 import regroup as regroup_module
 import review
 import sorter
@@ -49,6 +50,14 @@ def _stamped(message):
     import time
     print("%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message),
           flush=True)
+
+
+def _json_list(value):
+    try:
+        found = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [str(item) for item in found] if isinstance(found, list) else []
 
 
 class AlreadyRunning(Exception):
@@ -369,6 +378,86 @@ class PollingDaemon(object):
     # reading program installed since. Everything else that could promote
     # them -- a new rule, a better reader -- starts a pass at once.
     REGROUP_INTERVAL = 24 * 3600
+    LEARN_SOON = 60
+
+    def _check_learning(self, rule_set, now_value):
+        """Add the categories the waiting documents have shown.
+
+        The last step a person used to have to take: `check-rules` said
+        which words had earned a folder and somebody ran `adopt`. Now the
+        background sorter does it, for documents still waiting in a holding
+        folder only, and the new rules file sets off the pass that moves
+        them in.
+
+        A rule it added and somebody then deleted is an answer, and it is
+        remembered: that word is never added again. Without that, a
+        category somebody disagreed with would come back every half hour.
+        """
+        learn = getattr(rule_set.settings, "learn", "apply")
+        if learn == "off":
+            return
+        # Soon after anything new is filed -- a first sort of a decade of
+        # Downloads should show its categories within the minute, not the
+        # half hour -- and otherwise every half hour, which also notices a
+        # rule somebody deleted. It reads only the ledger: tens of
+        # milliseconds on two thousand filed files.
+        last = self.journal.get_state("learn_checked_at")
+        try:
+            last_value = float(last or 0)
+        except (TypeError, ValueError):
+            last_value = 0.0
+        newest = str(self.journal.connection.execute(
+            "SELECT max(id) FROM moves").fetchone()[0] or 0)
+        waited = now_value - last_value
+        if waited < self.LEARN_SOON or (
+                waited < self.CORRECTION_INTERVAL
+                and self.journal.get_state("learn_seen_move") == newest):
+            return
+        self.journal.set_state("learn_checked_at", repr(now_value))
+        self.journal.set_state("learn_seen_move", newest)
+
+        added = _json_list(self.journal.get_state("learnt_rules"))
+        refused = _json_list(self.journal.get_state("learn_refused"))
+        present = set(rule.name for rule in rule_set.rules)
+        for name in [name for name in added if name not in present]:
+            refused.append(name.split(": ")[-1])
+            added.remove(name)
+        self.journal.set_state("learnt_rules", json.dumps(added))
+        self.journal.set_state("learn_refused", json.dumps(sorted(set(
+            refused))))
+        try:
+            adoption = learning.plan(
+                self.journal, rule_set, waiting_only=True, refused=refused,
+                note="Added by auto-sort on %s, from documents that were "
+                     "waiting for it. Delete it and it stays deleted."
+                     % time.strftime("%Y-%m-%d", time.localtime(now_value)))
+        except Exception as error:           # noqa: BLE001
+            self.output("Could not look for new categories: %s" % error)
+            return
+        if not adoption.found:
+            return
+        described = ", ".join("%s (%d)" % pair for pair in adoption.found)
+        if learn != "apply":
+            if self.journal.get_state("learn_reported") != described:
+                self.journal.set_state("learn_reported", described)
+                self.output("Waiting documents have shown %s: %s. Run "
+                            "`auto-sort adopt` to see the rules, or set "
+                            "learn = apply."
+                            % ("a category" if len(adoption.found) == 1
+                               else "%d categories" % len(adoption.found),
+                               described))
+            return
+        problem = learning.write(adoption)
+        if problem:
+            self.output("Could not add %s to the rules: %s"
+                        % (described, problem))
+            return
+        self.journal.set_state("learnt_rules",
+                               json.dumps(added + adoption.names))
+        self.output("Learnt %s from the documents waiting for %s; the "
+                    "previous rules file is kept as %s."
+                    % (described, "it" if len(adoption.found) == 1
+                       else "them", learning.backup_name(adoption)))
 
     def _check_regroup(self, rule_set, now_value, requested_dry):
         """Promote what is waiting, once the folder has taught enough.
@@ -592,6 +681,7 @@ class PollingDaemon(object):
         self._heartbeat(rule_set, now_value)
         if not self.journal.paused():
             self._check_corrections(rule_set, now_value)
+            self._check_learning(rule_set, now_value)
             self._check_regroup(rule_set, now_value, requested_dry)
             self._check_refile(rule_set, requested_dry)
             self._drain_mirror()

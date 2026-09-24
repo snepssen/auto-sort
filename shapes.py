@@ -718,7 +718,11 @@ def learn(stems, fields=FIELDS, min_support=MIN_SUPPORT):
 PHRASE_WORDS = 6
 # The share of a word's documents that must say the whole phrase.
 PHRASE_SHARE = 0.9
-_PHRASE_TOKEN = re.compile(r"[^\W\d_][\w’'-]*", re.UNICODE)
+# Numbers are tokens too, so that they stand between the words either side
+# of them: "Invoice 12 from Acme" and "Invoice 13 from Acme" share
+# `Invoice`, not `Invoice from`. A number every document prints -- a form's
+# own number -- is shared like any word, and can be part of the name.
+_PHRASE_TOKEN = re.compile(r"[^\W_][\w’'-]*", re.UNICODE)
 
 
 def shared_phrase(word, values, exclude=()):

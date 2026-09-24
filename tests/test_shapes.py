@@ -360,6 +360,19 @@ class WhatToCallTheFolder(unittest.TestCase):
         self.assertEqual(shapes.shared_phrase("Rechnung", headings),
                          "Rechnung")
 
+    def test_a_number_between_words_is_not_skipped(self):
+        """`Invoice 12 from Acme` does not share `Invoice from` with
+        `Invoice 13 from Acme`: the words were never next to each other."""
+        headings = ["Invoice %d from Acme for the period" % number
+                    for number in (12, 13, 14)]
+        self.assertEqual(shapes.shared_phrase("Invoice", headings), "Invoice")
+
+    def test_a_number_they_all_print_is_part_of_the_name(self):
+        headings = ["Form 1040 US Individual Income Tax Return %d" % year
+                    for year in (2021, 2022, 2023)]
+        self.assertTrue(shapes.shared_phrase("Form", headings).startswith(
+            "Form 1040 US"))
+
     def test_a_straggler_does_not_shorten_it(self):
         """Nine in ten is agreement; OCR and variants make the tenth."""
         headings = (["ARBEIDSOVEREENKOMST VOOR UITZENDARBEID"] * 20

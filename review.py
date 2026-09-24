@@ -422,7 +422,8 @@ def _named_by_a_rule(word, rule_set, fact="heading"):
     return False
 
 
-def emerging(journal, rule_set, fact="heading", limit=20000):
+def emerging(journal, rule_set, fact="heading", limit=20000,
+             waiting_only=False):
     """Words that now head enough filed documents to deserve a folder.
 
     The other half of the same idea. `dead_rules` finds categories the
@@ -439,15 +440,25 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
 
     Reads only the ledger's own record of what it filed, so it costs no
     disk and knows nothing it was not already told.
+
+    `waiting_only` counts only documents still in a holding folder. That is
+    what the background sorter learns from by itself: its job is to empty
+    waiting rooms, never to take a document away from a category it
+    already has. Every heading still teaches the vocabulary, so a sender's
+    letterhead is still known as one.
     """
+    holding = set(rule.name for rule in rule_set.rules if rule.holding)
+    holding.add("[unsorted]")
     headings = []
     documents = []
     for row in journal.placed_moves(None, limit):
         facts = _facts_of(row)
         value = facts.get(fact)
         if value:
+            waiting = bool(row["holding"] if "holding" in row.keys()
+                           else 0) or row["rule_name"] in holding
             headings.append(value)
-            documents.append((value, facts))
+            documents.append((value, facts, waiting))
     if not headings:
         return [], 0
 
@@ -481,7 +492,9 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
     # heading, and three privacy forms with a rule of their own were
     # offered as a category nobody had named.
     claimed = []
-    for heading, facts in documents:
+    for heading, facts, waiting in documents:
+        if waiting_only and not waiting:
+            continue
         probe = dict(facts)
         probe.setdefault("name", "probe")
         probe.setdefault("kind", "document")

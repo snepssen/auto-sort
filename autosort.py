@@ -29,6 +29,7 @@ import platform_support
 import progress as progress_module
 import propose as propose_module
 import duplicates as duplicates_module
+import learning
 import regroup as regroup_module
 import review
 import rules
@@ -391,8 +392,8 @@ def _report_dead_rules(rule_set, state=None):
     print()
     print("  Each of those matched files that a rule above it claimed first,")
     print("  every time. Deleting them changes nothing about where anything")
-    print("  goes -- it only shortens the file. auto-sort never edits your")
-    print("  rules, so this is yours to do or ignore.")
+    print("  goes -- it only shortens the file. auto-sort never deletes a")
+    print("  rule, so this is yours to do or ignore.")
 
 
 def sort_folders(roots, rule_set, state_file=None, dry_run=None,
@@ -1411,10 +1412,11 @@ def adopt_categories(rule_path=None, state=None, apply_changes=False,
     try:
         with ledger_module.Ledger(state) as journal:
             _refresh_held(journal, rule_set)
-            found, headings = review.emerging(journal, rule_set)
+            adoption = learning.plan(journal, rule_set)
     except Exception as error:               # noqa: BLE001
         print("No ledger to learn from yet: %s" % error, file=sys.stderr)
         return 1
+    found, headings = adoption.found, adoption.headings
 
     if as_json:
         print(json.dumps({"documents_read": headings,
@@ -1430,37 +1432,15 @@ def adopt_categories(rule_path=None, state=None, apply_changes=False,
         print()
         return 0
 
-    # The guard against a short word swallowing a longer one has to see the
-    # words already in the file, not just the new ones.
-    existing = [rule.name.split(": ")[-1] for rule in rule_set.rules]
-    others = [word for word, _count in found] + existing
-    root = userdirs.home_for("document")
-    # What the filed documents say, so each folder can be named after the
-    # phrase they share rather than the one word that finds them.
-    with ledger_module.Ledger(state) as journal:
-        said = [review._facts_of(row).get("heading")
-                for row in journal.placed_moves()]
-    said = [heading for heading in said if heading]
-    blocks = [propose_module.term_rule("heading", "what the page calls itself",
-                                       word, count, "documents say it",
-                                       root, others, said)
-              for word, count in found]
-
     print("  Learnt from %d filed documents:" % headings)
     print()
-    for block in blocks:
+    for block in adoption.blocks:
         for line in block:
             print("    %s" % line if line else "")
-    source = rule_set.source
-    with open(source, "r", encoding="utf-8") as handle:
-        text = handle.read()
-    with ledger_module.Ledger(state) as journal:
-        beaten = review.outranked(journal, rule_set,
-                                  [word for word, _count in found])
-    at = review.insertion_point(text, beaten)
-    total = len(text.splitlines())
+    total = len(adoption.text.splitlines())
     print("  Goes in at line %d of %d. No other line changes."
-          % (at + 1, total))
+          % (adoption.line, total))
+    beaten = adoption.beaten
     if beaten:
         print("  Above %s, which claim%s those documents today by a word"
               % (", ".join(sorted(name.split(": ")[-1] for name in beaten)[:3]),
@@ -1470,34 +1450,17 @@ def adopt_categories(rule_path=None, state=None, apply_changes=False,
     print()
     if not apply_changes:
         print("  Nothing written. Run again with --apply to add %s."
-              % ("it" if len(blocks) == 1 else "them"))
+              % ("it" if len(adoption.blocks) == 1 else "them"))
         print()
         return 0
 
-    backup = source + ".before-adopt"
-    merged = review.adopt(text, blocks, beaten)
-    try:
-        with open(backup, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        with open(source, "w", encoding="utf-8") as handle:
-            handle.write(merged)
-    except OSError as error:
-        print("Could not write %s: %s" % (source, error), file=sys.stderr)
+    problem = learning.write(adoption)
+    if problem:
+        print("  ! %s" % problem, file=sys.stderr)
         return 1
-
-    # Anything this program writes, it reads back before saying it worked.
-    try:
-        rules.load(source)
-    except rules.RuleError as error:
-        with open(source, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        print("  ! the file would not load afterwards, so it was put back")
-        print("    exactly as it was: %s" % error, file=sys.stderr)
-        return 1
-
-    print("  Added to %s." % userdirs.short(source))
+    print("  Added to %s." % userdirs.short(adoption.source))
     print("  Your previous file is beside it as %s."
-          % os.path.basename(backup))
+          % learning.backup_name(adoption))
     print()
     return 0
 
