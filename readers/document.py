@@ -221,7 +221,7 @@ _OFFICE_PRODUCERS = re.compile(
 
 # Formats whose words are read as well as their metadata; see `officetext`.
 _READ_THE_TEXT = ("word", "opendocument-text", "rtf", "markdown",
-                  "plain-text", "pages")
+                  "plain-text", "pages", "email", "calendar", "html")
 
 
 def read(peek, fmt, record):
@@ -296,7 +296,8 @@ def _read_the_text(peek, fmt, record):
         return
     words = len(text.split())
     record.set("words_read", words, "doc-text", CERTAIN)
-    drawn = pdftext.title(runs, exclude=_owner_words()) if runs else ""
+    drawn = officetext.known_title(runs) or (
+        pdftext.title(runs, exclude=_owner_words()) if runs else "")
     if drawn:
         record.set("title_drawn", drawn[:80], "doc-text", STRONG)
     heading = _title_then_top(drawn, heading_of(text))

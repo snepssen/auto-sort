@@ -57,6 +57,12 @@ def read(path, fmt, head=b""):
             return _plain(_whole(path, MAX_CHARS * 4))
         if fmt == "pages":
             return _pages(path)
+        if fmt == "email":
+            return _email(path)
+        if fmt == "calendar":
+            return _calendar(_whole(path, MAX_PART))
+        if fmt == "html":
+            return _html(_whole(path, MAX_PART))
     except (OSError, ValueError, KeyError, zipfile.BadZipFile,
             ElementTree.ParseError, UnicodeError, RecursionError):
         pass
@@ -332,7 +338,7 @@ def _markdown(data):
     if not title:
         return plain, []
     # Drawn bigger than the body, as the heading it is.
-    runs = [("md", title.group(1), 24.0), (GAP, " ", 0.0),
+    runs = [(KNOWN, title.group(1), 24.0), (GAP, " ", 0.0),
             ("md", plain, 12.0)]
     return plain, runs
 
@@ -481,3 +487,118 @@ def _unsnappy(data, room):
         if len(out) > expected:
             raise ValueError("longer than it said")
     return bytes(out)
+
+
+# ---------------------------------------------------------------------------
+# Email, calendar invitations, saved web pages
+# ---------------------------------------------------------------------------
+
+# The font name of a run that is a title known outright -- a subject line,
+# an event's summary, a page's <title> -- rather than one found by size.
+KNOWN = "known title"
+
+
+def known_title(runs):
+    """The title a document states outright, or ""."""
+    if runs and runs[0][0] == KNOWN:
+        return runs[0][1]
+    return ""
+
+
+def _titled(title, text, size=24.0):
+    """Runs for a document whose title is known outright.
+
+    Not for `pdftext.title` to find: it filters words that are not title
+    words and weighs sizes against the body, and a subject line is the
+    subject line -- "Order confirmation & receipt" kept its ampersand, and
+    a one-line invitation is not read as all body.
+    """
+    title = re.sub(r"\s+", " ", title or "").strip()
+    text = re.sub(r"\s+", " ", text or "").strip()[:MAX_CHARS]
+    if not title:
+        return text, []
+    return (title + " " + text).strip()[:MAX_CHARS], [
+        (KNOWN, title, size), (GAP, " ", 0.0), ("body", text or " ", 12.0)]
+
+
+def _email(path):
+    """An email says what it is about in its subject line."""
+    with open(path, "rb") as handle:
+        data = handle.read(MAX_PART)
+    if data.startswith(worddoc.MAGIC):
+        return _outlook(data)
+    if data[:12].split(b"\n", 1)[0].strip().isdigit():
+        data = data.split(b"\n", 1)[1]           # Apple Mail's .emlx
+    import email
+    from email import policy
+    message = email.message_from_bytes(data, policy=policy.default)
+    subject = str(message.get("subject", "") or "")
+    body = ""
+    try:
+        part = message.get_body(preferencelist=("plain", "html"))
+        if part is not None:
+            body = part.get_content()
+            if part.get_content_type() == "text/html":
+                body = _html_text(body)
+    except (KeyError, LookupError, ValueError, TypeError):
+        body = ""
+    return _titled(subject, body)
+
+
+def _outlook(data):
+    """Outlook's .msg: a compound file whose properties are streams."""
+    compound = worddoc._Compound(data)
+
+    def prop(code):
+        for suffix, encoding in (("001F", "utf-16-le"), ("001E", "cp1252")):
+            try:
+                raw = compound.stream("__substg1.0_%s%s" % (code, suffix))
+            except KeyError:
+                continue
+            return raw.decode(encoding, "replace").rstrip("\x00")
+        return ""
+    return _titled(prop("0037"), prop("1000"))
+
+
+def _unfolded(text):
+    """iCalendar lines continue on the next line when it starts with a space."""
+    return re.sub(r"\r?\n[ \t]", "", text)
+
+
+def _calendar(data):
+    text = _unfolded(_decoded(data))
+    event = re.search(r"BEGIN:VEVENT(.*?)END:VEVENT", text, re.S)
+    block = event.group(1) if event else text
+
+    def field(name):
+        match = re.search(r"^%s(?:;[^:\r\n]*)?:(.*)$" % name, block, re.M)
+        if not match:
+            return ""
+        return match.group(1).replace("\\n", " ").replace("\\,", ",") \
+            .replace("\\;", ";").strip()
+    return _titled(field("SUMMARY"),
+                   " ".join(filter(None, (field("LOCATION"),
+                                          field("DESCRIPTION")))))
+
+
+_HTML_DROP = re.compile(r"<(script|style|noscript|template)\b.*?</\1\s*>",
+                        re.S | re.I)
+_HTML_TAG = re.compile(r"<[^>]+>")
+
+
+def _html_text(markup):
+    import html
+    body = _HTML_DROP.sub(" ", markup)
+    body = re.sub(r"<!--.*?-->", " ", body, flags=re.S)
+    return html.unescape(_HTML_TAG.sub(" ", body))
+
+
+def _html(data):
+    """A saved page is called what its <title> says."""
+    import html
+    markup = _decoded(data)
+    title = re.search(r"<title[^>]*>(.*?)</title>", markup, re.S | re.I)
+    heading = re.search(r"<h1[^>]*>(.*?)</h1>", markup, re.S | re.I)
+    name = title or heading
+    named = html.unescape(_HTML_TAG.sub(" ", name.group(1))) if name else ""
+    return _titled(named, _html_text(markup))

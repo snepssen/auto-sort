@@ -138,8 +138,7 @@ class Markdown(unittest.TestCase):
         text, runs = officetext._markdown(
             b"Some preamble\n\n# Meeting notes, June\n\nWe talked about "
             + b"the thing " * 30)
-        from readers import pdftext
-        self.assertEqual(pdftext.title(runs), "Meeting notes, June")
+        self.assertEqual(officetext.known_title(runs), "Meeting notes, June")
         self.assertTrue(text.startswith("Some preamble"))
 
 
@@ -211,6 +210,63 @@ class NewerPages(unittest.TestCase):
         archive = b"\x00" + len(chunk).to_bytes(3, "little") + chunk
         self.assertTrue(officetext._iwa_text(archive).startswith(
             "Assessment of Pre-Settled Status"))
+
+
+
+class MailCalendarsAndPages(unittest.TestCase):
+    """What they are about is in the subject, the summary and the title."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-mail-")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def write(self, name, data):
+        path = os.path.join(self.dir, name)
+        with open(path, "wb") as handle:
+            handle.write(data)
+        return path
+
+    EMAIL = (b"From: Stadtwerke <rechnung@stadtwerke.example>\r\n"
+             b"Subject: Ihre Rechnung Nr. 4711\r\n"
+             b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+             b"Sehr geehrte Kundin, anbei Ihre Rechnung f\xc3\xbcr Mai.\r\n")
+
+    def test_an_email_is_titled_by_its_subject(self):
+        from readers import pdftext
+        text, runs = officetext.read(self.write("a.eml", self.EMAIL), "email")
+        self.assertEqual(officetext.known_title(runs), "Ihre Rechnung Nr. 4711")
+        self.assertIn("für Mai", text)
+
+    def test_apple_mail_puts_a_byte_count_in_front(self):
+        path = self.write("a.emlx", b"%d\n" % len(self.EMAIL) + self.EMAIL)
+        text, _runs = officetext.read(path, "email")
+        self.assertTrue(text.startswith("Ihre Rechnung Nr. 4711"))
+
+    def test_a_calendar_invitation_is_titled_by_its_summary(self):
+        from readers import pdftext
+        path = self.write("invite.ics", (
+            b"BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Introduction call\\, "
+            b"with the\r\n  agency\r\nLOCATION:Perth\r\nDESCRIPTION:Bring "
+            b"your ID\\nand a CV\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"))
+        text, runs = officetext.read(path, "calendar")
+        self.assertEqual(officetext.known_title(runs),
+                         "Introduction call, with the agency")
+        self.assertIn("Bring your ID and a CV", text)
+
+    def test_a_saved_page_is_titled_by_its_title(self):
+        from readers import pdftext
+        path = self.write("receipt.html", (
+            b"<html><head><title>Order confirmation &amp; receipt</title>"
+            b"<script>var secret = 1;</script><style>p{}</style></head>"
+            b"<body><h1>Thanks</h1><p>Your order has shipped.</p></body>"
+            b"</html>"))
+        text, runs = officetext.read(path, "html")
+        self.assertEqual(officetext.known_title(runs),
+                         "Order confirmation & receipt")
+        self.assertNotIn("secret", text)
+        self.assertIn("Your order has shipped", text)
 
 
 if __name__ == "__main__":

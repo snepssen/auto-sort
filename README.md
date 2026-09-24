@@ -348,7 +348,10 @@ heading style is called in any language is needed. A Markdown file's first
 table of text pieces, 8-bit or UTF-16; it is read with the standard library
 too, text only, headed by the top of its first page. A Pages document is read
 through the PDF preview older ones keep, or, in newer ones, from the text
-inside their Snappy-compressed archive, decompressed here too.
+inside their Snappy-compressed archive, decompressed here too. An email
+(`.eml`, Apple Mail's `.emlx`, Outlook's `.msg`) is titled by its subject, a
+calendar invitation by its event's summary, and a saved web page by its
+`<title>` — stated outright, so used as they are rather than looked for.
 
 **Encrypted is not the same as locked.** Payroll portals, banks and phone
 companies encrypt what they send, almost always with no password to open it:
