@@ -219,16 +219,23 @@ _OFFICE_PRODUCERS = re.compile(
     r"xetex|pandoc|quarto)", re.I)
 
 
+# Formats whose words are read as well as their metadata; see `officetext`.
+_READ_THE_TEXT = ("word", "opendocument-text", "rtf", "markdown",
+                  "plain-text", "pages")
+
+
 def read(peek, fmt, record):
     reader = _BY_FORMAT.get(fmt)
-    if reader is None:
+    if reader is None and fmt not in _READ_THE_TEXT:
         return False
     try:
-        found = reader(peek)
+        found = reader(peek) if reader else {}
     except (OSError, ValueError, UnicodeError, re.error):
-        return False
+        found = {}
+    if fmt in _READ_THE_TEXT:
+        _read_the_text(peek, fmt, record)
     if not found:
-        return False
+        return fmt in _READ_THE_TEXT and record.has("heading")
 
     source = {"pdf": "pdf-info", "rtf": "rtf-info"}.get(fmt, "doc-props")
     for key, fact in (("producer", "producer"), ("creator", "creator"),
@@ -272,6 +279,30 @@ def read(peek, fmt, record):
         _read_the_page(peek, record)
     record.reader_ran("document:" + fmt, "%d fields" % len(found))
     return True
+
+
+def _read_the_text(peek, fmt, record):
+    """A heading for a Word, OpenDocument, RTF, Markdown or text file.
+
+    Built the way a PDF's is: the title, found by being set larger than
+    the body, and then the top of the page it did not already say.
+    """
+    from . import officetext
+    path = getattr(peek, "path", None)
+    if not path:
+        return
+    text, runs = officetext.read(path, fmt)
+    if not text:
+        return
+    words = len(text.split())
+    record.set("words_read", words, "doc-text", CERTAIN)
+    drawn = pdftext.title(runs, exclude=_owner_words()) if runs else ""
+    if drawn:
+        record.set("title_drawn", drawn[:80], "doc-text", STRONG)
+    heading = _title_then_top(drawn, heading_of(text))
+    if heading:
+        record.set("heading", heading[:HEADING_CHARS], "doc-text", STRONG)
+    record.reader_ran("doc-text", "%d words" % words)
 
 
 def _read_the_page(peek, record):
