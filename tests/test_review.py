@@ -445,6 +445,55 @@ class CategoriesThatArriveLater(unittest.TestCase):
             facts={"heading": heading, "name": "d%d.pdf" % self.number,
                    "kind": "document"})
 
+    def filed_with(self, heading, **facts):
+        self.number += 1
+        known = {"heading": heading, "name": "d%d.pdf" % self.number,
+                 "kind": "document"}
+        known.update(facts)
+        self.journal.add_move(
+            self.run, self.number, 1, "move", "x",
+            os.path.join(self.dir, "d%d.pdf" % self.number),
+            os.path.join(self.dir, "out", "d%d.pdf" % self.number),
+            1, "", status="done", facts=known)
+
+    def other_post(self):
+        for number in range(40):
+            self.filed_with("Mietvertrag Wohnung %d" % number)
+        for number in range(30):
+            self.filed_with("Steuerbescheid Finanzamt %d" % number)
+        for number in range(30):
+            self.filed_with("Kündigung Vertrag %d" % number)
+
+    def test_a_word_in_a_sentence_is_not_a_title(self):
+        """An early lowercase `the` counted for `The`: two titles that
+        start with it, and one sentence, made three."""
+        self.filed_with("The Castle Collection Accommodation Policy")
+        self.filed_with("THE GLENEAGLES HOTEL CONTRACT")
+        self.filed_with("Be the first to know")
+        self.other_post()
+        new, _seen = review.emerging(self.journal, self.rule_set)
+        self.assertNotIn("the", [word.lower() for word, _count in new])
+        self.assertIn("Mietvertrag", [word for word, _count in new])
+
+    def test_a_rule_that_asks_for_more_than_the_heading_still_claims(self):
+        """Three privacy forms with a rule of their own -- title *and* file
+        name -- were offered as a category nobody had named."""
+        path = os.path.join(self.dir, "own.ini")
+        with open(path, "w") as handle:
+            handle.write(RULES.replace(
+                "[rule: Rechnung]",
+                "[rule: privacy forms]\nwhen = heading contains Privacy and "
+                "stem contains MDT\ninto = ~/Documents/Privacy\n\n"
+                "[rule: Rechnung]"))
+        own = rules.load(path)
+        for number in range(4):
+            self.filed_with("Privacy policy form %d" % number,
+                            stem="x_MDT-%d" % number)
+        self.other_post()
+        new, _seen = review.emerging(self.journal, own)
+        self.assertNotIn("Privacy", [word for word, _count in new])
+        self.assertIn("Mietvertrag", [word for word, _count in new])
+
     def test_a_new_kind_of_letter_is_noticed(self):
         for number in range(5):
             self.filed("Rechnung Nr %d Stadtwerke Muenchen" % number,

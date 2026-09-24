@@ -428,11 +428,13 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
     disk and knows nothing it was not already told.
     """
     headings = []
+    documents = []
     for row in journal.placed_moves(None, limit):
         facts = _facts_of(row)
         value = facts.get(fact)
         if value:
             headings.append(value)
+            documents.append((value, facts))
     if not headings:
         return [], 0
 
@@ -461,13 +463,19 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
     # towards `Stadtwerke`, which appears later on the same page. Without
     # this, deleting a noise rule would only make the next run offer it
     # straight back.
-    claimed_at = {}
-    for heading in headings:
+    # Asked with everything the document is known by, not its heading alone:
+    # a rule that wants a heading *and* a file name never matched a bare
+    # heading, and three privacy forms with a rule of their own were
+    # offered as a category nobody had named.
+    claimed = []
+    for heading, facts in documents:
+        probe = dict(facts)
+        probe.setdefault("name", "probe")
+        probe.setdefault("kind", "document")
         winner = None
         for rule in rule_set.rules:
             if getattr(rule, "holding", False):
                 continue
-            probe = {fact: heading, "name": "probe", "kind": "document"}
             try:
                 matched, _used = rule.condition.evaluate(probe)
             except Exception:                # noqa: BLE001
@@ -475,14 +483,21 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
             if matched:
                 winner = rule
                 break
-        claimed_at[heading] = _claimed_at(heading, winner, fact)
+        claimed.append((heading, _claimed_at(heading, winner, fact)))
 
     earned = collections.Counter()
-    for heading in headings:
-        best, where = None, claimed_at[heading]
+    for heading, where in claimed:
+        words = shapes._WORD.findall(heading)
+        best = None
         for word in candidates:
             at = _position(heading, word)
             if at is None or at >= where:
+                continue
+            # Written as a title is, where it stands in this document: an
+            # early lowercase `the` in a sentence is not the `The` that a
+            # title starts with, and counted as one it offered `The`.
+            if fact == "heading" and at < len(words) and \
+                    not _capitalised(words[at]):
                 continue
             if best is None or at < _position(heading, best):
                 best = word
@@ -556,6 +571,13 @@ def _claimed_at(heading, rule, fact="heading"):
 # written, or directed, by a person.
 _LEARNT_PREFIXES = ("what the page calls itself: ",
                     "what these files are called: ")
+
+
+def _capitalised(token):
+    """Written with a capital, or in a script that has none."""
+    if token.lower() == token.upper():
+        return True
+    return any(char.isupper() for char in token)
 
 
 def _learnt(rule):
