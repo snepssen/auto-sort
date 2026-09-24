@@ -71,7 +71,8 @@ into = ~/Pictures/RAW/{taken:%Y}
 
 [rule: everything else with pixels in it]
 when = kind = image
-into = ~/Pictures/Loose/{format}
+into = ~/Pictures/Loose/{format:upper}
+holding = yes
 
 [rule: films]
 when = kind = video and duration > 70m and looks_like = scene-release
@@ -92,6 +93,7 @@ into = ~/Videos/Recordings/{created:%Y-%m}
 [rule: video, unclassified]
 when = kind = video
 into = ~/Videos/Loose
+holding = yes
 
 [rule: tagged music]
 when = kind = audio and artist is set and album is set
@@ -108,7 +110,8 @@ into = ~/Music/Voice/{created:%Y-%m}
 
 [rule: audio, unclassified]
 when = kind = audio
-into = ~/Music/Loose/{format}
+into = ~/Music/Loose/{format:upper}
+holding = yes
 
 [rule: scanned paperwork]
 when = kind = document and format = pdf and producer ~ *Scan*
@@ -120,7 +123,8 @@ into = ~/Documents/Finance/{added:%Y}
 
 [rule: documents]
 when = kind = document
-into = ~/Documents/{format}
+into = ~/Documents/{ext:upper}
+holding = yes
 
 [rule: subtitles travelling alone]
 when = kind = subtitle and bundle_role = primary
@@ -177,7 +181,12 @@ Present only when they could be established.
 **Bundle** — `bundle` (is part of a set), `bundle_role` (`primary`/`sidecar`),
 `members` (count), `is_dir`.
 
-**Provenance** — `from_url`, `from_host`, `quarantined`, `downloaded`.
+**Provenance** — `from_url`, `from_host`, `quarantined`, `downloaded`, and
+`origin`: the channel a file arrived through, where the system recorded it
+-- `email`, `message`, `torrent`, `cloud`, `airdrop`, or `download`. On a
+Mac it comes from the program that saved the file (Mail, WhatsApp,
+Transmission, AirDrop); on Windows only `download` or `network`, from the
+zone the file was marked with.
 
 `from_host` is the *registrable domain*, not the hostname the file came
 from: a picture delivered by `d.furaffinity.net` or `static1.e621.net` is
@@ -251,6 +260,7 @@ use the English names.
 | `min_confidence` | from `[settings]` | Floor for this rule. Applies to every fact the `when` consulted **and** every fact the destination fills in, so a rule filing by `{happened}` needs `happened` to clear it. |
 | `newer_than` / `older_than` | — | `older_than = 180d` for an archive rule |
 | `only_on` | all | `macos`, `windows`, `linux` |
+| `holding` | `no` | `yes` for a waiting room rather than an answer: a folder named only by a file's type, where it came from, or when it arrived. A file placed here moves on by itself when a rule that is not `holding` claims it later -- one you adopt, or one a better reading finds. Never the other way. |
 
 ## Checking a file before trusting the file
 
