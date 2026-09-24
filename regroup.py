@@ -20,6 +20,13 @@ a decision that was already specific is never relitigated, so editing a rules
 file cannot silently reshuffle a disk, and a file cannot ping-pong between two
 rules that both think they want it.
 
+**`refile` is the one exception, and it is asked for.** It reconsiders
+files a category placed, because what they were judged on -- the reader
+of the day -- has improved since; four contracts sat under their own
+letterhead. It still only moves a file up into a category, except when
+the rule that placed it has been deleted, which is somebody saying that
+folder was wrong.
+
 **Anything the person touched is left alone.** If a file is not exactly where
 the ledger says it was put, they moved it, and that is an answer rather than a
 gap. `corrections` learns from those; this does not touch them.
@@ -149,7 +156,8 @@ def build(journal, rule_set, source_root=None, limit=20000, pick=None):
     `pick` chooses the files considered: `candidates` (the default, files
     in holding folders) or `filed` (files a real category placed). Either
     way the answer comes from the rules with their holding rules taken out,
-    so a file is only ever moved to a category -- never back into a pen.
+    so a file is only ever moved to a category -- never back into a pen --
+    unless the rule that placed it has been deleted.
     """
     pick = pick or candidates
     grouped = collections.defaultdict(list)
@@ -159,21 +167,45 @@ def build(journal, rule_set, source_root=None, limit=20000, pick=None):
         return []
 
     promoting = promotable(rule_set)
+    # A file whose rule has since been deleted was filed for a reason that
+    # no longer exists -- "delete any line you disagree with and its folder
+    # goes with it" is what the rules file promises. It is decided afresh
+    # by every rule, holding ones included, exactly as a new arrival would
+    # be. A file whose rule is still there keeps the promise that it only
+    # ever moves up, into a category.
+    current = set(rule.name for rule in rule_set.rules)
+    everything = _without_gathering(rule_set)
     plans = []
     for root, group in sorted(grouped.items()):
-        items = [bundles.Item(candidate.path) for candidate in group]
-        # No ledger here on purpose: a promotion is a file that is
-        # already in the ledger moving again, so it would be found as a
-        # duplicate of itself.
-        plan = sorter.build_plan(root, promoting, items=items)
-        # Everything that matched nothing is simply still waiting, which is
-        # the normal case and not worth reporting as a skip.
-        plan.skipped = [entry for entry in plan.skipped
-                        if not entry[1].startswith("no rule matched")
-                        and entry[1] != "already at its destination"]
-        if plan.items or plan.skipped:
-            plans.append((root, plan))
+        orphaned = [candidate for candidate in group
+                    if pick is filed and candidate.rule_name not in current]
+        kept = [candidate for candidate in group
+                if candidate not in orphaned]
+        for chosen, deciding in ((kept, promoting), (orphaned, everything)):
+            if not chosen:
+                continue
+            items = [bundles.Item(candidate.path) for candidate in chosen]
+            # No ledger here on purpose: a promotion is a file that is
+            # already in the ledger moving again, so it would be found as
+            # a duplicate of itself.
+            plan = sorter.build_plan(root, deciding, items=items)
+            # Everything that matched nothing is simply still waiting,
+            # which is the normal case and not worth reporting as a skip.
+            plan.skipped = [entry for entry in plan.skipped
+                            if not entry[1].startswith("no rule matched")
+                            and entry[1] != "already at its destination"]
+            if plan.items or plan.skipped:
+                plans.append((root, plan))
     return plans
+
+
+def _without_gathering(rule_set):
+    """Every rule, but nothing swept into the unsorted folder."""
+    settings = copy.copy(rule_set.settings)
+    settings.unsorted = "leave"
+    return rules_module.RuleSet(settings, rule_set.watch,
+                                list(rule_set.rules), rule_set.source,
+                                rule_set.source_hash)
 
 
 def summarise(plans):

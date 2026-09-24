@@ -106,13 +106,24 @@ class WhatIsReconsidered(unittest.TestCase):
         self.assertEqual(destinations,
                          [os.path.join(self.dir, "Letters", "letter.pdf")])
 
-    def test_never_back_into_a_pen(self):
-        """A file no category claims any more stays where it is."""
-        self.placed("Payroll", "payslip.pdf")
+    def moves(self):
         plans = regroup.build(self.journal, self.rule_set,
                               pick=regroup.filed)
-        self.assertEqual(
-            [item for _root, plan in plans for item in plan.items], [])
+        return [item.members[0].destination
+                for _root, plan in plans for item in plan.items]
+
+    def test_never_back_into_a_pen(self):
+        """A file its rule no longer claims, and no other category does,
+        stays where it is while that rule is still in the file."""
+        self.placed("Letters", "payslip.pdf", rule="letters")
+        self.assertEqual(self.moves(), [])
+
+    def test_a_file_whose_rule_was_deleted_is_decided_afresh(self):
+        """"Delete any line you disagree with and its folder goes with it."
+        Folders named `This` and `your` outlived the rules that made them."""
+        self.placed("This", "certificate.pdf", rule="what the page: This")
+        self.assertEqual(self.moves(), [
+            os.path.join(self.dir, "Unfiled", "certificate.pdf")])
 
     def test_a_file_already_where_it_belongs_stays(self):
         self.placed("Letters", "letter.pdf", rule="letters")
