@@ -363,18 +363,26 @@ class PollingDaemon(object):
 
         Shares the corrections interval because both answer the same kind of
         question -- has anything changed since we last looked -- and both are
-        cheap when the answer is no.
+        cheap when the answer is no. But a new rules file is an answer to
+        that question already: somebody who has just adopted a category
+        should see its files arrive in it now, not in half an hour. So is a
+        preview, which the next cycle carries out rather than the next
+        interval.
         """
         if rule_set.settings.regroup == "off":
             return
+        mark = "%s:%s" % (sorter.rules_hash(rule_set),
+                          regroup_module.reader_mark())
         last = self.journal.get_state("regroup_checked_at")
         try:
             last_value = float(last or 0)
         except (TypeError, ValueError):
             last_value = 0.0
-        if now_value - last_value < self.CORRECTION_INTERVAL:
+        if (now_value - last_value < self.CORRECTION_INTERVAL
+                and self.journal.get_state("regrouped_with") == mark):
             return
         self.journal.set_state("regroup_checked_at", repr(now_value))
+        self.journal.set_state("regrouped_with", mark)
         # What is waiting is judged on what was read when it arrived, and
         # the reader may have got better since. See `review.refresh_held`.
         # With the tools this daemon already runs, so that a page filed
@@ -400,7 +408,8 @@ class PollingDaemon(object):
                         "set regroup = apply." % (total,
                                                   "" if total == 1 else "s"))
             return
-        self._run_plans(plans, rule_set, requested_dry, "Regrouped")
+        if self._run_plans(plans, rule_set, requested_dry, "Regrouped"):
+            self.journal.set_state("regrouped_with", "")
 
     # Filed files read again per cycle. The log page, the tray and a quit
     # all wait on the same thread as a cycle, and the first pass after an

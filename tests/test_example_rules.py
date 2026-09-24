@@ -102,6 +102,18 @@ class StarterRules(unittest.TestCase):
         self.assertTrue(self.rule_set.settings.dry_run,
                         "the example must never ship with dry run off")
 
+    def test_it_passes_its_own_check(self):
+        """A folder named only by a file's type is a waiting room.
+
+        Left unmarked, the documents in `Documents/PDF` counted as claimed
+        by a real category: nothing learnt from them was ever suggested,
+        and nothing adopted could move them out.
+        """
+        heard = io.StringIO()
+        with contextlib.redirect_stdout(heard):
+            autosort._report_unpromotable(self.rule_set)
+        self.assertEqual(heard.getvalue(), "")
+
     def test_every_rule_has_a_destination_or_says_leave(self):
         for rule in self.rule_set.rules:
             if rule.mode == "leave":

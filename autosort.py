@@ -327,8 +327,9 @@ def _report_dead_rules(rule_set, state=None):
         print()
         print("  Those are being filed by whatever else happened to match --")
         print("  often the company that sent them rather than what they are.")
-        print("  `auto-sort propose` writes an updated rules file; nothing")
-        print("  here changes yours.")
+        print("  `auto-sort adopt` shows the rules it would add to yours,")
+        print("  and `--apply` adds them without touching another line. The")
+        print("  files already filed move into them by themselves.")
     if misses:
         print()
         print("  %s never matched anything, and %s for a value close to"

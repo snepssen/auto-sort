@@ -229,6 +229,83 @@ class RefilingByItself(unittest.TestCase):
         self.assertTrue(os.path.exists(self.filed))
 
 
+HOLDING = """
+[settings]
+dry_run = no
+
+[watch]
+folders = {root}
+
+[rule: waiting]
+when = name is set
+into = {out}/Unfiled
+holding = yes
+"""
+
+ADOPTED = """
+[settings]
+dry_run = no
+
+[watch]
+folders = {root}
+
+[rule: letters]
+when = name ~ *letter*
+into = {out}/Letters
+
+[rule: waiting]
+when = name is set
+into = {out}/Unfiled
+holding = yes
+"""
+
+
+class PromotedWhenARuleArrives(unittest.TestCase):
+    """Adopting a category moves what was waiting for it now, not later."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-promote-")
+        self.root = os.path.join(self.dir, "in")
+        self.out = os.path.join(self.dir, "out")
+        self.rules = os.path.join(self.dir, "rules.ini")
+        self.state = os.path.join(self.dir, "state.db")
+        os.makedirs(self.root)
+        where = os.path.join(self.out, "Unfiled")
+        os.makedirs(where)
+        self.waiting = os.path.join(where, "offer letter.txt")
+        with open(self.waiting, "w") as handle:
+            handle.write("Dear applicant")
+        with ledger.Ledger(self.state) as journal:
+            run = journal.start_run("sort", source_root=self.root,
+                                    dry_run=False)
+            journal.add_move(run, 1, 1, "move", "waiting",
+                             os.path.join(self.root, "offer letter.txt"),
+                             self.waiting, 1, "", status="done",
+                             facts={"kind": "document"}, holding=True)
+            journal.finish_run(run, "completed")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def write(self, text):
+        with open(self.rules, "w") as handle:
+            handle.write(text.format(root=self.root, out=self.out))
+
+    def test_within_a_cycle_or_two_of_the_rule(self):
+        self.write(HOLDING)
+        messages = []
+        with daemon.PollingDaemon(self.rules, self.state, port=0,
+                                  output=messages.append) as service:
+            service.cycle(now_value=1000)
+            self.write(ADOPTED)
+            # Seconds later, far inside the half-hour between checks.
+            service.cycle(now_value=1005)
+            service.cycle(now_value=1010)
+        self.assertFalse(os.path.exists(self.waiting))
+        self.assertTrue(os.path.exists(
+            os.path.join(self.out, "Letters", "offer letter.txt")), messages)
+
+
 class TheReaderMark(unittest.TestCase):
 
     def test_is_stable_within_a_run(self):
