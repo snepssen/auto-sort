@@ -180,7 +180,7 @@ def promotable(rule_set):
 
 
 def build(journal, rule_set, source_root=None, limit=20000, pick=None,
-          only=None):
+          only=None, reader=None):
     """[(root, plan)] describing every file that can be promoted.
 
     Grouped by the folder each file originally came from, so that a rule with
@@ -193,7 +193,10 @@ def build(journal, rule_set, source_root=None, limit=20000, pick=None,
     unless the rule that placed it has been deleted.
 
     `only` is a part of what `pick` would choose, already chosen: the
-    background sorter goes through filed files a few at a time.
+    background sorter goes through filed files a few at a time. `reader`
+    (a `jobs.Reader`) reads them in a process that can be stopped, as a new
+    arrival is read -- in the background sorter a file that hangs the
+    reader must cost that file, not the program.
     """
     pick = pick or candidates
     grouped = collections.defaultdict(list)
@@ -226,7 +229,8 @@ def build(journal, rule_set, source_root=None, limit=20000, pick=None,
             # No ledger here on purpose: a promotion is a file that is
             # already in the ledger moving again, so it would be found as
             # a duplicate of itself.
-            plan = sorter.build_plan(root, deciding, items=items)
+            plan = sorter.build_plan(root, deciding, items=items,
+                                     reader=reader)
             # Everything that matched nothing is simply still waiting,
             # which is the normal case and not worth reporting as a skip.
             plan.skipped = [entry for entry in plan.skipped

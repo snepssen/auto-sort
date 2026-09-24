@@ -15,6 +15,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -195,6 +196,37 @@ class RefilingByItself(unittest.TestCase):
                                                         "Letters"))),
                          sorted(["offer letter.txt"]
                                 + ["letter %d.txt" % n for n in range(2, 8)]))
+
+    def test_read_by_the_worker_that_can_be_stopped(self):
+        """A filed file is somebody else's bytes, like any new arrival."""
+        self.write(AFTER)
+        messages = []
+        read = []
+        with self.service(messages) as service:
+            original = service.reader.read
+
+            def recording(item, *args, **kwargs):
+                read.append(os.path.basename(item.primary))
+                return original(item, *args, **kwargs)
+            service.reader.read = recording
+            with unittest.mock.patch("identify.identify",
+                                     side_effect=AssertionError(
+                                         "read in the daemon's process")):
+                service.reader.enabled = True
+                for moment in range(100, 103):
+                    service.cycle(now_value=moment)
+        self.assertIn("offer letter.txt", read)
+        self.assertTrue(os.path.exists(self.letter()))
+
+    def test_a_file_the_reader_gives_up_on_stays_put(self):
+        self.write(AFTER)
+        messages = []
+        with self.service(messages) as service:
+            service.reader.read = lambda item, *args, **kwargs: (
+                None, "the reader stopped answering")
+            for moment in range(100, 103):
+                service.cycle(now_value=moment)
+        self.assertTrue(os.path.exists(self.filed))
 
 
 class TheReaderMark(unittest.TestCase):

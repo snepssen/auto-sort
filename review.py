@@ -332,7 +332,8 @@ READ_FACTS = frozenset((
 ))
 
 
-def refresh_held(journal, limit=5000, tier=None, helpers=None, rows=None):
+def refresh_held(journal, limit=5000, tier=None, helpers=None, rows=None,
+                 reader=None):
     """Read the files in holding folders again, with the reader as it is now.
 
     Facts are recorded when a file is filed and never looked at again, which
@@ -354,7 +355,13 @@ def refresh_held(journal, limit=5000, tier=None, helpers=None, rows=None):
     before tesseract was installed -- or before OCR existed at all -- was
     re-read with the text layer it does not have, and waited for ever. What
     a program says is kept against the file, so this is paid for once.
+
+    `reader` (a `jobs.Reader`) does the reading in its supervised worker.
+    The background sorter passes it: these are the same bytes somebody else
+    wrote as any new arrival's, and the reason the worker exists is that
+    one of them once hung the whole program.
     """
+    import bundles
     import identify
     changed = 0
     tier = identify.TIER_HEADER if tier is None else tier
@@ -362,10 +369,15 @@ def refresh_held(journal, limit=5000, tier=None, helpers=None, rows=None):
         path = row["destination"]
         if not path or not os.path.exists(path):
             continue
-        try:
-            fresh = identify.identify(path, tier=tier)
-        except (OSError, ValueError):
-            continue
+        if reader is not None:
+            fresh, error = reader.read(bundles.Item(path), tier=tier)
+            if error or fresh is None:
+                continue
+        else:
+            try:
+                fresh = identify.identify(path, tier=tier)
+            except (OSError, ValueError):
+                continue
         if helpers is not None:
             try:
                 helpers.enrich(path, fresh)

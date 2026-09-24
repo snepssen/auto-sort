@@ -381,11 +381,13 @@ class PollingDaemon(object):
         # before OCR was possible is read now rather than never.
         helpers = self._helpers(rule_set)
         try:
-            review.refresh_held(self.journal, helpers=helpers)
+            review.refresh_held(self.journal, helpers=helpers,
+                                reader=self.reader)
         except Exception as error:           # noqa: BLE001
             self.output("Could not re-read waiting files: %s" % error)
         try:
-            plans = regroup_module.build(self.journal, rule_set)
+            plans = regroup_module.build(self.journal, rule_set,
+                                         reader=self.reader)
         except (OSError, ValueError) as error:
             self.output("Could not check for regrouping: %s" % error)
             return
@@ -454,10 +456,11 @@ class PollingDaemon(object):
         lowest = min(candidate.row["id"] for candidate in batch)
         try:
             review.refresh_held(self.journal, helpers=self._helpers(rule_set),
-                                rows=[candidate.row for candidate in batch])
+                                rows=[candidate.row for candidate in batch],
+                                reader=self.reader)
             plans = regroup_module.build(self.journal, rule_set,
                                          pick=regroup_module.filed,
-                                         only=batch)
+                                         only=batch, reader=self.reader)
         except Exception as error:           # noqa: BLE001
             # Past this batch rather than stuck on it: the next cycle
             # would only fail the same way.
