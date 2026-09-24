@@ -441,6 +441,18 @@ def execute(plan, rule_set, ledger, dry_run=None):
         if outcome:
             messages.append("cleared away %s (%s)"
                             % (os.path.relpath(folder, plan.root), outcome))
+    # A regroup's files leave holding folders outside the watched one, and
+    # those were left standing empty. Only the ones this program made.
+    elsewhere = [source for source in moved_out
+                 if not paths.inside(plan.root, source)]
+    made = getattr(ledger, "made_directory", None)
+    if elsewhere and made is not None:
+        for folder in paths.emptied_of_our_own(elsewhere, made):
+            outcome = paths.clear_away(folder, _to_the_bin)
+            if outcome:
+                messages.append("cleared away %s (%s)" % (
+                    folder.replace(os.path.expanduser("~"), "~", 1),
+                    outcome))
 
     status = "partial" if failed else "completed"
     summary = "%d items completed, %d failed, %d skipped" % (

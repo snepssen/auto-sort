@@ -295,6 +295,34 @@ def emptied(sources, stop_at):
                              for other in tops))
 
 
+def emptied_of_our_own(sources, made):
+    """Hollow folders this program made, that moving `sources` emptied.
+
+    For files leaving somewhere other than the watched folder -- a regroup
+    takes them out of `Unfiled/2023-09`, which auto-sort made to hold them
+    and which is nobody else's. There is no watched folder to stop at out
+    there, so the limit is ownership instead: `made(path)` says whether a
+    run created the folder, and the climb stops at the first one it did
+    not. A folder somebody made themselves is never touched, however empty.
+    """
+    tops = set()
+    for source in sources:
+        current = os.path.dirname(os.path.abspath(source))
+        highest = None
+        while (os.path.isdir(current) and made(current)
+               and hollow(current)):
+            highest = current
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+        if highest:
+            tops.add(highest)
+    return sorted(top for top in tops
+                  if not any(top != other and inside(other, top)
+                             for other in tops))
+
+
 def clear_away(directory, bin_send=None):
     """Remove one hollow folder, without deleting anything in it.
 

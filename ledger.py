@@ -312,6 +312,13 @@ class Ledger(object):
             "AND removed_at IS NULL ORDER BY length(path) DESC",
             (run_id,)).fetchall()]
 
+    def made_directory(self, path):
+        """Did a run of this program create this folder, and is it still ours?"""
+        row = self.connection.execute(
+            "SELECT 1 FROM directories WHERE path = ? AND removed_at IS NULL "
+            "LIMIT 1", (os.path.abspath(path),)).fetchone()
+        return row is not None
+
     def mark_directories_removed(self, run_id, directories):
         if not directories:
             return

@@ -97,6 +97,51 @@ class FindingTheWrapping(unittest.TestCase):
             shutil.rmtree(elsewhere, ignore_errors=True)
 
 
+class WrappingItMadeItself(unittest.TestCase):
+    """A regroup empties holding folders outside the watched one. Those
+    were auto-sort's own, and were left standing empty all the same."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="autosort-wrap-own-")
+        self.unfiled = os.path.join(self.dir, "Documents", "Unfiled")
+        self.month = os.path.join(self.unfiled, "2023-09")
+        os.makedirs(self.month)
+        self.journal = ledger.Ledger(os.path.join(self.dir, "state.db"))
+        run = self.journal.start_run("sort", source_root=self.dir,
+                                     dry_run=False)
+        self.journal.record_directories(run, [self.month])
+
+    def tearDown(self):
+        self.journal.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_a_folder_it_made_and_emptied_is_found(self):
+        found = paths.emptied_of_our_own(
+            [os.path.join(self.month, "contract.pdf")],
+            self.journal.made_directory)
+        self.assertEqual(found, [self.month])
+
+    def test_it_stops_at_the_first_folder_it_did_not_make(self):
+        """`Unfiled` was there before; only the month under it was made."""
+        found = paths.emptied_of_our_own(
+            [os.path.join(self.month, "contract.pdf")],
+            self.journal.made_directory)
+        self.assertNotIn(self.unfiled, found)
+
+    def test_a_folder_somebody_made_is_never_touched(self):
+        theirs = os.path.join(self.dir, "Documents", "Mine")
+        os.makedirs(theirs)
+        self.assertEqual(paths.emptied_of_our_own(
+            [os.path.join(theirs, "a.pdf")], self.journal.made_directory), [])
+
+    def test_one_that_still_holds_something_stays(self):
+        with open(os.path.join(self.month, "left.pdf"), "w") as handle:
+            handle.write("x")
+        self.assertEqual(paths.emptied_of_our_own(
+            [os.path.join(self.month, "contract.pdf")],
+            self.journal.made_directory), [])
+
+
 class ClearingItAway(unittest.TestCase):
 
     def setUp(self):
