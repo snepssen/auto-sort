@@ -456,9 +456,31 @@ def _bare_words(heading):
     for chunk in str(heading or "").split():
         if _AN_ADDRESS.search(chunk):
             continue
-        for word in _WORD.findall(chunk):
-            standing.add(_fold(word))
+        for part in _PART.split(chunk):
+            if _generated(part):
+                continue
+            for word in _WORD.findall(part):
+                standing.add(_fold(word))
     return standing
+
+
+# The pieces of a file name, which uses these where a heading uses spaces.
+_PART = re.compile(r"[_.\-]+")
+_SWITCH = re.compile(r"(?<=\d)(?=[^\W\d_])|(?<=[^\W\d_])(?=\d)", re.UNICODE)
+# Letters and digits changing places this often is a machine's identifier.
+_GENERATED_SWITCHES = 3
+
+
+def _generated(part):
+    """Is this a token some system generated, rather than a word with a
+    number on it?
+
+    `Payslip2019` and `P45` change between letters and digits once;
+    `4wT3kE89lew` does it five times. The letters inside an identifier
+    like that are not words, and on a real machine three portal downloads
+    named with one were proposed a folder called `lew`.
+    """
+    return len(_SWITCH.findall(part)) >= _GENERATED_SWITCHES
 
 
 def _near_the_front(positions):

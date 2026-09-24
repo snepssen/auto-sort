@@ -393,3 +393,23 @@ class TheRuleForIt(unittest.TestCase):
                 "Details of employee leaving work"] * 3)
         self.assertIn("when = heading contains Details", lines)
         self.assertIn("into = /Docs/Details of employee leaving work", lines)
+
+
+class LettersInsideAnIdentifier(unittest.TestCase):
+    """Three portal downloads named `4wT3kE89lew==_MDT-...` proposed a
+    folder called `lew`."""
+
+    def stems(self):
+        return (["4wT3kE89lew==_MDT-2024010%d_%d" % (n, n * 7)
+                 for n in range(3)]
+                + ["Rechnung_Stadtwerke_%d" % n for n in range(40)]
+                + ["Mietvertrag_%d" % n for n in range(30)]
+                + ["Kontoauszug_%d" % n for n in range(30)])
+
+    def test_they_are_not_a_category(self):
+        found = [word for word, _count in shapes.learn_terms(self.stems())]
+        self.assertNotIn("lew", found)
+        self.assertIn("Mietvertrag", found)
+
+    def test_a_word_with_a_number_on_it_is_still_a_word(self):
+        self.assertIn("payslip", shapes._bare_words("Payslip2019_March"))
