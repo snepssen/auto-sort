@@ -319,7 +319,7 @@ def _best_spelling(counter):
 
 def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
                 max_share=MAX_CATEGORY_RATIO, cap=40, owner=(),
-                owner_share=None, person=()):
+                owner_share=None, person=(), titled=False):
     """Words that enough documents lead with to be a category they chose.
 
     This is deliberately not `learn`. That one groups files by the shape of
@@ -344,6 +344,8 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
     `Muenchen` is the commoner word and `Rechnung` is the one at the front,
     and the folders anybody wants are the second kind. Nothing here knows
     which is which -- only where they sat.
+
+    `titled` is for headings: see `_set_as_a_title`.
     """
     total = len(headings)
     if total < min_occurrences:
@@ -403,7 +405,8 @@ def learn_terms(headings, min_occurrences=MIN_OCCURRENCES,
              and min_occurrences <= count
              <= (own_ceiling if key in owner else ceiling)
              and _is_a_word(_best_spelling(spellings[key]))
-             and _near_the_front(positions[key])]
+             and _near_the_front(positions[key])
+             and (not titled or _set_as_a_title(spellings[key]))]
     if len(terms) < MIN_CATEGORY_VALUES:
         # One word repeating is a letterhead; two is not yet a shape. Three
         # distinct answers is the smallest thing that sorts anything.
@@ -481,6 +484,29 @@ def _generated(part):
     named with one were proposed a folder called `lew`.
     """
     return len(_SWITCH.findall(part)) >= _GENERATED_SWITCHES
+
+
+def _set_as_a_title(spellings):
+    """Was this word mostly written the way a title is?
+
+    A heading now runs on from the title into the top of the page, and
+    prose runs with it: `your` was offered as a category from "YOUR
+    ACCOMMODATION AGREEMENT", "Be your glorious self" and "It is your
+    choice" -- three documents with nothing in common but a pronoun.
+    Titles are set with capitals and sentences are not, in every script
+    that has capitals at all; so a word from headings has to carry one in
+    most of the places it turns up. `ePayslip` does, and so does every
+    German noun. A script with no case passes, having nothing to say.
+    """
+    total = sum(spellings.values())
+    if not total:
+        return False
+    sample = next(iter(spellings))
+    if sample.lower() == sample.upper():
+        return True
+    capitalised = sum(count for spelling, count in spellings.items()
+                      if any(char.isupper() for char in spelling))
+    return capitalised * 2 > total
 
 
 def _near_the_front(positions):

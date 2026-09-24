@@ -286,7 +286,7 @@ def survey(root, tier=identify.TIER_HEADER, depth=3, limit=None,
     # the name of whoever this computer belongs to.
     mine, person = owner.account(), owner.names()
     found.heading_terms = shapes.learn_terms(found.headings, owner=mine,
-                                             person=person)
+                                             person=person, titled=True)
     # Filenames are held to a stricter rule than headings, for two reasons
     # that are both about who wrote them. A heading is written by whoever
     # sent the document, so the owner's surname there might be the sender's

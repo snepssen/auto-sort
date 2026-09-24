@@ -157,6 +157,37 @@ class WhatTheRecordShows(unittest.TestCase):
         self.assertNotIn("Stadtwerke", [use.name for use in dead])
 
 
+class WhereARuleClaimsAHeading(unittest.TestCase):
+    """Found from what the rule asks for, not from its name. A rule called
+    `payslips` was never found in a heading, so it seemed to claim nothing
+    and `for` and `number` were offered as categories."""
+
+    def rule(self, text):
+        path = os.path.join(tempfile.mkdtemp(prefix="autosort-claim-"),
+                            "r.ini")
+        with open(path, "w") as handle:
+            handle.write("[watch]\nfolders = ~/Downloads\n\n" + text)
+        try:
+            return rules.load(path).rules[0]
+        finally:
+            shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+    def test_a_hand_written_rule_is_found_by_its_words(self):
+        rule = self.rule("[rule: payslips]\nwhen = heading contains Loonbrief"
+                         " or heading contains Payslip\ninto = ~/P\n")
+        self.assertEqual(review._claimed_at(
+            "Payslip for Week Ending", rule), 0)
+
+    def test_a_word_it_asks_for_inside_a_longer_one(self):
+        rule = self.rule("[rule: payslips]\nwhen = heading contains Payslip"
+                         "\ninto = ~/P\n")
+        self.assertEqual(review._claimed_at(
+            "Your ePayslip number", rule), 1)
+
+    def test_nothing_claims_it_means_the_end(self):
+        self.assertEqual(review._claimed_at("one two three", None), 4)
+
+
 class RulesThatJustMiss(unittest.TestCase):
     """A rule asking about a fact that is there, for a value that is not.
 

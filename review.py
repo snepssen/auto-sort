@@ -440,7 +440,7 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
     candidates = [word for word, _count
                   in shapes.learn_terms(
                       headings, owner=owner.account(),
-                      person=owner.names())
+                      person=owner.names(), titled=fact == "heading")
                   if not _named_by_a_rule(word, rule_set, fact)]
     if not candidates:
         return [], len(headings)
@@ -470,9 +470,9 @@ def emerging(journal, rule_set, fact="heading", limit=20000):
             except Exception:                # noqa: BLE001
                 continue
             if matched:
-                winner = rule.name.split(": ")[-1]
+                winner = rule
                 break
-        claimed_at[heading] = _position(heading, winner)
+        claimed_at[heading] = _claimed_at(heading, winner, fact)
 
     earned = collections.Counter()
     for heading in headings:
@@ -515,6 +515,42 @@ def outranked(journal, rule_set, words, fact="heading", limit=20000):
                 beaten.add(rule.name)
                 break
     return beaten
+
+
+def _claimed_at(heading, rule, fact="heading"):
+    """Where in a heading the rule that claims it found what it wanted.
+
+    From the rule's own `contains` tests, not its name. Only a generated
+    rule is named after its word; one somebody wrote -- `payslips`, asking
+    for six words, or `contracts: Konvert` -- was looked for by name, never
+    found, and so counted as claiming nothing: every word on the page,
+    `for` and `number` included, looked like a category nobody had named.
+    A rule that asks nothing of the heading falls back to its name.
+    """
+    if rule is None:
+        return _position(heading, None)
+    places = []
+    for comparison in rule.condition.comparisons():
+        if getattr(comparison, "fact", None) != fact or \
+                getattr(comparison, "operator", None) != "contains":
+            continue
+        place = _position_of_text(heading, str(comparison.value))
+        if place is not None:
+            places.append(place)
+    if places:
+        return min(places)
+    return _position(heading, rule.name.split(": ")[-1])
+
+
+def _position_of_text(heading, text):
+    """The first heading word that `contains` would have matched on."""
+    wanted = "".join(shapes._WORD.findall(text.lower()))
+    if not wanted:
+        return None
+    for index, word in enumerate(shapes._WORD.findall(heading or "")):
+        if wanted in word.lower():
+            return index
+    return None
 
 
 def _position(heading, word):

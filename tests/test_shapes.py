@@ -413,3 +413,38 @@ class LettersInsideAnIdentifier(unittest.TestCase):
 
     def test_a_word_with_a_number_on_it_is_still_a_word(self):
         self.assertIn("payslip", shapes._bare_words("Payslip2019_March"))
+
+
+class SetAsATitle(unittest.TestCase):
+    """`your` was offered from three documents with nothing in common but
+    a pronoun, written mid-sentence in two of them."""
+
+    def headings(self, extra):
+        return (extra + ["Rechnung Stadtwerke %d" % n for n in range(40)]
+                + ["Mietvertrag Wohnung %d" % n for n in range(30)]
+                + ["Kontoauszug Sparkasse %d" % n for n in range(30)])
+
+    def learnt(self, extra):
+        return [word for word, _count in shapes.learn_terms(
+            self.headings(extra), titled=True)]
+
+    def test_a_word_written_as_prose_is_not_a_category(self):
+        found = self.learnt(["YOUR ACCOMMODATION AGREEMENT",
+                             "Be your glorious self", "It is your choice"])
+        self.assertNotIn("your", [word.lower() for word in found])
+        self.assertIn("Rechnung", found)
+
+    def test_a_capital_inside_the_word_counts(self):
+        self.assertIn("ePayslip", self.learnt(
+            ["ePayslip Payroll number %d" % n for n in range(5)]))
+
+    def test_a_script_without_capitals_is_not_held_to_them(self):
+        self.assertTrue(shapes._set_as_a_title({"請求書": 4}))
+
+    def test_file_names_are_not_asked(self):
+        """Filenames are often all lower case; only headings are held to it."""
+        found = [word for word, _count in shapes.learn_terms(
+            ["invoice_%d" % n for n in range(5)]
+            + ["receipt_%d" % n for n in range(5)]
+            + ["statement_%d" % n for n in range(5)])]
+        self.assertIn("invoice", found)
