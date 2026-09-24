@@ -382,7 +382,7 @@ class Helpers(object):
         """
         if self.journal is None:
             return None
-        mark = _fingerprint(path)
+        mark = _fingerprint(path) + _method(name)
         if not mark:
             return None
         try:
@@ -399,7 +399,7 @@ class Helpers(object):
     def _remember(self, name, path, record, before):
         if self.journal is None:
             return
-        mark = _fingerprint(path)
+        mark = _fingerprint(path) + _method(name)
         if not mark:
             return
         delta = _difference(record, before)
@@ -470,6 +470,21 @@ class Helpers(object):
         for channel in self.channels.values():
             channel.stop()
         self.channels.clear()
+
+
+def _method(name):
+    """How a tool is asked, as part of what its answer is kept against.
+
+    An answer holds only while the file *and the question* are unchanged.
+    Asking tesseract to turn a page the right way up first changed what it
+    says about an upside-down scan; kept against the file alone, the old
+    reading -- `OTOZ JUN!` -- would have been replayed for ever. A reader
+    module states its `METHOD`, and changing it means asking again.
+    """
+    for known, module in readers.enrichers():
+        if known == name:
+            return ":%s" % getattr(module, "METHOD", 1)
+    return ""
 
 
 def _fingerprint(path):

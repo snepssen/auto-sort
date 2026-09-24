@@ -318,6 +318,46 @@ class ReadingWaitingFilesAgain(unittest.TestCase):
             self.assertEqual(review.refresh_held(self.journal), 0)
         reread.assert_not_called()
 
+    def scan(self):
+        import evidence
+        fresh = evidence.Record(self.path)
+        fresh.set("kind", "document", "signature", evidence.CERTAIN)
+        fresh.set("needs_ocr", True, "pdf-text", evidence.STRONG)
+        return fresh
+
+    def test_a_page_waiting_for_ocr_is_read_when_a_program_is_there(self):
+        """Filed before tesseract was installed, it used to wait for ever:
+        re-reading its missing text layer changes nothing."""
+        from unittest import mock
+        import evidence
+
+        class Tesseract(object):
+            def enrich(self, path, record):
+                record.drop("needs_ocr")
+                record.set("heading", "Certificaat", "ocr", evidence.LIKELY)
+                record.set("read_by", "tesseract", "ocr", evidence.CERTAIN)
+                return 1
+
+        move = self.file({"kind": "document", "needs_ocr": True})
+        with mock.patch("identify.identify", return_value=self.scan()):
+            self.assertEqual(
+                review.refresh_held(self.journal, helpers=Tesseract()), 1)
+        facts = self.stored(move)
+        self.assertEqual(facts["heading"], "Certificaat")
+        self.assertNotIn("needs_ocr", facts)
+
+    def test_a_program_that_fails_is_not_the_end_of_the_refresh(self):
+        from unittest import mock
+
+        class Broken(object):
+            def enrich(self, path, record):
+                raise RuntimeError("tesseract fell over")
+
+        move = self.file({"kind": "document", "heading": "stale"})
+        with mock.patch("identify.identify", return_value=self.scan()):
+            review.refresh_held(self.journal, helpers=Broken())
+        self.assertTrue(self.stored(move)["needs_ocr"])
+
 
 if __name__ == "__main__":
     unittest.main()

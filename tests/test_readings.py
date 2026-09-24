@@ -208,6 +208,17 @@ class NotAskingTwice(unittest.TestCase):
             self.helpers.enrich(self.path, self.a_video())
         self.assertEqual(ask.call_count, 1)
 
+    def test_a_tool_asked_differently_is_asked_again(self):
+        """Turning pages the right way up changed what OCR says about an
+        upside-down scan; the old answer must not be replayed."""
+        from readers import probe
+        with mock.patch.object(jobs.Channel, "ask", autospec=True,
+                               side_effect=self.answer) as ask:
+            self.helpers.enrich(self.path, self.a_video())
+            with mock.patch.object(probe, "METHOD", 99, create=True):
+                self.helpers.enrich(self.path, self.a_video())
+        self.assertEqual(ask.call_count, 2)
+
     def test_without_a_ledger_it_simply_asks(self):
         helpers = jobs.Helpers(mode="auto")          # no journal
         with mock.patch.object(jobs.Channel, "ask", autospec=True,

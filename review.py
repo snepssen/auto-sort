@@ -328,7 +328,7 @@ READ_FACTS = frozenset((
 ))
 
 
-def refresh_held(journal, limit=5000, tier=None):
+def refresh_held(journal, limit=5000, tier=None, helpers=None):
     """Read the files in holding folders again, with the reader as it is now.
 
     Facts are recorded when a file is filed and never looked at again, which
@@ -341,6 +341,12 @@ def refresh_held(journal, limit=5000, tier=None):
 
     Only holding files, only files still where they were put, and only the
     facts that come from reading. Returns how many records changed.
+
+    `helpers` (a `jobs.Helpers`) lets the optional programs fill the gaps
+    that remain, as they would for a new arrival. Without it a page filed
+    before tesseract was installed -- or before OCR existed at all -- was
+    re-read with the text layer it does not have, and waited for ever. What
+    a program says is kept against the file, so this is paid for once.
     """
     import identify
     changed = 0
@@ -353,6 +359,11 @@ def refresh_held(journal, limit=5000, tier=None):
             fresh = identify.identify(path, tier=tier)
         except (OSError, ValueError):
             continue
+        if helpers is not None:
+            try:
+                helpers.enrich(path, fresh)
+            except Exception:                # noqa: BLE001
+                pass            # never the reason a refresh fails
         stored = _facts_of(row)
         updated = dict(stored)
         for name in READ_FACTS:

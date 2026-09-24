@@ -127,7 +127,19 @@ def read(path, record):
         text = read_file(path)
         detail = "scanned page"
 
+    if text is None:
+        # The program failed or ran out of time: that says nothing about
+        # the page, which is still waiting to be read.
+        record.note("OCR could not read the page")
+        return False
     if not text:
+        # Looked at, and nothing there: a map, a photograph, a signature.
+        # It is not waiting for a program any more -- the program is here
+        # and has answered -- and counting it as waiting told somebody to
+        # install something they already had.
+        record.drop("needs_ocr")
+        record.set("read_by", "ocr", "ocr", CERTAIN)
+        record.set("words_read", 0, "ocr", CERTAIN)
         record.note("a page was read by OCR and produced nothing")
         return False
 
@@ -144,7 +156,8 @@ def read(path, record):
 
 
 def read_image(data, suffix=".jpg", languages=""):
-    """Text from an image held in memory, or "" if it cannot be read.
+    """Text from an image held in memory: "" when the page has none, None
+    when it could not be read at all.
 
     Never raises. A file that could not be read is a file with fewer facts,
     which is the rule everywhere else in this package and is not suspended
@@ -152,7 +165,7 @@ def read_image(data, suffix=".jpg", languages=""):
     """
     program = available()
     if not program or not data:
-        return ""
+        return None
     handle = None
     try:
         handle = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
@@ -160,7 +173,7 @@ def read_image(data, suffix=".jpg", languages=""):
         handle.close()
         return _run(program, handle.name, languages)
     except (OSError, ValueError):
-        return ""
+        return None
     finally:
         if handle is not None:
             try:
@@ -173,24 +186,52 @@ def read_file(path, languages=""):
     """Text from an image already on disk -- a scanned JPEG or TIFF."""
     program = available()
     if not program:
-        return ""
+        return None
     return _run(program, path, languages)
+
+
+# How a page is asked for, as part of what a kept reading is kept against
+# (see `jobs._method`). 2: pages are turned the right way up first.
+# 3: a page with nothing on it is recorded as read, not left waiting.
+METHOD = 3
+
+# Whether this install can tell which way up a page is, per program path.
+_turns = {}
+
+
+def _can_turn_pages(program):
+    """True when orientation detection is installed.
+
+    Asked once per program and remembered: it costs a process. Without the
+    `osd` data, asking for orientation detection is an error on some
+    versions, so it is only asked for when it can be answered.
+    """
+    if program not in _turns:
+        _turns[program] = "osd" in languages_installed()
+    return _turns[program]
 
 
 def _run(program, path, languages=""):
     command = [program, path, "stdout"]
     if languages:
         command += ["-l", languages]
+    # A page fed through the scanner the wrong way up reads, without this,
+    # as `UM@d uaysuaig ... OTOZ JUN!` -- a real form's "JUNI 2020" upside
+    # down. Automatic segmentation with orientation detection turns it
+    # first; an upright page reads the same either way, for about a fifth
+    # of a second more.
+    if _can_turn_pages(program):
+        command += ["--psm", "1"]
     try:
         done = subprocess.run(
             command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        return ""
+        return None
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return None
     if done.returncode != 0:
-        return ""
+        return None
     text = (done.stdout or b"").decode("utf-8", "replace")
     return " ".join(text.split())[:MAX_CHARS]
 

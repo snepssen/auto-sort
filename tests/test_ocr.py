@@ -84,8 +84,8 @@ class WhenThereIsNothingInstalled(unittest.TestCase):
     def test_no_program_means_no_ocr_and_no_error(self):
         with mock.patch.object(platform_support, "locate", return_value=None):
             self.assertIsNone(ocr.available())
-            self.assertEqual(ocr.read_image(JPEG), "")
-            self.assertEqual(ocr.read_file("/tmp/whatever.jpg"), "")
+            self.assertIsNone(ocr.read_image(JPEG))
+            self.assertIsNone(ocr.read_file("/tmp/whatever.jpg"))
             self.assertEqual(ocr.languages_installed(), [])
 
     def test_a_scan_is_still_held(self):
@@ -113,14 +113,33 @@ class WhenThereIsNothingInstalled(unittest.TestCase):
         broken = mock.Mock(returncode=1, stdout=b"")
         with mock.patch.object(ocr, "available", return_value="/bin/false"), \
                 mock.patch("subprocess.run", return_value=broken):
-            self.assertEqual(ocr.read_image(JPEG), "")
+            self.assertIsNone(ocr.read_image(JPEG))
 
     def test_a_program_that_never_finishes_is_not_waited_for(self):
         import subprocess
         with mock.patch.object(ocr, "available", return_value="/bin/sleep"), \
                 mock.patch("subprocess.run",
                            side_effect=subprocess.TimeoutExpired("t", 1)):
-            self.assertEqual(ocr.read_image(JPEG), "")
+            self.assertIsNone(ocr.read_image(JPEG))
+
+    def ran(self, languages):
+        """The command tesseract was given, on an install with `languages`."""
+        ocr._turns.clear()
+        done = mock.Mock(returncode=0, stdout=b"words")
+        with mock.patch.object(ocr, "languages_installed",
+                               return_value=languages), \
+                mock.patch("subprocess.run", return_value=done) as run:
+            ocr._run("/usr/bin/tesseract", "/tmp/page.jpg")
+        ocr._turns.clear()
+        return run.call_args[0][0]
+
+    def test_a_page_upside_down_is_turned_first(self):
+        """A real form scanned the wrong way up read `OTOZ JUN!`."""
+        command = self.ran(["eng", "osd"])
+        self.assertEqual(command[command.index("--psm") + 1], "1")
+
+    def test_without_orientation_data_it_is_not_asked_for(self):
+        self.assertNotIn("--psm", self.ran(["eng"]))
 
     def test_it_leaves_no_temporary_file_behind(self):
         before = len(os.listdir(tempfile.gettempdir()))
@@ -169,10 +188,19 @@ class WhatItRecords(unittest.TestCase):
         self.read("Rechnung Nr 4711")
         self.assertEqual(self.record.value("read_by"), "ocr")
 
-    def test_a_page_that_reads_as_nothing_is_still_held(self):
-        self.assertFalse(self.read(""))
+    def test_a_page_ocr_could_not_read_is_still_waiting(self):
+        """A crash or a timeout says nothing about the page."""
+        self.assertFalse(self.read(None))
         self.assertFalse(self.record.has("read_by"))
         self.assertTrue(self.record.value("needs_ocr"))
+
+    def test_a_page_with_nothing_on_it_is_not_waiting_any_more(self):
+        """A map was counted as waiting for a program that was installed
+        and had already looked."""
+        self.assertFalse(self.read(""))
+        self.assertEqual(self.record.value("read_by"), "ocr")
+        self.assertEqual(self.record.value("words_read"), 0)
+        self.assertFalse(self.record.has("needs_ocr"))
 
     def test_the_heading_is_the_top_of_the_page_only(self):
         self.read("First Second Third Fourth Fifth Sixth Seventh Eighth")

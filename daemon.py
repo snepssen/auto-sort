@@ -365,8 +365,14 @@ class PollingDaemon(object):
         self.journal.set_state("regroup_checked_at", repr(now_value))
         # What is waiting is judged on what was read when it arrived, and
         # the reader may have got better since. See `review.refresh_held`.
+        # With the tools this daemon already runs, so that a page filed
+        # before OCR was possible is read now rather than never.
+        helpers = self.reader.helpers
+        helpers.mode = getattr(rule_set.settings, "tools", "auto")
+        if helpers.journal is None:
+            helpers.journal = self.journal
         try:
-            review.refresh_held(self.journal)
+            review.refresh_held(self.journal, helpers=helpers)
         except Exception as error:           # noqa: BLE001
             self.output("Could not re-read waiting files: %s" % error)
         try:

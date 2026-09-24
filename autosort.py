@@ -300,7 +300,7 @@ def _report_dead_rules(rule_set, state=None):
     """
     try:
         with ledger_module.Ledger(state) as journal:
-            review.refresh_held(journal)
+            _refresh_held(journal, rule_set)
             uses, files = review.usage(journal, rule_set)
             new_words, headings = review.emerging(journal, rule_set)
             buried, _seen = review.inside_words(journal, rule_set)
@@ -1068,7 +1068,7 @@ def regroup(root=None, rule_path=None, state=None, apply_changes=False,
         return 1
 
     with ledger_module.Ledger(state) as journal:
-        review.refresh_held(journal)
+        _refresh_held(journal, rule_set)
         plans = regroup_module.build(journal, rule_set,
                                      os.path.abspath(root) if root else None)
         total, by_rule, by_destination = regroup_module.summarise(plans)
@@ -1320,6 +1320,24 @@ def duplicate_scan(folders=None, rule_path=None, state=None,
     return 0
 
 
+def _refresh_held(journal, rule_set):
+    """`review.refresh_held`, with the optional programs this machine has.
+
+    Started for the one pass and stopped after it. A page waiting for OCR
+    is read once and remembered, so the next pass costs nothing.
+    """
+    import jobs
+    from readers import ocr as ocr_module
+    ocr_mode = getattr(rule_set.settings, "ocr", "auto")
+    ocr_module.configure(ocr_mode)
+    helpers = jobs.Helpers(mode=getattr(rule_set.settings, "tools", "auto"),
+                           ocr=ocr_mode, journal=journal)
+    try:
+        return review.refresh_held(journal, helpers=helpers)
+    finally:
+        helpers.close()
+
+
 def adopt_categories(rule_path=None, state=None, apply_changes=False,
                      as_json=False):
     """Write a rule for a category that has shown up since the rules were made.
@@ -1344,7 +1362,7 @@ def adopt_categories(rule_path=None, state=None, apply_changes=False,
 
     try:
         with ledger_module.Ledger(state) as journal:
-            review.refresh_held(journal)
+            _refresh_held(journal, rule_set)
             found, headings = review.emerging(journal, rule_set)
     except Exception as error:               # noqa: BLE001
         print("No ledger to learn from yet: %s" % error, file=sys.stderr)
