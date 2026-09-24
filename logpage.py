@@ -87,8 +87,9 @@ class LogPage(object):
                 return _json_response(400, {
                     "error": "limit must be a multiple of 50, from 50 to 500"})
             text = query.get("q", [""])[0].strip()[:200]
-            rows = self.journal.search_moves(text, limit) if text \
-                else self.journal.recent_moves(limit)
+            previews = query.get("previews", ["0"])[0] == "1"
+            rows = self.journal.search_moves(text, limit, previews) if text \
+                else self.journal.recent_moves(limit, previews)
             return _json_response(200, {"moves": [self._move(row)
                                                   for row in rows],
                                         "searched": bool(text)})

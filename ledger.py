@@ -478,13 +478,20 @@ class Ledger(object):
              WHERE m.id = ?
         """, (int(move_id),)).fetchone()
 
-    def recent_moves(self, limit=100):
+    def recent_moves(self, limit=100, previews=False):
+        """The newest moves, previews left out unless asked for.
+
+        A preview moved nothing, and every first run against a new folder or
+        new rules is one: listed on a page headed "everything auto-sort has
+        moved", each file showed twice and a limit of fifty was half spent.
+        """
         limit = max(1, min(int(limit), 500))
         return self.connection.execute("""
             SELECT m.*, r.action, r.source_root, r.started_at, r.finished_at
               FROM moves m JOIN runs r ON r.id = m.run_id
+             WHERE ? OR m.status != 'dry-run'
              ORDER BY m.id DESC LIMIT ?
-        """, (limit,)).fetchall()
+        """, (1 if previews else 0, limit)).fetchall()
 
     def queue_mirror(self, move_id, source, relative, size, digest):
         """Record that a file ought to exist on the second disk too.
@@ -775,7 +782,7 @@ class Ledger(object):
         self.set_state("extra_watch", json.dumps(
             [str(folder) for folder in folders]))
 
-    def search_moves(self, text, limit=200):
+    def search_moves(self, text, limit=200, previews=False):
         """Every move whose name, destination or rule contains `text`.
 
         Across the whole ledger rather than the last page of it. The log
@@ -795,11 +802,12 @@ class Ledger(object):
         return self.connection.execute("""
             SELECT m.*, r.action, r.source_root, r.started_at, r.finished_at
               FROM moves m JOIN runs r ON r.id = m.run_id
-             WHERE m.source LIKE ? ESCAPE '\\'
+             WHERE (m.source LIKE ? ESCAPE '\\'
                 OR m.destination LIKE ? ESCAPE '\\'
-                OR m.rule_name LIKE ? ESCAPE '\\'
+                OR m.rule_name LIKE ? ESCAPE '\\')
+               AND (? OR m.status != 'dry-run')
              ORDER BY m.id DESC LIMIT ?
-        """, (like, like, like, limit)).fetchall()
+        """, (like, like, like, 1 if previews else 0, limit)).fetchall()
 
     def undoable_runs(self, actions=("sort",)):
         """Every run that still has completed moves to put back, newest

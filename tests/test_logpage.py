@@ -116,6 +116,39 @@ class LogPageTests(unittest.TestCase):
         self.assertEqual(self.request(
             "GET", "/api/moves?token=test-token&limit=550").status, 400)
 
+    def a_preview(self):
+        run_id = self.journal.start_run("sort", self.directory, "rules", True)
+        move = self.journal.add_move(
+            run_id, 1, 1, "move", "images", self.source,
+            self.destination + ".preview", 11, "hash", status="dry-run")
+        self.journal.finish_run(run_id, "dry-run")
+        return move
+
+    def listed(self, target):
+        import json
+        response = self.request("GET", target)
+        return [row["id"] for row in json.loads(response.body)["moves"]]
+
+    def test_a_preview_is_not_listed_as_a_move(self):
+        """It moved nothing, and each first run is one: every file showed
+        twice on a page headed "everything auto-sort has moved"."""
+        preview = self.a_preview()
+        shown = self.listed("/api/moves?token=test-token&limit=50")
+        self.assertIn(self.move_id, shown)
+        self.assertNotIn(preview, shown)
+
+    def test_previews_are_there_when_asked_for(self):
+        preview = self.a_preview()
+        self.assertIn(preview, self.listed(
+            "/api/moves?token=test-token&limit=50&previews=1"))
+
+    def test_nor_found_by_a_search_unless_asked(self):
+        preview = self.a_preview()
+        self.assertNotIn(preview, self.listed(
+            "/api/moves?token=test-token&limit=50&q=source"))
+        self.assertIn(preview, self.listed(
+            "/api/moves?token=test-token&limit=50&q=source&previews=1"))
+
     def test_copy_resolves_the_file_from_its_ledger_id(self):
         folder = os.path.join(self.directory, "Copies")
         os.mkdir(folder)
