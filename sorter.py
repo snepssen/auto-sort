@@ -768,7 +768,7 @@ def _latest_mtime(path):
 
 def _unsorted_directory(template, root):
     expanded = os.path.expanduser(os.path.expandvars(template))
-    return os.path.abspath(expanded if os.path.isabs(expanded)
+    return os.path.abspath(expanded if paths.rooted(expanded)
                            else os.path.join(root, expanded))
 
 

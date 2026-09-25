@@ -454,6 +454,18 @@ def sanitise(component, strict=True, limit=120):
     return text or "_"
 
 
+def rooted(path):
+    """Absolute, or -- on Windows -- starting at the root of the drive.
+
+    `/Sorted` in a rules file means the root of the current drive on
+    Windows. Python 3.8 called that absolute and 3.13 does not, so a check
+    written with `os.path.isabs` alone refused on one version a rule the
+    other filed by. Everything that asks whether a destination is relative
+    to the watched folder asks this instead.
+    """
+    return os.path.isabs(path) or str(path).startswith(("/", "\\"))
+
+
 def inside(root, candidate):
     """True when `candidate` really is under `root`, symlinks resolved.
 

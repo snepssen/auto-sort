@@ -670,14 +670,14 @@ class Rule(object):
         root = source_root or facts.get("source_root") or facts.get("dir")
         try:
             directory = render_template(self.into, facts)
-            if not os.path.isabs(directory):
+            if not paths.rooted(directory):
                 if not root:
                     return Evaluation(self, False,
                                       "relative destination has no source root",
                                       trace)
                 directory = os.path.join(root, directory)
             directory = os.path.abspath(directory)
-            if root and not os.path.isabs(_expand_path(self.into)) \
+            if root and not paths.rooted(_expand_path(self.into)) \
                     and not paths.inside(root, directory):
                 return Evaluation(self, False,
                                   "destination escapes the source root", trace)

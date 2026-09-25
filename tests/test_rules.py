@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -294,6 +295,16 @@ class DestinationNavigation(unittest.TestCase):
         rendered = rules.render_template("out/{album}", {"album": ".."})
         self.assertEqual(rendered, os.path.join("out", "_"))
         self.assertNotIn("..", rendered)
+
+    def test_a_rooted_destination_is_absolute_on_every_python(self):
+        """Python 3.13 on Windows says `/out` is not absolute; 3.8 says it
+        is. A rule filing to `/out` must mean the same on both."""
+        import paths
+        with mock.patch("paths.os.path.isabs", return_value=False):
+            self.assertTrue(paths.rooted("/out/{artist}"))
+            self.assertTrue(paths.rooted("\\out"))
+            self.assertFalse(paths.rooted("out/{artist}"))
+            self.assertFalse(paths.rooted("./out"))
 
     def test_absolute_destinations_keep_their_root(self):
         rendered = rules.render_template("/srv/media/{kind}",
