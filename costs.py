@@ -16,7 +16,9 @@ Two things this deliberately is not.
 It is not a profiler. One wall-clock reading and one memory high-water mark
 per file, both of which the operating system is already keeping — nothing
 is sampled, nothing is instrumented, and a file that behaves costs a
-`time.monotonic()` call.
+`time.perf_counter()` call -- as steady as `monotonic`, and fine-grained
+everywhere, where `monotonic` on Windows under Python 3.8 moves in steps of
+about 16 ms and read a 20 ms file as 16.
 
 It is not a limit. Nothing here refuses, kills or skips anything. A file
 that needs 340 MB to read gets 340 MB and a line in a table saying so. The
@@ -130,11 +132,11 @@ class Watch(object):
 
     def __enter__(self):
         self._before = peak_bytes()
-        self._started = time.monotonic()
+        self._started = time.perf_counter()
         return self
 
     def __exit__(self, _kind, _value, _traceback):
-        self.seconds = time.monotonic() - self._started
+        self.seconds = time.perf_counter() - self._started
         self.peak = peak_bytes()
         if self.peak is not None and self._before is not None:
             self.growth = max(0, self.peak - self._before)
