@@ -23,6 +23,7 @@ from . import pdftext
 LETTERHEAD = 500                # characters of the top of the page to read
 HEADING_WORDS = 6               # of those, how many make up the heading
 HEADING_CHARS = 160             # a title and the top of the page after it
+NUMBER_GAP = "\u00b7"            # where a heading stepped over a number
 
 _PDF_INFO = re.compile(
     rb"/(Producer|Creator|Title|Author|Subject|Keywords|CreationDate|"
@@ -426,9 +427,25 @@ def heading_of(text):
     that is where a document says what it is; within it, the numbers are
     stepped over rather than taken.
     """
-    words = [token for token in text[:LETTERHEAD].split()
-             if _HAS_A_WORD.search(token)]
-    return " ".join(words[:HEADING_WORDS])
+    kept, words, skipped = [], 0, False
+    for token in text[:LETTERHEAD].split():
+        if not _HAS_A_WORD.search(token):
+            skipped = True
+            continue
+        # Where a number was stepped over, the words either side were not
+        # next to each other, and a folder must not be named as though
+        # they were: four bills headed "Rechnung Nr 2024-01 Stadtwerke"
+        # were filed under `Rechnung Nr Stadtwerke`. The mark keeps them
+        # apart without keeping the number, which may be somebody's
+        # account or national insurance number.
+        if skipped and kept:
+            kept.append(NUMBER_GAP)
+        skipped = False
+        kept.append(token)
+        words += 1
+        if words >= HEADING_WORDS:
+            break
+    return " ".join(kept)
 
 
 def _stamp(value):

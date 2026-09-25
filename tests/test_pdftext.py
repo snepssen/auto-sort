@@ -308,8 +308,21 @@ class WhatTheTopOfAPageSays(unittest.TestCase):
 
     def test_a_page_that_starts_with_words_is_unchanged(self):
         from readers import document
+        # The invoice number is stepped over, and marked: "Nr" and
+        # "Stadtwerke" were never next to each other on the page.
         self.assertEqual(document.heading_of(INVOICE),
-                         "RECHNUNG Nr Stadtwerke Muenchen GmbH Betrag:")
+                         "RECHNUNG Nr \u00b7 Stadtwerke Muenchen GmbH Betrag:")
+
+    def test_a_folder_is_never_named_across_a_number(self):
+        """Four bills from one sender were filed under `Rechnung Nr
+        Stadtwerke`: the phrase they shared ran across their numbers."""
+        import shapes
+        from readers import document
+        headings = [document.heading_of(
+            "Rechnung Nr. 2024-%02d Stadtwerke Musterstadt GmbH" % number)
+            for number in range(1, 5)]
+        self.assertEqual(shapes.shared_phrase("Rechnung", headings),
+                         "Rechnung")
 
     def test_a_band_of_numbers_is_stepped_over(self):
         """One real series opened every page with dates and account

@@ -725,7 +725,10 @@ PHRASE_SHARE = 0.9
 # of them: "Invoice 12 from Acme" and "Invoice 13 from Acme" share
 # `Invoice`, not `Invoice from`. A number every document prints -- a form's
 # own number -- is shared like any word, and can be part of the name.
-_PHRASE_TOKEN = re.compile(r"[^\W_][\w’'-]*", re.UNICODE)
+_PHRASE_TOKEN = re.compile(r"[^\W_][\w’'-]*|\u00b7", re.UNICODE)
+# The mark a heading leaves where it stepped over a number (see
+# `readers.document.heading_of`): no folder name reaches across one.
+_PHRASE_BREAK = "\u00b7"
 
 
 def shared_phrase(word, values, exclude=()):
@@ -745,7 +748,7 @@ def shared_phrase(word, values, exclude=()):
     in every alphabet is a joining word more often than a name.
     """
     target = _fold(word)
-    banned = set(_fold(name) for name in exclude)
+    banned = set(_fold(name) for name in exclude) | {_PHRASE_BREAK}
     matching = []
     for value in values:
         tokens = _PHRASE_TOKEN.findall(str(value or ""))

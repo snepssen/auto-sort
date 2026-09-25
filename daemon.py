@@ -631,7 +631,8 @@ class PollingDaemon(object):
                         % (label if not result.dry_run
                            else "Previewed", result.completed
                            or len(plan.items),
-                           "" if len(plan.items) == 1 else "s", plan_root))
+                           "" if len(plan.items) == 1 else "s",
+                           userdirs.short(plan_root)))
             for message in result.messages:
                 self.output("  %s" % message)
             if forced:

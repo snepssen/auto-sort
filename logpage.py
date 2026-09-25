@@ -227,6 +227,10 @@ class LogPage(object):
             "port": self.port,
             "queue": dict((row["status"], row["count"])
                           for row in self.journal.queue_counts()),
+            # What `~` means, for the page to show paths as people know
+            # them. Guessed from `/Users/<name>` it missed every home kept
+            # anywhere else -- `/var/home/<name>` on Fedora Silverblue.
+            "home": os.path.expanduser("~"),
             # A preview waiting to be approved, and when it will be anyway.
             "preview": preview,
             "starts_at": self._preview_ends() if preview else None,
