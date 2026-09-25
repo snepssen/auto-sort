@@ -49,9 +49,10 @@ class TrayActions(unittest.TestCase):
         os.makedirs(inbox)
         with open(self.rules_file, "w", encoding="utf-8") as handle:
             handle.write("[watch]\nfolders = %s\n" % inbox)
+        self.messages = []
         self.service = daemon.PollingDaemon(
             self.rules_file, self.state_file, port=0,
-            output=lambda _message: None)
+            output=self.messages.append)
 
     def tearDown(self):
         self.service.close()
@@ -67,6 +68,28 @@ class TrayActions(unittest.TestCase):
         self.assertTrue(self.service._sort_requested)
         self.service._tray_quit()
         self.assertTrue(self.service._quit_requested)
+
+    def test_every_tray_action_is_in_the_log(self):
+        """A click that seemed to do nothing could not be checked: the log
+        said "Restarting" and nothing else a tray click had caused, so a
+        Resume that never arrived and one that did looked the same."""
+        with mock.patch("daemon.webbrowser.open", return_value=True):
+            self.service._tray_open_log()
+        self.service._tray_toggle_pause()
+        self.service._tray_toggle_pause()
+        self.service._tray_sort_now()
+        self.service._tray_quit()
+        said = "\n".join(self.messages)
+        for line in ("Opening the log page", "Paused from the tray",
+                     "Resumed from the tray", "Sort now, from the tray",
+                     "Quit from the tray"):
+            self.assertIn(line, said)
+
+    def test_a_log_page_that_would_not_open_says_so(self):
+        with mock.patch("daemon.webbrowser.open", return_value=False):
+            self.service._tray_open_log()
+        self.assertTrue(any("could not open" in message.lower()
+                            for message in self.messages), self.messages)
 
     def test_restart_stands_down_and_says_why(self):
         """Quitting and restarting both end the loop; only one comes back."""

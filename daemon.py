@@ -942,13 +942,24 @@ class PollingDaemon(object):
                 self._quit_requested = True
         self._sort_requested = False
 
+    # Every tray action says so in the log. A click that seemed to do
+    # nothing could not be checked otherwise: a Resume that never arrived
+    # and one that did left exactly the same log behind.
+
     def _tray_open_log(self):
-        webbrowser.open(self.web.url)
+        self.output("Opening the log page, from the tray.")
+        if not webbrowser.open(self.web.url):
+            self.output("Could not open a browser for the log page; it is at "
+                        "%s" % self.web.url)
 
     def _tray_toggle_pause(self):
-        self.journal.set_paused(not self.journal.paused())
+        paused = not self.journal.paused()
+        self.journal.set_paused(paused)
+        self.output("Paused from the tray." if paused
+                    else "Resumed from the tray.")
 
     def _tray_sort_now(self):
+        self.output("Sort now, from the tray.")
         self._sort_requested = True
 
     def _tray_restart(self):
@@ -964,6 +975,7 @@ class PollingDaemon(object):
         self._quit_requested = True
 
     def _tray_quit(self):
+        self.output("Quit from the tray.")
         self._quit_requested = True
 
 
