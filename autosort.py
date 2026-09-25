@@ -38,7 +38,7 @@ import sorter
 import trash
 import userdirs
 
-VERSION = "0.4.0"
+VERSION = "0.9.0"
 
 _TIERS = {"stat": identify.TIER_STAT, "signature": identify.TIER_SIGNATURE,
           "header": identify.TIER_HEADER, "all": identify.TIER_ALL}
