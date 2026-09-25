@@ -151,18 +151,13 @@ def exclusively_available(path):
     """
     if os.name != "nt" or not os.path.isfile(path):
         return True
-    kernel = ctypes.windll.kernel32                    # pragma: no cover
-    create_file = kernel.CreateFileW                  # pragma: no cover
-    create_file.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32,
-                            ctypes.c_uint32, ctypes.c_void_p,
-                            ctypes.c_uint32, ctypes.c_uint32,
-                            ctypes.c_void_p]
-    create_file.restype = ctypes.c_void_p
-    handle = create_file(path, 0x80000000, 0, None, 3, 0, None)
+    import winapi                                     # pragma: no cover
+    kernel = winapi.load("kernel32")                  # pragma: no cover
+    handle = kernel.CreateFileW(path, 0x80000000, 0, None, 3, 0, None)
     invalid = ctypes.c_void_p(-1).value
-    if handle == invalid:                             # pragma: no cover
+    if handle is None or handle == invalid:           # pragma: no cover
         return False
-    kernel.CloseHandle(ctypes.c_void_p(handle))       # pragma: no cover
+    kernel.CloseHandle(handle)                        # pragma: no cover
     return True
 
 
@@ -261,10 +256,13 @@ def _rename_noreplace(source, destination):
         raise MoveError("destination appeared: %s" % destination)
 
     if os.name == "nt":                                    # pragma: no cover
-        if ctypes.windll.kernel32.MoveFileExW(source, destination, 0):
+        import winapi
+        # Flags 0: fails rather than replacing, and fails across volumes,
+        # which the caller handles by copying.
+        if winapi.load("kernel32").MoveFileExW(source, destination, 0):
             return
-        error = ctypes.get_last_error()
-        raise MoveError("rename failed (%d): %s" % (error, source))
+        raise MoveError("rename failed (%d): %s"
+                        % (winapi.last_error(), source))
 
     libc = None
     try:

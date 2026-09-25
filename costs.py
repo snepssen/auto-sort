@@ -90,8 +90,9 @@ def _windows_peak():
 
     counters = Counters()
     counters.cb = ctypes.sizeof(Counters)
-    handle = ctypes.windll.kernel32.GetCurrentProcess()
-    ok = ctypes.windll.psapi.GetProcessMemoryInfo(
+    import winapi
+    handle = winapi.load("kernel32").GetCurrentProcess()
+    ok = winapi.load("psapi").GetProcessMemoryInfo(
         handle, ctypes.byref(counters), counters.cb)
     return int(counters.PeakWorkingSetSize) if ok else None
 

@@ -232,7 +232,8 @@ def _windows_drive_kind(path):
         drive = os.path.splitdrive(os.path.abspath(path))[0]
         if not drive:
             return None
-        kind = ctypes.windll.kernel32.GetDriveTypeW(drive + "\\")
+        import winapi
+        kind = winapi.load("kernel32").GetDriveTypeW(drive + "\\")
     except (AttributeError, OSError, ValueError):
         return None
     return {2: "removable", 3: "fixed", 4: "network",

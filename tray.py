@@ -333,62 +333,43 @@ def _windows_tray(actions):                                  # pragma: no cover
     The callback lives on the daemon thread: `PollingDaemon` calls `pump` at
     least four times a second, so this never needs another thread or a message
     loop that could hold up the filesystem work.
+
+    Every Win32 call goes through `winapi`, which declares its signature:
+    called bare, ctypes cut 64-bit handles in half, and this tray could
+    not have appeared on any 64-bit Windows. Written from the Win32
+    documentation and tested on macOS and Linux as data only -- see
+    README's platform notes for what that does and does not promise.
     """
     import ctypes
     from ctypes import wintypes
 
-    user32 = ctypes.windll.user32
-    shell32 = ctypes.windll.shell32
-    kernel32 = ctypes.windll.kernel32
+    import winapi
 
+    user32 = winapi.load("user32")
+    shell32 = winapi.load("shell32")
+    kernel32 = winapi.load("kernel32")
+
+    WM_NULL = 0x0000
     WM_COMMAND = 0x0111
     WM_DESTROY = 0x0002
     WM_LBUTTONUP = 0x0202
     WM_RBUTTONUP = 0x0205
     WM_APP = 0x8000
     CALLBACK = WM_APP + 71
-    NIM_ADD, NIM_DELETE = 0x00000000, 0x00000002
+    NIM_ADD, NIM_MODIFY, NIM_DELETE = 0x00000000, 0x00000001, 0x00000002
     NIF_MESSAGE, NIF_ICON, NIF_TIP = 0x00000001, 0x00000002, 0x00000004
     TPM_RIGHTBUTTON = 0x0002
+    MF_SEPARATOR = 0x0800
+    PM_REMOVE = 0x0001
     ID_OPEN, ID_TOGGLE, ID_SORT, ID_QUIT, ID_RESTART = 1, 2, 3, 4, 5
     IDI_APPLICATION = 32512
     SHGFI_ICON, SHGFI_SMALLICON, SHGFI_USEFILEATTRIBUTES = 0x100, 0x1, 0x10
     FILE_ATTRIBUTE_NORMAL = 0x80
 
-    class NOTIFYICONDATAW(ctypes.Structure):
-        _fields_ = [
-            ("cbSize", wintypes.DWORD),
-            ("hWnd", wintypes.HWND),
-            ("uID", wintypes.UINT),
-            ("uFlags", wintypes.UINT),
-            ("uCallbackMessage", wintypes.UINT),
-            ("hIcon", wintypes.HANDLE),
-            ("szTip", wintypes.WCHAR * 128),
-        ]
-
     WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND,
-                                 wintypes.UINT, ctypes.c_size_t,
-                                 ctypes.c_ssize_t)
-
-    class WNDCLASSW(ctypes.Structure):
-        _fields_ = [
-            ("style", wintypes.UINT),
-            ("lpfnWndProc", WNDPROC),
-            ("cbClsExtra", ctypes.c_int),
-            ("cbWndExtra", ctypes.c_int),
-            ("hInstance", wintypes.HINSTANCE),
-            ("hIcon", wintypes.HANDLE),
-            ("hCursor", wintypes.HANDLE),
-            ("hbrBackground", wintypes.HANDLE),
-            ("lpszMenuName", wintypes.LPCWSTR),
-            ("lpszClassName", wintypes.LPCWSTR),
-        ]
-
-    class SHFILEINFOW(ctypes.Structure):
-        _fields_ = [("hIcon", wintypes.HANDLE), ("iIcon", ctypes.c_int),
-                    ("dwAttributes", wintypes.DWORD),
-                    ("szDisplayName", wintypes.WCHAR * 260),
-                    ("szTypeName", wintypes.WCHAR * 80)]
+                                 wintypes.UINT, wintypes.WPARAM,
+                                 wintypes.LPARAM)
+    NOTIFYICONDATAW, WNDCLASSW, SHFILEINFOW = _windows_structures(WNDPROC)
 
     class WindowsTray(object):
         available = True
@@ -399,27 +380,37 @@ def _windows_tray(actions):                                  # pragma: no cover
             self.class_name = "auto-sort-tray-%d" % id(self)
             self.paused = False
             self.closed = False
+            # Explorer broadcasts this when the taskbar comes back after a
+            # crash or restart, and every icon it had is gone. Not answered,
+            # the icon stays gone until auto-sort restarts.
+            self.taskbar_created = user32.RegisterWindowMessageW(
+                "TaskbarCreated")
             self.proc = WNDPROC(self._window_proc)
             window_class = WNDCLASSW()
             window_class.lpfnWndProc = self.proc
             window_class.hInstance = self.instance
             window_class.lpszClassName = self.class_name
             if not user32.RegisterClassW(ctypes.byref(window_class)):
-                raise OSError("could not register the tray window class")
+                raise OSError("could not register the tray window class "
+                              "(error %d)" % winapi.last_error())
             self.window = user32.CreateWindowExW(
                 0, self.class_name, self.class_name, 0, 0, 0, 0, 0,
                 None, None, self.instance, None)
             if not self.window:
+                error = winapi.last_error()
                 user32.UnregisterClassW(self.class_name, self.instance)
-                raise OSError("could not create the tray window")
+                raise OSError("could not create the tray window "
+                              "(error %d)" % error)
             info = SHFILEINFOW()
             shell32.SHGetFileInfoW("", FILE_ATTRIBUTE_NORMAL,
-                                    ctypes.byref(info), ctypes.sizeof(info),
-                                    SHGFI_ICON | SHGFI_SMALLICON |
-                                    SHGFI_USEFILEATTRIBUTES)
+                                   ctypes.byref(info), ctypes.sizeof(info),
+                                   SHGFI_ICON | SHGFI_SMALLICON |
+                                   SHGFI_USEFILEATTRIBUTES)
             self.icon_from_shell = bool(info.hIcon)
             self.icon = info.hIcon or user32.LoadIconW(None, IDI_APPLICATION)
             self.icon_data = NOTIFYICONDATAW()
+            # The whole structure, as Vista and later define it: a size that
+            # matches none of the versions Windows knows can be refused.
             self.icon_data.cbSize = ctypes.sizeof(self.icon_data)
             self.icon_data.hWnd = self.window
             self.icon_data.uID = 1
@@ -427,12 +418,15 @@ def _windows_tray(actions):                                  # pragma: no cover
             self.icon_data.uCallbackMessage = CALLBACK
             self.icon_data.hIcon = self.icon
             self.icon_data.szTip = "auto-sort"
-            if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self.icon_data)):
+            if not shell32.Shell_NotifyIconW(NIM_ADD,
+                                             ctypes.byref(self.icon_data)):
+                error = winapi.last_error()
                 user32.DestroyWindow(self.window)
                 user32.UnregisterClassW(self.class_name, self.instance)
-                raise OSError("could not add the notification icon")
+                raise OSError("could not add the notification icon "
+                              "(error %d)" % error)
 
-        def _window_proc(self, _window, message, wparam, lparam):
+        def _window_proc(self, window, message, wparam, lparam):
             if message == CALLBACK and lparam == WM_LBUTTONUP:
                 actions["open_log"]()
                 return 0
@@ -442,25 +436,33 @@ def _windows_tray(actions):                                  # pragma: no cover
             if message == WM_COMMAND:
                 self._run_action(wparam & 0xffff)
                 return 0
+            if self.taskbar_created and message == self.taskbar_created:
+                shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self.icon_data))
+                return 0
             if message == WM_DESTROY:
                 return 0
-            return user32.DefWindowProcW(_window, message, wparam, lparam)
+            return user32.DefWindowProcW(window, message, wparam, lparam)
 
         def _show_menu(self):
             menu = user32.CreatePopupMenu()
             try:
                 user32.AppendMenuW(menu, 0, ID_OPEN, "Open log")
                 user32.AppendMenuW(menu, 0, ID_TOGGLE,
-                                   "Resume sorting" if self.paused else "Pause sorting")
+                                   "Resume sorting" if self.paused
+                                   else "Pause sorting")
                 user32.AppendMenuW(menu, 0, ID_SORT, "Sort now")
-                user32.AppendMenuW(menu, 0x0800, 0, None)
+                user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
                 user32.AppendMenuW(menu, 0, ID_RESTART, "Restart auto-sort")
                 user32.AppendMenuW(menu, 0, ID_QUIT, "Quit auto-sort")
                 point = wintypes.POINT()
                 user32.GetCursorPos(ctypes.byref(point))
                 user32.SetForegroundWindow(self.window)
-                user32.TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y,
-                                      0, self.window, None)
+                user32.TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x,
+                                      point.y, 0, self.window, None)
+                # Documented by Microsoft for notification-area menus: without
+                # a message after it, the menu does not close when the click
+                # lands elsewhere, and the second right-click shows nothing.
+                user32.PostMessageW(self.window, WM_NULL, 0, 0)
             finally:
                 user32.DestroyMenu(menu)
 
@@ -473,11 +475,20 @@ def _windows_tray(actions):                                  # pragma: no cover
                 callback()
 
         def set_paused(self, paused):
-            self.paused = bool(paused)
+            paused = bool(paused)
+            if paused == self.paused:
+                return
+            self.paused = paused
+            self.icon_data.uFlags = NIF_TIP
+            self.icon_data.szTip = ("auto-sort (paused)" if paused
+                                    else "auto-sort")
+            shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self.icon_data))
+            self.icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
 
         def pump(self, _seconds):
             message = wintypes.MSG()
-            while user32.PeekMessageW(ctypes.byref(message), None, 0, 0, 1):
+            while user32.PeekMessageW(ctypes.byref(message), None, 0, 0,
+                                      PM_REMOVE):
                 user32.TranslateMessage(ctypes.byref(message))
                 user32.DispatchMessageW(ctypes.byref(message))
 
@@ -492,6 +503,62 @@ def _windows_tray(actions):                                  # pragma: no cover
             user32.UnregisterClassW(self.class_name, self.instance)
 
     return WindowsTray()
+
+
+def _windows_structures(window_procedure):
+    """The Win32 structures the tray fills in, laid out as documented.
+
+    Separate from `_windows_tray` so the layout can be checked on any
+    machine: only the window procedure's type needs Windows.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD),
+                    ("Data4", ctypes.c_ubyte * 8)]
+
+    class NOTIFYICONDATAW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("hWnd", wintypes.HWND),
+            ("uID", wintypes.UINT),
+            ("uFlags", wintypes.UINT),
+            ("uCallbackMessage", wintypes.UINT),
+            ("hIcon", wintypes.HICON),
+            ("szTip", wintypes.WCHAR * 128),
+            ("dwState", wintypes.DWORD),
+            ("dwStateMask", wintypes.DWORD),
+            ("szInfo", wintypes.WCHAR * 256),
+            ("uVersion", wintypes.UINT),          # a union with uTimeout
+            ("szInfoTitle", wintypes.WCHAR * 64),
+            ("dwInfoFlags", wintypes.DWORD),
+            ("guidItem", GUID),
+            ("hBalloonIcon", wintypes.HICON),
+        ]
+
+    class WNDCLASSW(ctypes.Structure):
+        _fields_ = [
+            ("style", wintypes.UINT),
+            ("lpfnWndProc", window_procedure),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE),
+            ("hIcon", wintypes.HICON),
+            ("hCursor", wintypes.HANDLE),
+            ("hbrBackground", wintypes.HANDLE),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+        ]
+
+    class SHFILEINFOW(ctypes.Structure):
+        _fields_ = [("hIcon", wintypes.HICON), ("iIcon", ctypes.c_int),
+                    ("dwAttributes", wintypes.DWORD),
+                    ("szDisplayName", wintypes.WCHAR * 260),
+                    ("szTypeName", wintypes.WCHAR * 80)]
+
+    return NOTIFYICONDATAW, WNDCLASSW, SHFILEINFOW
 
 
 # ---------------------------------------------------------------------------
