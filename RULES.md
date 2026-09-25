@@ -382,12 +382,14 @@ Trash/Recycle Bin rather than permanently deleting a file.
 
 The watcher stays useful without a desktop integration. On macOS the icon is
 built on the Objective-C runtime directly through `ctypes` — no PyObjC, no
-dependency — and on Windows it is the standard-library notification area API.
-Either way it provides **Open log**, **Pause/Resume**, **Sort now**, and
-**Quit**. Linux desktops without a StatusNotifier service continue headless; a
-menu entry named for the question people open it to ask ("Where your files
-went") takes the place of the icon, and `open-log`, `pause`, `resume`, and
-`sort-now` remain available from the command line regardless.
+dependency — on Windows it is the standard-library notification area API, and
+on Linux it is a StatusNotifierItem on the session bus, spoken with the
+standard library. Each provides **Open log**, **Pause/Resume**, **Sort now**,
+**Restart** and **Quit**, and a left click opens the log. Linux desktops with
+no tray host continue headless; a menu entry named for the question people
+open it to ask ("Where your files went") takes the place of the icon and
+starts the daemon if it is not running, and `open-log`, `pause`, `resume`,
+and `sort-now` remain available from the command line regardless.
 
 ## Starting at login
 

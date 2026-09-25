@@ -1090,7 +1090,7 @@ Double-click **Start auto-sort.command** on macOS, `start.sh` on Linux, or
 `start.bat` on Windows. With no arguments the launcher runs `auto-sort start`,
 which writes a rules file if there is not one, says what it is about to watch,
 points out that dry run is on, and then runs — leaving an icon in the menu bar
-and a log page to click through to.
+or the system tray and a log page to click through to.
 
 Nothing about that path requires knowing what Python is.
 
@@ -1111,6 +1111,18 @@ PyObjC and it was a mistake twice over: forty megabytes for one icon, and it
 **cannot be installed at all** on a Homebrew, Debian or Fedora Python, because
 those are marked externally managed under PEP 668 and refuse `pip install`.
 The icon was unreachable on exactly the machines most likely to run this.
+
+Linux is the same again. Its tray icons are objects on the session bus, and
+every Python binding for D-Bus is a package to install, so `dbuswire.py`
+speaks the protocol itself — a Unix socket, the SASL handshake, the binary
+message format — and the icon is a StatusNotifierItem with a
+`com.canonical.dbusmenu` menu, costing about 1.6 MB. KDE Plasma shows it;
+it was checked on a Steam Deck in Desktop Mode. A desktop with no tray host
+(GNOME without its AppIndicator extension) gets no icon, a line in the log
+saying so, and a sorter that carries on regardless; there the
+applications-menu entry is the way in, and it starts the daemon if it is
+not running. The same bus carries a desktop notification when that entry
+cannot do what it was clicked for.
 
 Three optional *programs* genuinely add something, and the launcher offers
 them on first run — described by what they let the tool do, never by package
@@ -1147,15 +1159,16 @@ its own specification at test time.
 3. **The background daemon: watch, settle, queue, pause** ✓
 4. **The loopback log page and ledger-ID file reveal** ✓
    Optional native status items are built on the Objective-C runtime through
-   `ctypes` on macOS and the standard-library Windows notification API on
-   Windows — no PyObjC, no dependency of any kind. Linux continues headless
-   when a StatusNotifier service is not available; a menu entry and the log
-   page are its UI there instead of a tray icon.
+   `ctypes` on macOS, the standard-library Windows notification API on
+   Windows, and a StatusNotifierItem on Linux, over D-Bus spoken with the
+   standard library — no PyObjC, no D-Bus binding, no dependency of any
+   kind. A Linux desktop with no tray host continues headless; a menu entry
+   and the log page are its UI there instead.
 5. **Explicit per-user start at login** ✓
    `autostart install` writes a LaunchAgent on macOS, an XDG autostart entry on
    Linux, or a Startup shortcut on Windows, plus an applications-menu entry on
-   Linux where there is otherwise no tray to click; `autostart remove`
-   reverses all of it.
+   Linux, which starts the daemon if it is not running and opens the page;
+   `autostart remove` reverses all of it.
 6. **Self-contained bootstrap and launchers** ✓
    `start.sh`, `Start auto-sort.command`, and `start.bat` start with Python
    alone. `bootstrap.py` can offer optional `ffprobe` and `exiftool` installs,
@@ -1231,4 +1244,4 @@ its own specification at test time.
 [DESIGN.md](DESIGN.md) covers the whole shape, including the filesystem
 hazards that have to be handled before anything is allowed to move a file.
 [ROADMAP.md](ROADMAP.md) covers what is not built: the rest of the job
-manager, a Linux tray, and Windows.
+manager and Windows, and what is still open about the Linux tray.

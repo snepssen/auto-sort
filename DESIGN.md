@@ -345,12 +345,15 @@ Tray support itself is where cross-platform gets ugly, and the rule is that
 
 - **Windows** — `Shell_NotifyIcon` through `ctypes`. Stdlib, no pywin32. Run
   under `pythonw.exe` so no console window appears.
-- **macOS** — `NSStatusItem` via PyObjC when it is importable, inside an app
-  bundle with `LSUIElement` set so there is no Dock icon. Homebrew Pythons do
-  not ship PyObjC, so this is a capability check, not an assumption.
-- **Linux** — StatusNotifier over D-Bus where the desktop provides it. Many do
-  not, honestly, so the documented fallback is a desktop-menu entry that opens
-  the log page while the daemon runs headless.
+- **macOS** — `NSStatusItem` through the Objective-C runtime and `ctypes`,
+  as an accessory application so there is no Dock icon. PyObjC was the first
+  version and could not be installed on the Pythons most people have.
+- **Linux** — a StatusNotifierItem and a `com.canonical.dbusmenu` menu on the
+  session bus, with D-Bus spoken by `dbuswire.py` from the standard library.
+  Registered with the watcher again whenever the watcher comes back. Many
+  desktops host it; some do not, honestly, and there the daemon runs
+  headless and a desktop-menu entry starts it if needed and opens the log
+  page.
 
 When no tray backend is available the daemon says so once, in the log, and
 carries on. A `.desktop` file, Start-menu shortcut, or `.command` becomes the
@@ -506,3 +509,12 @@ duplication is three files and it buys each tool the ability to stand alone.
     deleted. All of it a batch per cycle, through the supervised reader, so
     a decade of Downloads never stops the tray answering. The starter file
     names this machine's own folders and passes its own check.
+26. Linux, run rather than assumed. The test suite and a first run on a
+    Steam Deck, then the tray: a StatusNotifierItem over D-Bus spoken with
+    the standard library -- SASL, marshalling, an exported object and its
+    menu -- checked on Plasma with a person looking. On the way, what that
+    machine showed: OCR in whatever languages tesseract has, desktop entries
+    quoted as the spec asks, a menu entry that starts the daemon and says
+    why when it cannot, a learnt category that does not stop sorting for a
+    preview, and a preview under a person's edit that waits for Resume
+    whichever pass made it.

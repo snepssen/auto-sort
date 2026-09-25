@@ -297,25 +297,57 @@ Still open:
 
 ---
 
-## 3. A Linux tray
+## 3. A Linux tray — **built**
 
-macOS and Windows have one. Linux gets `UnavailableTray` and a desktop entry
-in the applications menu, which is enough to open the log page but is not an
-icon.
+The blocker was stated honestly and turned out to be the whole job: a
+native tray on Linux means a **StatusNotifierItem over D-Bus**, and every
+Python binding for D-Bus is a package somebody has to install. So the wire
+protocol is spoken with the standard library, in `dbuswire.py`, the way the
+macOS tray speaks to the Objective-C runtime through `ctypes`: a Unix
+socket, the SASL EXTERNAL handshake, and the binary message format --
+signatures, alignment, variants, arrays, dicts and structs. `tray.py`
+exports `org.kde.StatusNotifierItem` and `com.canonical.dbusmenu` on top of
+it, with the same menu as macOS and Windows.
 
-The honest blocker: a native tray means **StatusNotifierItem over D-Bus**,
-which from the standard library means speaking the wire protocol — SASL
-handshake, binary marshalling, exporting an object with properties, plus
-`com.canonical.dbusmenu` for the menu itself. That is several hundred lines
-of exactly the kind of code that ships broken when it cannot be tested on
-the desktop it targets.
+Tested on the desktop it targets, as this section said it had to be: a
+Steam Deck in Desktop Mode, Plasma 6.7.3, with a person looking. The icon,
+its menu, left click to the log page, Open log, Pause and Resume from the
+tray and from the log page, Sort now, Restart and Quit all did what they
+say. `busctl`, a separate D-Bus implementation, reads every property and the
+whole menu back. The wire tests hold the writer to bytes laid out by hand
+from the specification and the reader to messages recorded from that
+session.
 
-KDE hosts SNI, and a Steam Deck in Desktop Mode is a real KDE machine that
-has now run this program. So it is testable. It is just not small, and the
-desktop entry already solves the actual problem, which was "there is no way
-in but a terminal".
+| | Measured |
+| --- | --- |
+| Code | 671 lines of `dbuswire.py`, ~350 in `tray.py` |
+| Installed dependencies | **none** |
+| What the tray adds to a process | **1.6 MB** |
+| Daemon at rest, with the tray | **34.6 MB** |
 
----
+Three things learnt building it, each now in the code:
+
+- **kded owns the watcher, not plasmashell.** On Plasma 6 the
+  `StatusNotifierWatcher` lives in kded, which forgets every item when it
+  restarts and tells none of them. The item listens for the watcher's name
+  changing hands and registers again.
+- **A host may call back before it replies.** Waiting for a reply without
+  answering calls would stall until the timeout, so a call keeps answering
+  while it waits.
+- **The login race.** With no watcher when the daemon starts, it says why
+  in the log and still appears if one turns up.
+
+Still open:
+
+- **A watcher restart on a real desktop.** Re-registration is tested
+  against a fake bus; restarting kded6 under a live session has not been
+  done, because it briefly empties everybody's tray.
+- **Desktops with no host at all.** GNOME shows nothing without the
+  AppIndicator extension. The daemon says so and carries on headless, and
+  the applications-menu entry -- which now starts the daemon if nothing is
+  running -- is the way in there.
+- **Other hosts.** Only Plasma has been looked at. XFCE, Cinnamon and
+  waybar implement the same protocol and have not.
 
 ## 4. Windows
 
