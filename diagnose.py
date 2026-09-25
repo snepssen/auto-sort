@@ -11,11 +11,12 @@ the icon to draw its own menu.
 So `auto-sort diagnose` puts the second next to the first, as plain text to
 paste into an issue.
 
-**Nothing in it names a file.** Not a path in the watched folders, not a rule
-name -- rules are learnt from somebody's own documents, and theirs can say
-whose payslips these are -- and every line taken from the daemon's log has
-its paths and quoted names taken out. The home folder is `~`. It is printed,
-never sent: the person reads it before anybody else does.
+The generated report includes no file names, paths, document text or rule names.
+Only known labels, numeric versions, counts and states leave the collectors.
+Logs become fixed problem categories, never excerpts. Unknown text is omitted,
+including saved tray errors and system metadata. This policy applies before
+rendering, so JSON and text reports have the same privacy boundary. It is
+printed, never sent: the person reads it before anybody else does.
 """
 
 from __future__ import annotations
@@ -39,16 +40,60 @@ _PROBLEM = re.compile(r"could not|error|failed|traceback|unavailable|"
                       r"headless|stopped|refused", re.IGNORECASE)
 _LOG_LINES = 15
 _STAMP = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
-# A quoted name, or anything with a path separator in it.
-_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
-_PATHLIKE = re.compile(r"(?:[A-Za-z]:)?[~.]?[\\/][^\s,;:()]*")
+# Never return text captured from a problem message. Even a bare word can
+# be a document title; escaping or removing path separators cannot fix that.
+_PROBLEM_CATEGORIES = (
+    ("Rules error; sorting paused:", "rules invalid; sorting paused"),
+    ("Could not tidy the ledger:", "ledger maintenance failed"),
+    ("Could not check for corrections:", "checking corrections failed"),
+    ("Could not look for new categories:", "category discovery failed"),
+    ("Could not add ", "writing learned rules failed"),
+    ("Could not look at filed files again:", "refiling failed"),
+    ("Watched folder unavailable;", "watched folder unavailable"),
+    ("Reader stopped ", "reader stopped responding"),
+    ("Could not open a browser", "opening the browser failed"),
+    ("Tray:", "tray unavailable; continuing headless"),
+)
+_FOLDERS = ("desktop", "documents", "downloads", "music", "pictures",
+            "public", "templates", "video")
+_WATCHERS = ("org.kde.StatusNotifierWatcher",
+             "org.freedesktop.StatusNotifierWatcher")
+_TRAY_METHODS = ("Activate", "SecondaryActivate", "ContextMenu", "Scroll",
+                 "Get", "GetAll", "GetLayout", "GetGroupProperties",
+                 "GetProperty", "Event", "EventGroup", "AboutToShow",
+                 "AboutToShowGroup")
 
 
-def redact(line):
-    """A log line with nothing left in it that could name a file."""
-    line = line.replace(userdirs.home(), "~")
-    line = _QUOTED.sub("<name>", line)
-    return _PATHLIKE.sub("<path>", line)
+def _choice(value, choices):
+    return value if isinstance(value, str) and value in choices else "other/omitted"
+
+
+def _numeric_version(value):
+    return value if isinstance(value, str) and re.fullmatch(
+        r"[0-9]{1,10}(?:\.[0-9]{1,10}){0,4}", value) else "unknown"
+
+
+def _error(error):
+    """Useful error identity without exception messages or custom type names."""
+    if isinstance(error, OSError):
+        if type(error.errno) is int:
+            return "OS error %d" % error.errno
+        return "OS error"
+    return "error (details omitted)"
+
+
+def _problem_summary(line):
+    stamp = _STAMP.match(line)
+    bare = line[stamp.end():] if stamp else line
+    category = next((label for prefix, label in _PROBLEM_CATEGORIES
+                     if bare.startswith(prefix)), "other problem (details omitted)")
+    return (stamp.group() if stamp else "") + category
+
+
+def _standard_folders():
+    folders = userdirs.all_dirs()
+    return {name: ("available" if os.path.isdir(folders.get(name, ""))
+                   else "missing or inaccessible") for name in _FOLDERS}
 
 
 def collect(state_file=None, rule_path=None, bus=None):
@@ -60,9 +105,7 @@ def collect(state_file=None, rule_path=None, bus=None):
         found["session bus"] = _bus(bus)
     found["daemon"] = _daemon(state_file)
     found["rules"] = _rules(rule_path)
-    found["standard folders"] = dict(
-        (name, userdirs.short(folder))
-        for name, folder in sorted(userdirs.all_dirs().items()))
+    found["standard folders"] = _standard_folders()
     found["programs"] = dict(
         (row["key"], "installed" if row["installed"] else "not installed")
         for row in platform_support.inventory())
@@ -72,8 +115,8 @@ def collect(state_file=None, rule_path=None, bus=None):
 
 def render(found):
     """The report as text, fenced so an issue shows it as it is."""
-    lines = ["```text", "auto-sort diagnostics -- nothing here names a file;"
-             " read it before posting", ""]
+    lines = ["```text", "auto-sort diagnostics -- no file names, paths, document text"
+             " or rule names", ""]
     for section, value in found.items():
         if isinstance(value, dict):
             lines.append("%s:" % section)
@@ -113,8 +156,10 @@ def report_text(found, now=None):
         "(a free GitHub account is needed), give it a short title, and drag",
         "this file into the box.",
         "",
-        "Nothing below names any of your files. Read it before you send it",
-        "if you like -- it is yours to send or not.",
+        "The generated diagnostics contain no file names, paths, document text",
+        "or rule names. Error details and unrecognised text are omitted.",
+        "Review your description and screenshots too: issues are public.",
+        "Nothing is sent automatically -- it is yours to send or not.",
         "",
         "-" * 72,
         render(found),
@@ -176,40 +221,62 @@ def _version():
                 capture_output=True, text=True, timeout=5).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             commit = ""
-    return autosort.VERSION + (" (%s)" % commit if commit else "")
+    commit = commit if re.fullmatch(r"[0-9a-f]{7,40}", commit) else ""
+    return _numeric_version(autosort.VERSION) + (" (%s)" % commit if commit else "")
 
 
 def _python():
-    return "%s %s, %d-bit" % (platform.python_implementation(),
-                              platform.python_version(),
+    return "%s %s, %d-bit" % (_choice(platform.python_implementation(),
+                                      ("CPython", "PyPy", "Jython", "IronPython")),
+                              _numeric_version(platform.python_version()),
                               8 * __import__("struct").calcsize("P"))
 
 
 def _system():
     if sys.platform.startswith("linux"):
-        name = _os_release()
-        return "%s, Linux %s" % (name, platform.release()) if name \
-            else "Linux %s" % platform.release()
+        # Kernel suffixes can contain custom build or machine names.
+        release = re.match(r"[0-9]+(?:\.[0-9]+)*", platform.release())
+        kernel = _numeric_version(release.group()) if release else "unknown"
+        return "%s, Linux %s" % (_os_release(), kernel)
     if sys.platform == "darwin":
-        return "macOS %s (%s)" % (platform.mac_ver()[0], platform.machine())
-    return platform.platform()
+        return "macOS %s (%s)" % (_numeric_version(platform.mac_ver()[0]),
+                                  _choice(platform.machine(), ("arm64", "x86_64")))
+    if sys.platform.startswith("win"):
+        return "Windows %s" % _numeric_version(platform.win32_ver()[1])
+    return "other system"
 
 
 def _os_release():
     for candidate in ("/etc/os-release", "/usr/lib/os-release"):
         try:
-            with open(candidate, encoding="utf-8") as handle:
+            values = {}
+            with open(candidate, encoding="utf-8", errors="replace") as handle:
                 for line in handle:
-                    if line.startswith("PRETTY_NAME="):
-                        return line.split("=", 1)[1].strip().strip('"')
+                    key, separator, value = line.partition("=")
+                    if separator and key in ("ID", "VERSION_ID"):
+                        values[key] = value.strip().strip("\"'")
+            distro = _choice(values.get("ID"), (
+                "ubuntu", "debian", "fedora", "arch", "manjaro", "linuxmint",
+                "opensuse", "opensuse-leap", "opensuse-tumbleweed", "steamos",
+                "pop", "nixos", "gentoo", "alpine", "rhel", "centos", "rocky",
+                "almalinux", "void", "endeavouros", "kali", "zorin"))
+            return "%s %s" % (distro, _numeric_version(values.get("VERSION_ID")))
         except OSError:
             continue
-    return ""
+    return "unknown distribution"
 
 
 def _desktop():
-    names = ("XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "DESKTOP_SESSION")
-    found = dict((name, os.environ.get(name, "")) for name in names)
+    desktops = ("kde", "plasma", "gnome", "ubuntu", "unity", "xfce", "xfce4",
+                "x-cinnamon", "cinnamon", "mate", "lxqt", "lxde", "sway",
+                "hyprland", "i3", "budgie", "cosmic", "pantheon", "enlightenment")
+    found = {}
+    for name in ("XDG_CURRENT_DESKTOP", "DESKTOP_SESSION"):
+        value = os.environ.get(name, "")
+        found[name] = ":".join(_choice(part.lower(), desktops)
+                               for part in value.split(":")[:8]) if value else "not set"
+    found["XDG_SESSION_TYPE"] = _choice(os.environ.get("XDG_SESSION_TYPE"),
+                                       ("wayland", "x11", "tty"))
     for name in ("WAYLAND_DISPLAY", "DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
         found[name] = "set" if os.environ.get(name) else "not set"
     return found
@@ -222,7 +289,7 @@ def _bus(bus=None):
     try:
         connection = bus or dbuswire.Connection()
     except Exception as error:               # noqa: BLE001
-        return {"reachable": "no (%s)" % error}
+        return {"reachable": "no (%s)" % _error(error)}
     found = {"reachable": "yes"}
     try:
         for watcher in tray.WATCHERS:
@@ -240,15 +307,21 @@ def _bus(bus=None):
                 host = getattr(host, "value", host)
             except dbuswire.DBusError:
                 host = "unknown"
+            owner = owner if isinstance(owner, str) and re.fullmatch(
+                r":[0-9]{1,10}\.[0-9]{1,10}", owner) else "present"
+            host = host if type(host) is bool else "unknown"
             found[watcher[0]] = "%s, host registered: %s" % (owner, host)
         try:
-            name, vendor, version, spec = connection.call(
+            name, _vendor, version, spec = connection.call(
                 "org.freedesktop.Notifications",
                 "/org/freedesktop/Notifications",
                 "org.freedesktop.Notifications",
                 member="GetServerInformation")[:4]
-            found["notifications"] = "%s %s (%s, spec %s)" % (
-                name, version, vendor, spec)
+            found["notifications"] = "%s %s (spec %s)" % (
+                _choice(name, ("Plasma", "gnome-shell", "GNOME Shell", "dunst",
+                               "mako", "Xfce Notify Daemon", "Cinnamon",
+                               "mate-notification-daemon")),
+                _numeric_version(version), _numeric_version(spec))
         except dbuswire.DBusError:
             found["notifications"] = "nobody"
     finally:
@@ -267,25 +340,49 @@ def _daemon(state_file):
             found["files filed"] = journal.connection.execute(
                 "SELECT count(*) FROM moves WHERE status IN "
                 "('done','copied')").fetchone()[0]
-            found["queue"] = dict((row["status"], row["count"])
-                                  for row in journal.queue_counts())
+            counts = {}
+            for row in journal.queue_counts():
+                status = _choice(row["status"], ("pending", "processing",
+                                                  "failed", "done"))
+                counts[status] = counts.get(status, 0) + row["count"]
+            found["queue"] = counts
             report = journal.get_state("tray_report")
     except Exception as error:               # noqa: BLE001
-        found["ledger"] = "unreadable (%s)" % type(error).__name__
+        found["ledger"] = "unreadable (%s)" % _error(error)
         report = None
     try:
-        found["tray"] = json.loads(report) if report else \
+        found["tray"] = _tray_report(json.loads(report)) if report else \
             "not recorded yet (the daemon records it while it runs)"
     except ValueError:
         found["tray"] = "unreadable"
     return found
 
 
+def _tray_report(report):
+    """Old ledgers may contain arbitrary exception text. Select fields afresh."""
+    if not isinstance(report, dict):
+        return "unreadable"
+    found = {"backend": _choice(report.get("backend"), (
+        "none", "StatusNotifierItem", "macOS status item", "Windows notification icon"))}
+    for key in ("available", "registered"):
+        if type(report.get(key)) is bool:
+            found[key] = report[key]
+    if "watcher" in report:
+        found["watcher"] = _choice(report["watcher"], _WATCHERS + ("",))
+    if report.get("reason"):
+        found["reason"] = "unavailable (details omitted)"
+    asked = report.get("host_asked")
+    if isinstance(asked, dict):
+        found["host_asked"] = {key: asked[key] for key in _TRAY_METHODS
+                               if type(asked.get(key)) is int and asked[key] >= 0}
+    return found
+
+
 def _rules(rule_path):
     try:
         rule_set = rules.load(rule_path)
-    except rules.RuleError as error:
-        return {"loads": "no: %s" % redact(str(error))}
+    except rules.RuleError:
+        return {"loads": "no (invalid or unreadable; details omitted)"}
     settings = rule_set.settings
     return {"loads": "yes",
             "rules": len(rule_set.rules),
@@ -309,7 +406,7 @@ def _log_problems():
             text = handle.read().decode("utf-8", "replace")
     except OSError:
         return []
-    lines = [redact(line)[:200] for line in text.splitlines()
+    lines = [_problem_summary(line) for line in text.splitlines()
              if _PROBLEM.search(line)]
     # The same complaint every few seconds is one problem, said how often.
     collapsed = []

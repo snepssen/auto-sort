@@ -9,9 +9,9 @@ set "PY="
 py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>&1 && set "PY=py -3"
 if not defined PY python -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>&1 && set "PY=python"
 
-set "PROBLEM=%TEMP%\auto-sort-report-error.txt"
+rem Do not retain raw errors: a broken import can name private files.
 if defined PY (
-  %PY% autosort.py diagnose --desktop 2> "%PROBLEM%"
+  %PY% autosort.py diagnose --desktop 2>nul
   if not errorlevel 1 goto done
 )
 
@@ -38,18 +38,19 @@ if defined PY set "PYTHON_LINE=python: %PY%"
   echo this file into the box.
   echo.
   echo ------------------------------------------------------------------------
-  ver
+  echo system: Windows
   echo %PYTHON_LINE%
   echo.
-  echo what went wrong making the full report:
-  if exist "%PROBLEM%" type "%PROBLEM%"
+  if defined PY (echo full report: failed) else (echo full report: unavailable without Python 3.8 or newer)
+  echo Error details are omitted to keep file paths and document text private.
+  echo Review your description and screenshots too: issues are public.
+  echo Nothing is sent automatically.
 ) > "%FILE%"
 echo The report is on your Desktop:
 echo   %FILE%
 start "" notepad "%FILE%"
 
 :done
-if exist "%PROBLEM%" del "%PROBLEM%"
 echo.
 echo Press any key to close this window.
 pause >nul

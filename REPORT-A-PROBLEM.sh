@@ -13,9 +13,9 @@ for candidate in python3 python; do
   fi
 done
 
-problem="$(mktemp 2>/dev/null || echo /tmp/auto-sort-report-error.$$)"
-if [ -n "$PYTHON" ] && "$PYTHON" autosort.py diagnose --desktop 2>"$problem"; then
-  rm -f "$problem"
+# A broken import can print paths, source lines or document text. Do not
+# retain stderr for the fallback: Python may be unavailable to sanitise it.
+if [ -n "$PYTHON" ] && "$PYTHON" autosort.py diagnose --desktop 2>/dev/null; then
   echo
   echo "You can close this window."
   exit 0
@@ -44,21 +44,27 @@ file="$desktop/auto-sort problem report $(date '+%Y-%m-%d %H%M').txt"
   echo "this file into the box."
   echo
   echo "------------------------------------------------------------------------"
-  echo "system: $(uname -srm)"
-  if command -v sw_vers >/dev/null 2>&1; then
-    echo "macOS: $(sw_vers -productVersion)"
-  elif [ -r /etc/os-release ]; then
-    echo "linux: $(. /etc/os-release && echo "$PRETTY_NAME")"
-  fi
-  echo "desktop: ${XDG_CURRENT_DESKTOP:-unknown} (${XDG_SESSION_TYPE:-unknown})"
+  case "$(uname -s)" in
+    Darwin) echo "system: macOS" ;;
+    Linux) echo "system: Linux" ;;
+    *) echo "system: other" ;;
+  esac
+  case "${XDG_SESSION_TYPE:-}" in
+    wayland) echo "session: Wayland" ;;
+    x11) echo "session: X11" ;;
+    tty) echo "session: terminal" ;;
+    *) echo "session: unknown" ;;
+  esac
   echo "python: ${PYTHON:-not found (auto-sort needs Python 3.8 or newer)}"
-  if [ -s "$problem" ]; then
-    echo
-    echo "what went wrong making the full report:"
-    tail -n 30 "$problem" | sed "s|$HOME|~|g"
+  if [ -n "$PYTHON" ]; then
+    echo "full report: failed"
+  else
+    echo "full report: unavailable without Python 3.8 or newer"
   fi
+  echo "Error details are omitted to keep file paths and document text private."
+  echo "Review your description and screenshots too: issues are public."
+  echo "Nothing is sent automatically."
 } >"$file"
-rm -f "$problem"
 
 echo "The report is on your Desktop:"
 echo "  $file"

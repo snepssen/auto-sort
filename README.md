@@ -16,8 +16,9 @@ shows every ledgered operation and can reveal the recorded file safely. See
 [DESIGN.md](DESIGN.md) for the whole shape and [RULES.md](RULES.md) for
 configuration.
 
-**Version 0.9.0.** Run for real on macOS and on Linux (KDE Plasma); built to
-the specification and tested by CI on Windows and the other Linux desktops —
+**Version 0.9.0.** Run for real on macOS and on Linux (KDE Plasma); automated
+tests and installation checks run on macOS, Ubuntu and Windows. Other desktop
+integrations are built to their specifications but await real desktop testing —
 see [where it has run](#where-it-has-run-and-where-it-should). Project page:
 [snepssen.github.io/auto-sort](https://snepssen.github.io/auto-sort/).
 
@@ -1228,12 +1229,21 @@ auto-sort diagnose
 
 and paste what it prints into an issue. It is written for exactly that: the
 system, the desktop, who answers on the session bus, what the tray host
-asked the icon for, whether the daemon is running, and the last problems in
-its log. **It names no file** — not a watched path, not a rule (rules are
-learnt from your own documents and can say whose they are), and every name
-and path in a log line is taken out — but it is printed rather than sent,
-so read it first. What it cannot say, you can: what you expected to see,
-and what you saw.
+asked the icon for, whether the daemon is running, and categories and counts
+of recent problems. **The generated diagnostics contain no file names, paths,
+document text or rule names.** Standard folders are reported as available
+or missing; logs become fixed problem categories rather than excerpts.
+Unknown system labels, raw exceptions and saved tray-error text are omitted.
+The short fallback report also excludes raw errors, even when Python or
+auto-sort cannot start. Nothing is sent automatically.
+
+This applies to both text and JSON diagnostics. It does not make the report
+anonymous: OS and Python versions, timestamps, counts and known desktop labels
+are included. Review anything you add yourself, including screenshots, before
+posting to a public issue. What the report cannot say, you can: what you
+expected to see, and what you saw. See the
+[diagnostic privacy contract](docs/diagnostic-privacy.md) for the field policy
+and regression checks.
 
 ## Where this is going
 

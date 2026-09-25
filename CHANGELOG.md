@@ -1,5 +1,14 @@
 # Changes
 
+## Unreleased
+
+- Problem reports now select known diagnostic fields instead of attempting
+  to redact arbitrary text. Folder paths, learned names, raw errors and
+  unknown system labels are omitted in text, JSON and fallback reports.
+- Regression checks cover paths with spaces, unquoted document headings,
+  invalid rules, saved tray errors, desktop metadata and broken-install
+  reporting. The batch fallback check runs on Windows CI.
+
 ## 0.9.0 — the first release
 
 auto-sort empties a Downloads folder and keeps it empty. It works out what

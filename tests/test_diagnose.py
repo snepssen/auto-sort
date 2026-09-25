@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -76,12 +77,90 @@ class NamesNoFile(unittest.TestCase):
         problems = self.collect()["recent problems in the log"]
         self.assertEqual(len(problems), 1)
         self.assertTrue(problems[0].endswith("(x3)"), problems)
-        self.assertIn("<name>", problems[0])
+        self.assertIn("refiling failed", problems[0])
 
-    def test_paths_and_quoted_names_are_taken_out(self):
-        self.assertEqual(
-            diagnose.redact("moved /a/b/c.pdf and 'x y.txt' to C:\\Users\\z"),
-            "moved <path> and <name> to <path>")
+    def test_real_log_shapes_cannot_leak_names_even_without_quotes(self):
+        messages = [
+            "Watched folder unavailable; queue retained: /media/Alice Smith/Tax Returns",
+            "Watched folder unavailable; queue retained: C:\\Users\\Alice Smith\\Tax Returns",
+            "Could not add Payslips Jansen (3) to the rules: permission denied",
+            "Rules error; sorting paused: unknown section [Jansen Payroll]",
+            "Could not look at filed files again: O'Brien's return.pdf failed",
+            "ERROR 未知の給与明細.pdf alice@example.org secret-token",
+            "Traceback (most recent call last):",
+            "  File '/home/Alice Smith/Payroll.py', line 4",
+            "    raise ValueError('Payroll secret')",
+        ]
+        with open(os.path.join(self.log_dir, "daemon.log"), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(messages))
+        found = self.collect()
+        for text in (diagnose.render(found), json.dumps(found), diagnose.report_text(found)):
+            for private in ("Alice", "Smith", "Tax Returns", "Jansen", "Payroll",
+                            "O'Brien", "給与", "alice@", "secret-token", "return.pdf"):
+                self.assertNotIn(private, text)
+            self.assertIn("watched folder unavailable", text)
+            self.assertIn("writing learned rules failed", text)
+            self.assertIn("rules invalid; sorting paused", text)
+
+    def test_redirected_folders_are_states_not_paths(self):
+        with mock.patch("userdirs.all_dirs", return_value={
+                "documents": self.dir,
+                "downloads": "/mnt/Alice Smith/Tax Returns",
+                "private-folder-name": "also-private"}):
+            found = self.collect()["standard folders"]
+        self.assertEqual(found["documents"], "available")
+        self.assertEqual(found["downloads"], "missing or inaccessible")
+        self.assertNotIn("private-folder-name", found)
+        self.assertNotIn(self.dir, json.dumps(found))
+        self.assertNotIn("Alice", json.dumps(found))
+
+    def test_invalid_rules_never_export_parser_error_text(self):
+        with open(self.rules, "w") as handle:
+            handle.write("[Alice Payroll]\nsecret = medical records\n")
+        found = self.collect()["rules"]
+        self.assertTrue(found["loads"].startswith("no"))
+        self.assertNotIn("Alice", json.dumps(found))
+        self.assertNotIn("medical", json.dumps(found))
+
+    def test_saved_tray_errors_and_unexpected_fields_are_filtered(self):
+        with ledger.Ledger(self.state) as journal:
+            journal.set_state("tray_report", json.dumps({
+                "backend": "StatusNotifierItem", "available": False,
+                "registered": True, "watcher": "org.kde.StatusNotifierWatcher",
+                "reason": "native tray unavailable: /home/Alice Payroll/private.so",
+                "extra-private-field": "medical records",
+                "host_asked": {"ContextMenu": 3, "GetLayout": "Alice", "Alice": 7}}))
+        found = self.collect()["daemon"]["tray"]
+        self.assertEqual(found["host_asked"], {"ContextMenu": 3})
+        self.assertTrue(found["registered"])
+        self.assertEqual(found["watcher"], "org.kde.StatusNotifierWatcher")
+        for private in ("Alice", "Payroll", "private.so", "medical", "extra-private"):
+            self.assertNotIn(private, json.dumps(found))
+
+
+class SystemMetadata(unittest.TestCase):
+
+    def test_known_desktop_details_survive_but_custom_names_do_not(self):
+        with mock.patch.dict(os.environ, {
+                "XDG_CURRENT_DESKTOP": "ubuntu:GNOME", "XDG_SESSION_TYPE": "wayland",
+                "DESKTOP_SESSION": "/home/Alice/custom-session",
+                "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/Alice/private-bus"}):
+            found = diagnose._desktop()
+        self.assertEqual(found["XDG_CURRENT_DESKTOP"], "ubuntu:gnome")
+        self.assertEqual(found["XDG_SESSION_TYPE"], "wayland")
+        self.assertEqual(found["DBUS_SESSION_BUS_ADDRESS"], "set")
+        self.assertNotIn("Alice", json.dumps(found))
+        self.assertNotIn("custom-session", json.dumps(found))
+
+    def test_os_metadata_drops_custom_distribution_and_kernel_names(self):
+        release = 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Alice Payroll Linux"\n'
+        with mock.patch("diagnose.sys.platform", "linux"), \
+                mock.patch("builtins.open", mock.mock_open(read_data=release)), \
+                mock.patch("platform.release", return_value="6.8.0-Alice-Payroll"):
+            self.assertEqual(diagnose._system(), "ubuntu 24.04, Linux 6.8.0")
+        with mock.patch("builtins.open", mock.mock_open(
+                read_data='ID=Alice\nVERSION_ID="Payroll"\n')):
+            self.assertEqual(diagnose._os_release(), "other/omitted unknown")
 
 
 class OnTheDesktop(unittest.TestCase):
@@ -125,6 +204,116 @@ class TheSessionBus(unittest.TestCase):
         with mock.patch("dbuswire.Connection",
                         side_effect=dbuswire.DBusError("no session bus")):
             self.assertIn("no", diagnose._bus()["reachable"])
+
+    def test_bus_errors_do_not_export_socket_paths(self):
+        with mock.patch("dbuswire.Connection", side_effect=OSError(
+                13, "permission denied", "/home/Alice Payroll/private-bus")):
+            found = diagnose._bus()
+        self.assertIn("OS error 13", found["reachable"])
+        self.assertNotIn("Alice", json.dumps(found))
+
+    def test_bus_responses_are_not_trusted_as_public_text(self):
+        bus = mock.Mock()
+        bus.call.side_effect = lambda *args, **kwargs: (
+            ["Alice Payroll"] if kwargs["member"] == "GetNameOwner" else
+            [dbuswire.Variant("s", "Alice Payroll")] if kwargs["member"] == "Get" else
+            ["Alice Payroll", "Private Vendor", "/home/Alice", "Private Spec"])
+        found = diagnose._bus(bus)
+        text = json.dumps(found)
+        self.assertNotIn("Alice", text)
+        self.assertNotIn("Private", text)
+        self.assertIn("host registered: unknown", text)
+
+
+@unittest.skipIf(os.name == "nt", "POSIX launcher")
+class ShellFallback(unittest.TestCase):
+    """Run the real launcher against a broken installation, without a desktop."""
+
+    def test_failed_report_keeps_stderr_and_environment_out_of_the_attachment(self):
+        with tempfile.TemporaryDirectory(prefix="autosort-report-") as directory:
+            script = os.path.join(directory, "REPORT-A-PROBLEM.sh")
+            shutil.copyfile(os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                        "REPORT-A-PROBLEM.sh"), script)
+            commands = os.path.join(directory, "commands")
+            os.mkdir(commands)
+            desktop = os.path.join(directory, "Alice Payroll")
+            os.mkdir(desktop)
+            programs = {
+                "python3": '#!/bin/sh\nif [ "$1" = "-c" ]; then exit 0; fi\n'
+                           'echo "PermissionError: /mnt/Alice Payroll/secret.pdf" >&2\nexit 1\n',
+                "python": '#!/bin/sh\nexit 1\n',
+                "xdg-user-dir": '#!/bin/sh\nprintf "%s\\n" "$REPORT_TEST_DESKTOP"\n',
+                "xdg-open": '#!/bin/sh\nexit 0\n',
+                "open": '#!/bin/sh\nexit 0\n',
+                "uname": '#!/bin/sh\necho "Linux"\n',
+            }
+            for name, contents in programs.items():
+                target = os.path.join(commands, name)
+                with open(target, "w") as handle:
+                    handle.write(contents)
+                os.chmod(target, 0o755)
+            environment = dict(os.environ, PATH=commands + os.pathsep + os.defpath,
+                               REPORT_TEST_DESKTOP=desktop,
+                               XDG_CURRENT_DESKTOP="Alice Payroll",
+                               XDG_SESSION_TYPE="/private/secret-session")
+            for available in (True, False):
+                with self.subTest(python_available=available):
+                    if not available:
+                        shutil.copyfile(os.path.join(commands, "python"),
+                                        os.path.join(commands, "python3"))
+                    result = subprocess.run(["/bin/sh", script], env=environment,
+                                            capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    reports = os.listdir(desktop)
+                    self.assertEqual(len(reports), 1)
+                    with open(os.path.join(desktop, reports[0])) as handle:
+                        text = handle.read()
+                    for private in ("Alice", "Payroll", "secret.pdf", "secret-session"):
+                        self.assertNotIn(private, text)
+                    self.assertIn("system: Linux", text)
+                    self.assertIn("full report: failed" if available else
+                                  "full report: unavailable without Python", text)
+                    os.unlink(os.path.join(desktop, reports[0]))
+
+
+@unittest.skipUnless(os.name == "nt", "Windows launcher; runs on Windows CI")
+class WindowsFallback(unittest.TestCase):
+
+    def test_broken_install_does_not_attach_its_traceback(self):
+        with tempfile.TemporaryDirectory(prefix="autosort-report-") as directory:
+            script = os.path.join(directory, "REPORT-A-PROBLEM.bat")
+            shutil.copyfile(os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                        "REPORT-A-PROBLEM.bat"), script)
+            with open(os.path.join(directory, "autosort.py"), "w") as handle:
+                handle.write("raise RuntimeError('Alice Payroll secret.pdf')\n")
+            desktop = os.path.join(directory, "Alice Payroll")
+            os.mkdir(desktop)
+            # Keep the report and the text-file opener away from the user's
+            # real desktop. Python and the batch script itself run for real.
+            commands = os.path.join(directory, "commands")
+            os.mkdir(commands)
+            with open(os.path.join(commands, "powershell.cmd"), "w") as handle:
+                handle.write('@echo off\n'
+                             'if "%~3" == "[Environment]::GetFolderPath(\'Desktop\')" goto desktop\n'
+                             'echo 2026-01-01 0000\nexit /b\n'
+                             ':desktop\necho %REPORT_TEST_DESKTOP%\n')
+            with open(os.path.join(commands, "notepad.cmd"), "w") as handle:
+                handle.write('@exit\n')
+            environment = dict(os.environ, REPORT_TEST_DESKTOP=desktop)
+            environment["PATH"] = os.pathsep.join((commands, os.path.dirname(sys.executable),
+                                                   os.environ.get("PATH", "")))
+            result = subprocess.run([os.environ.get("COMSPEC", "cmd.exe"), "/c", script],
+                                    env=environment, input="\n", capture_output=True,
+                                    text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            reports = os.listdir(desktop)
+            self.assertEqual(len(reports), 1)
+            with open(os.path.join(desktop, reports[0])) as handle:
+                text = handle.read()
+            self.assertIn("full report: failed", text)
+            self.assertIn("system: Windows", text)
+            for private in ("Alice", "Payroll", "secret.pdf", "Traceback", directory):
+                self.assertNotIn(private, text)
 
 
 class TheDaemonKeepsTheTrayReport(unittest.TestCase):
