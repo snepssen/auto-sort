@@ -116,7 +116,7 @@
 
 <div class="wrap">
 <header id="top">
-  <span class="badge"><span class="dot"></span>macOS · Windows · Linux · MIT</span>
+  <span class="badge"><span class="dot"></span>v0.9.0 · macOS · Linux · Windows · MIT</span>
   <h1>auto-sort</h1>
   <p class="subhead">Almost everything unwanted on a computer arrived through the Downloads folder. It is not somewhere anybody keeps things — it is where files land on the way to somewhere else — so auto-sort treats it as a funnel: everything leaves, and nothing is kept back. It works out what each file is from its bytes rather than its name, learns the structure from the folder itself, and writes down every move so that all of it can be undone.</p>
   <div class="headmeta">
@@ -131,6 +131,8 @@
   <div class="wrap">
     <a class="mark" href="#page-top">~/snepssen</a>
     <ul>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#status">Where it runs</a></li>
       <li><a href="#evidence">How it decides</a></li>
       <li><a href="#learns">What it learns</a></li>
       <li><a href="#safe">Safety</a></li>
@@ -139,6 +141,44 @@
     </ul>
   </div>
 </nav>
+
+<div class="wrap">
+<section id="install">
+  <p class="eyebrow">Install</p>
+  <h2>One line, pasted into a terminal</h2>
+  <p class="lede">On a <b>Mac</b> that is the Terminal app; on <b>Linux</b>, whichever terminal your desktop has:</p>
+  <div class="figure">
+<pre class="report mono">curl -fsSL https://raw.githubusercontent.com/snepssen/auto-sort/main/install.sh | sh</pre>
+  </div>
+  <p>On <b>Windows</b>, in PowerShell — search the Start menu for it:</p>
+  <div class="figure">
+<pre class="report mono">powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/snepssen/auto-sort/main/install.ps1 | iex"</pre>
+  </div>
+  <p>It needs Python 3.8 or newer, and says how to get it if there is none — on Windows it offers to install it for you. Then it downloads auto-sort into a folder of its own, offers the few optional programs that let it read more, offers to start it whenever you log in, and opens its page. Run the same line again to update: your rules and everything auto-sort has learnt are kept, and the version before is kept beside it.</p>
+  <p>Would rather read a script before running it? Save <a href="https://raw.githubusercontent.com/snepssen/auto-sort/main/install.sh">install.sh</a> or <a href="https://raw.githubusercontent.com/snepssen/auto-sort/main/install.ps1">install.ps1</a> and read them first, or download everything from <a href="https://github.com/snepssen/auto-sort/releases/latest">the latest release</a>.</p>
+  <figure class="shot">
+    <picture>
+      <img src="screens/preview.png" alt="The log page on a first run: a banner reading 'This is a preview. Nothing has moved yet: below is where everything would go. Sorting starts by itself at 09:34, and every move can be undone', with Start sorting now and Keep previewing buttons above the list of proposed moves." width="2000"
+           height="1640" loading="lazy"
+           decoding="async">
+    </picture>
+    <figcaption>The first thing it does is show you. Nothing moves for fifteen minutes; then it starts on its own, so it works even for somebody who installs it and walks away. <b>Keep previewing</b> waits as long as you like, and every move can be undone.</figcaption>
+  </figure>
+</section>
+
+<section id="status">
+  <p class="eyebrow">Honestly</p>
+  <h2>Where it has run, and where it should</h2>
+  <p>A program that says “cross-platform” and means “it ran on the author’s laptop” wastes everybody’s afternoon, so plainly:</p>
+  <table>
+    <tr><th>macOS</th><td><b>Run for real</b>, daily — sorting, reading, text recognition, the menu bar icon, starting at login.</td></tr>
+    <tr><th>Linux, KDE Plasma</th><td><b>Run for real</b> on a Steam Deck in Desktop Mode — the whole test suite, a first run from nothing, the tray icon and every menu entry checked on screen, desktop notifications.</td></tr>
+    <tr><th>Linux, other desktops with a tray</th><td><b>Built to the specification, not yet seen</b> — XFCE, Cinnamon, sway/waybar, GNOME with the AppIndicator extension. It should appear. Plain GNOME has no tray; there the applications menu is the way in.</td></tr>
+    <tr><th>Windows</th><td><b>Built to the Win32 documentation</b> and tested, with the install line, on GitHub’s own Windows machines on every change — but not yet on a Windows desktop anybody has looked at. Deleted files go to a <span class="mono">Trash (auto-sort)</span> folder rather than the Recycle Bin for now.</td></tr>
+  </table>
+  <p>This is version <b>0.9.0</b> for that reason: complete, but not yet seen working everywhere. If it does not work for you, <a href="#contact">tell me</a> — there is a script that writes down what I need to know.</p>
+</section>
+</div>
 
 <div class="wrap">
   <div class="figure">
@@ -197,7 +237,7 @@ into    = ~/Pictures/furaffinity/{group}</pre>
   <figure class="shot">
     <picture>
       <img src="screens/rules.png" alt="The Auto-Sort rules view, showing rules learnt from a folder's own documents — 'what the page calls itself: Rechnung', 'Kontoauszug', 'Steuerbescheid' and 'Mietvertrag' — beside the condition each matches and the folder it writes to." width="2000"
-           height="1133" loading="lazy"
+           height="2000" loading="lazy"
            decoding="async">
     </picture>
     <figcaption>Every rule here came from counting words on the folder's own pages. Nothing was typed in advance, and the page shows exactly the condition and destination each rule uses, not a summary of them.</figcaption>
@@ -235,11 +275,11 @@ into    = ~/Pictures/furaffinity/{group}</pre>
 <section id="running">
   <p class="eyebrow">Getting started</p>
   <h2>It runs itself, from an icon</h2>
-  <p class="lede">Double-click <b>Start auto-sort.command</b> on macOS, <span class="mono">start.sh</span> on Linux or <span class="mono">start.bat</span> on Windows. It writes a rules file if there is not one, says what it is about to watch, points out that dry run is on, and then runs — leaving an icon in the menu bar and a log page behind it. None of that requires knowing what Python is.</p>
+  <p class="lede">After <a href="#install">the install line</a> it runs by itself: an icon in the menu bar or tray, and a page behind it. It watches Downloads, shows its first sort before doing it, learns the kinds of document you keep from the documents themselves, and files everything else by what it is. From a copy you downloaded instead, double-click <b>Start auto-sort.command</b> on macOS, <span class="mono">start.sh</span> on Linux or <span class="mono">start.bat</span> on Windows. None of it requires knowing what Python is.</p>
   <figure class="shot">
     <picture>
-      <img src="screens/ledger.png" alt="The log page auto-sort leaves behind: a ledger of every file it has moved, newest first, with the destination, the rule that placed it and the status. A search box asks the whole history, not just the page on screen, and each row can be revealed, restored, or sent to the system bin." width="2000"
-           height="1082" loading="lazy"
+      <img src="screens/ledger.png" alt="The log page after a first sort: bank statements filed to ~/Documents/Kontoauszug, bills to ~/Documents/Rechnung and tax notices to ~/Documents/Steuerbescheid — folders nobody configured, learnt from what the documents call themselves — each row with the rule that placed it and its status. A search box asks the whole history, and each row can be revealed, restored, or sent to the system bin." width="2000"
+           height="1640" loading="lazy"
            decoding="async">
     </picture>
     <figcaption>This is the whole interface. There is no install wizard and no settings screen to learn — the icon opens this page, and this page is where a file that has gone missing is found again.</figcaption>
@@ -324,6 +364,8 @@ auto-sort undo last                              <span class="muted">take it all
   <p class="eyebrow">Get in touch</p>
   <h2>If something looks wrong, say so</h2>
   <p>There is no analytics here and no crash reporter, so a failure has no way of reaching me on its own.</p>
+  <h3>If it does not work</h3>
+  <p>Open the folder auto-sort was installed in — <span class="mono">~/Applications/auto-sort</span> on a Mac, <span class="mono">~/.local/share/auto-sort</span> on Linux, <span class="mono">%LOCALAPPDATA%\Programs\auto-sort</span> on Windows — and double-click <b>REPORT-A-PROBLEM</b>. It writes a report to your Desktop and opens it: a space at the top for what happened, how to send it, and what I need to know about your computer. It names none of your files, and nothing is sent — you read it, and you decide. Drag it into <a href="https://github.com/snepssen/auto-sort/issues/new">a new issue</a>, or email it.</p>
   <div class="contact-card">
     <a href="https://github.com/snepssen/auto-sort/issues">Open an issue<span>github.com/snepssen/auto-sort ↗</span></a>
     <a href="https://t.me/snepssen">Telegram<span>@snepssen ↗</span></a>
@@ -332,8 +374,8 @@ auto-sort undo last                              <span class="muted">take it all
 </section>
 
 <footer>
-  <p>repo</p>
-  <p>note</p>
+  <p>auto-sort 0.9.0 · MIT · <a href="https://github.com/snepssen/auto-sort">github.com/snepssen/auto-sort</a></p>
+  <p>Nothing here leaves your computer: no account, no analytics, no network calls.</p>
 </footer>
 
 </div>

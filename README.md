@@ -16,6 +16,13 @@ shows every ledgered operation and can reveal the recorded file safely. See
 [DESIGN.md](DESIGN.md) for the whole shape and [RULES.md](RULES.md) for
 configuration.
 
+**Version 0.9.0.** Run for real on macOS and on Linux (KDE Plasma); built to
+the specification and tested by CI on Windows and the other Linux desktops —
+see [where it has run](#where-it-has-run-and-where-it-should). Project page:
+[snepssen.github.io/auto-sort](https://snepssen.github.io/auto-sort/).
+
+![The log page after a first sort: bank statements, bills and tax notices filed into folders named after what the documents call themselves, learnt rather than configured](docs/screens/ledger.png)
+
 ## Installing it
 
 Paste one line into a terminal. On a **Mac** that is the Terminal app; on
@@ -41,6 +48,8 @@ does is a **preview**: that page shows where everything would go, and
 nothing moves for 15 minutes. Then it starts sorting by itself — so it works
 even if you install it and walk away. Click **Keep previewing** to wait as
 long as you like, or **Start sorting now**. Every move can be undone.
+
+![The first run: a preview banner saying nothing has moved yet and when sorting will start by itself, with Start sorting now and Keep previewing](docs/screens/preview.png)
 
 Run the same line again to update. Your rules and everything auto-sort has
 learnt live outside that folder and are not touched; the version before is
