@@ -421,6 +421,35 @@ class PromotedWhenARuleArrives(unittest.TestCase):
             finally:
                 regroup.candidates = original
 
+    def test_a_cycle_gives_the_thread_back_after_its_time(self):
+        """Limited by time, not count: one chunk, then the tray's turn."""
+        for number in range(2, 14):
+            self.hold("letter %d.txt" % number)
+        self.write(ADOPTED)
+        read = []
+        import review
+        original = review.refresh_held
+
+        def counting(journal, **kwargs):
+            rows = kwargs.get("rows")
+            read.append(len(rows) if rows is not None else 10 ** 6)
+            return original(journal, **kwargs)
+        with daemon.PollingDaemon(self.rules, self.state, port=0,
+                                  output=[].append) as service:
+            service.PASS_BUDGET = 0.0
+            service.PASS_CHUNK = 2
+            review.refresh_held = counting
+            try:
+                # The first chunk is previewed and approved, then moved;
+                # each cycle reads one chunk and no more.
+                approving(service, range(1000, 1003))
+                self.assertEqual(read, [2, 2, 2])
+                approving(service, range(1003, 1020))
+            finally:
+                review.refresh_held = original
+        self.assertEqual(len(os.listdir(os.path.join(self.out, "Letters"))),
+                         13)
+
 
 class TheReaderMark(unittest.TestCase):
 

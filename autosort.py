@@ -665,12 +665,14 @@ def daemon_control(command, state_file=None, as_json=False, start=False,
         waiting = journal.waiting_for_reading()
         port = int(journal.get_state("daemon_port",
                                      daemon_module.DEFAULT_PORT))
-    running = daemon_module.wake(state_file, "status")
+    listening, answered = daemon_module.probe(state_file, "status")
+    running = listening is not None
     directory = os.path.dirname(os.path.abspath(state_file or
                                                 paths.ledger_file()))
     abandoned = paths.strays(directory, [state_file or paths.ledger_file()])
     programs = platform_support.inventory()
-    report = {"running": running, "paused": paused, "port": port,
+    report = {"running": running, "busy": running and not answered,
+              "paused": paused, "port": port,
               "queue": counts, "programs": programs,
               "waiting_to_be_read": waiting,
               "unused_state_files": [{"path": path, "bytes": size}
@@ -679,7 +681,8 @@ def daemon_control(command, state_file=None, as_json=False, start=False,
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print("Daemon: %s on 127.0.0.1:%d" % (
-            "running" if running else "not running", port))
+            ("running" if answered else "running (busy reading files)")
+            if running else "not running", port))
         print("Sorting: %s" % ("paused" if paused else "active"))
         print("Queue: %s" % (", ".join(
             "%s %d" % (name, count)

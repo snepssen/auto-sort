@@ -379,6 +379,10 @@ class PollingDaemon(object):
     # reading program installed since. Everything else that could promote
     # them -- a new rule, a better reader -- starts a pass at once.
     REGROUP_INTERVAL = 24 * 3600
+    # Within a cycle's batch: files read together, and roughly how long a
+    # pass may keep the thread before letting the tray answer again.
+    PASS_CHUNK = 5
+    PASS_BUDGET = 1.0
     LEARN_SOON = 60
 
     def _check_learning(self, rule_set, now_value):
@@ -544,27 +548,39 @@ class PollingDaemon(object):
             if found and rule_set.settings.regroup != "apply":
                 self.output(report % (found, "" if found == 1 else "s"))
             return
-        lowest = min(candidate.row["id"] for candidate in batch)
-        try:
-            # What is filed was judged on what was read when it arrived,
-            # and the reader may have got better since; so is what the
-            # tools can add, a page filed before OCR was possible included.
-            review.refresh_held(self.journal, helpers=self._helpers(rule_set),
-                                rows=[candidate.row for candidate in batch],
-                                reader=self.reader)
-            plans = regroup_module.build(self.journal, rule_set, pick=pick,
-                                         only=batch, reader=self.reader)
-        except Exception as error:           # noqa: BLE001
-            # Past this batch rather than stuck on it: the next cycle
-            # would only fail the same way.
-            self.output("Could not look at filed files again: %s" % error)
-            plans = []
-        total = sum(len(plan.items) for _root, plan in plans)
-        if total and rule_set.settings.regroup == "apply":
-            if self._run_plans(plans, rule_set, requested_dry, label):
-                return              # a preview: the same batch moves next
-        self.journal.set_state(progress_key,
-                               "%s %d %d" % (mark, lowest, found + total))
+        started = time.monotonic()
+        for at in range(0, len(batch), self.PASS_CHUNK):
+            chunk = batch[at:at + self.PASS_CHUNK]
+            try:
+                # What is filed was judged on what was read when it
+                # arrived, and the reader may have got better since; so is
+                # what the tools can add, a page filed before OCR was
+                # possible included.
+                review.refresh_held(self.journal,
+                                    helpers=self._helpers(rule_set),
+                                    rows=[candidate.row for candidate in chunk],
+                                    reader=self.reader)
+                plans = regroup_module.build(self.journal, rule_set,
+                                             pick=pick, only=chunk,
+                                             reader=self.reader)
+            except Exception as error:       # noqa: BLE001
+                # Past this chunk rather than stuck on it: the next cycle
+                # would only fail the same way.
+                self.output("Could not look at filed files again: %s" % error)
+                plans = []
+            total = sum(len(plan.items) for _root, plan in plans)
+            if total and rule_set.settings.regroup == "apply":
+                if self._run_plans(plans, rule_set, requested_dry, label):
+                    return          # a preview: the same chunk moves next
+            found += total
+            self.journal.set_state(progress_key, "%s %d %d" % (
+                mark, min(candidate.row["id"] for candidate in chunk), found))
+            # The tray, the log page and a quit wait on this thread, and
+            # what a file costs to read varies a hundredfold: the same
+            # twenty-five files took five seconds in one cycle and a
+            # fraction of one in the next. So the limit is time.
+            if time.monotonic() - started >= self.PASS_BUDGET:
+                return
 
     def _helpers(self, rule_set):
         helpers = self.reader.helpers
@@ -1081,40 +1097,56 @@ def _queue_rules_hash(plan_fingerprint, dry_run):
     return digest.hexdigest()
 
 
-def running_port(state_file=None):
-    """The port a daemon is answering on, or None if none is.
+def probe(state_file=None, command="ping"):
+    """`(port, answered)` for the daemon this ledger belongs to.
 
-    Asked by connecting rather than by reading a recorded number: the ledger
-    remembers the port of the last daemon to run, which says nothing about
-    whether one is running now.
+    `(None, False)` when nothing is listening. A daemon that accepts the
+    connection and does not reply within a second is running and busy: the
+    log page, the tray and these commands are all answered between cycles,
+    and a cycle can be reading files. Taken for "not running", `status`
+    said so about a daemon half-way through a batch, `restart` took a busy
+    daemon for a stopped one, and the menu entry started a second. The
+    command sent is still delivered, when the daemon next looks.
     """
     try:
         with ledger_module.Ledger(state_file) as journal:
             recorded = journal.get_state("daemon_port")
     except (OSError, TypeError, ValueError):
-        return None
+        return None, False
     # A ledger no daemon has ever run from has no daemon. Guessing the
     # default port found whichever daemon was listening there -- somebody
     # else's, for any ledger but the one it runs from -- and the test suite,
     # run beside a live daemon, answered differently while it restarted.
     if not recorded:
-        return None
+        return None, False
     try:
         port = int(recorded)
     except (TypeError, ValueError):
-        return None
+        return None, False
     try:
         connection = socket.create_connection(("127.0.0.1", port), timeout=1)
     except OSError:
-        return None
+        return None, False
     try:
-        connection.sendall(b"ping\n")
-        connection.recv(16)
+        connection.sendall((command + "\n").encode("ascii"))
+        answered = bool(connection.recv(16))
+    except socket.timeout:
+        answered = False
     except OSError:
-        return None
+        return None, False
     finally:
         connection.close()
-    return port
+    return port, answered
+
+
+def running_port(state_file=None):
+    """The port a daemon is listening on, or None if none is.
+
+    Asked by connecting rather than by reading a recorded number: the ledger
+    remembers the port of the last daemon to run, which says nothing about
+    whether one is running now. Busy counts as running; see `probe`.
+    """
+    return probe(state_file)[0]
 
 
 def running_pid(state_file=None):
@@ -1129,18 +1161,5 @@ def running_pid(state_file=None):
 
 
 def wake(state_file=None, command="wake"):
-    try:
-        with ledger_module.Ledger(state_file) as journal:
-            recorded = journal.get_state("daemon_port")
-        # As in `running_port`: no daemon has run from this ledger, so there
-        # is none to wake -- not whichever one has the default port.
-        if not recorded:
-            return False
-        port = int(recorded)
-        connection = socket.create_connection(("127.0.0.1", port), timeout=1)
-        connection.sendall((command + "\n").encode("ascii"))
-        connection.recv(16)
-        connection.close()
-        return True
-    except (OSError, TypeError, ValueError):
-        return False
+    """Whether a daemon was there to take the command. See `probe`."""
+    return probe(state_file, command)[0] is not None
