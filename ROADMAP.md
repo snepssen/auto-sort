@@ -330,7 +330,9 @@ Three things learnt building it, each now in the code:
 - **kded owns the watcher, not plasmashell.** On Plasma 6 the
   `StatusNotifierWatcher` lives in kded, which forgets every item when it
   restarts and tells none of them. The item listens for the watcher's name
-  changing hands and registers again.
+  changing hands and registers again. Tried under a live session:
+  `plasma-kded6.service` restarted, and a running daemon's item was back in
+  the new watcher's list within a second, ahead of every other application.
 - **A host may call back before it replies.** Waiting for a reply without
   answering calls would stall until the timeout, so a call keeps answering
   while it waits.
@@ -339,9 +341,6 @@ Three things learnt building it, each now in the code:
 
 Still open:
 
-- **A watcher restart on a real desktop.** Re-registration is tested
-  against a fake bus; restarting kded6 under a live session has not been
-  done, because it briefly empties everybody's tray.
 - **Desktops with no host at all.** GNOME shows nothing without the
   AppIndicator extension. The daemon says so and carries on headless, and
   the applications-menu entry -- which now starts the daemon if nothing is
