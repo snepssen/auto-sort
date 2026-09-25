@@ -1871,6 +1871,7 @@ USAGE = """auto-sort %s
   auto-sort status              show daemon and queue state
   auto-sort costs               which files were expensive to read, and why
   auto-sort diagnose            a report to paste into an issue; names no file
+                                (--desktop writes it to the Desktop and opens it)
   auto-sort open-log            open the live loopback log page
   auto-sort sort-now            wake the daemon for an immediate scan
   auto-sort autostart [ACTION]  show, install, or remove login launch (default status)
@@ -1913,6 +1914,7 @@ def main(argv=None):
     dry_run = None
     once = False
     start_daemon = False
+    desktop = False
     port = None
     targets = []
     while argv:
@@ -1939,6 +1941,8 @@ def main(argv=None):
             dry_run = True
         elif argument == "--once":
             once = True
+        elif argument == "--desktop":
+            desktop = True
         elif argument == "--start":
             start_daemon = True
         elif argument == "--port" and argv:
@@ -2031,6 +2035,15 @@ def main(argv=None):
     if command == "diagnose":
         import diagnose
         found = diagnose.collect(state_file, rule_path)
+        if desktop:
+            path = diagnose.write_to_desktop(found)
+            print("The report is on your Desktop:")
+            print("  %s" % path)
+            print()
+            print("Write what happened at the top of it, then send it:")
+            print("  %s" % diagnose.ISSUES)
+            diagnose.show(path)
+            return 0
         if as_json:
             print(json.dumps(found, indent=2, default=str))
         else:

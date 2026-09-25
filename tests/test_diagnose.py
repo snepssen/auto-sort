@@ -84,6 +84,26 @@ class NamesNoFile(unittest.TestCase):
             "moved <path> and <name> to <path>")
 
 
+class OnTheDesktop(unittest.TestCase):
+    """REPORT-A-PROBLEM: a file somebody can find, fill in and send."""
+
+    def test_what_happened_comes_first_and_nothing_is_overwritten(self):
+        desktop = tempfile.mkdtemp(prefix="autosort-desktop-")
+        self.addCleanup(shutil.rmtree, desktop, True)
+        found = {"auto-sort": "0.9.0", "daemon": {"state": "running"}}
+        first = diagnose.write_to_desktop(found, desktop, now=0)
+        second = diagnose.write_to_desktop(found, desktop, now=0)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(os.listdir(desktop)), 2)
+        with open(first, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertLess(text.index("WHAT HAPPENED?"),
+                        text.index("HOW TO SEND IT"))
+        self.assertLess(text.index("HOW TO SEND IT"),
+                        text.index("auto-sort: 0.9.0"))
+        self.assertIn(diagnose.ISSUES, text)
+
+
 class TheSessionBus(unittest.TestCase):
     """What a Linux report says about the tray's side of the bus."""
 

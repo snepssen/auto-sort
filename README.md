@@ -16,6 +16,40 @@ shows every ledgered operation and can reveal the recorded file safely. See
 [DESIGN.md](DESIGN.md) for the whole shape and [RULES.md](RULES.md) for
 configuration.
 
+## Installing it
+
+Paste one line into a terminal. On a **Mac** that is the Terminal app; on
+**Linux**, whichever terminal your desktop has:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/snepssen/auto-sort/main/install.sh | sh
+```
+
+On **Windows**, in PowerShell (search the Start menu for it):
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/snepssen/auto-sort/main/install.ps1 | iex"
+```
+
+It needs Python 3.8 or newer and says how to get it if there is none (on
+Windows it offers to install it). Then it downloads auto-sort into a folder
+of its own — `~/Applications/auto-sort` on a Mac, `~/.local/share/auto-sort`
+on Linux, `%LOCALAPPDATA%\Programs\auto-sort` on Windows — offers the
+optional programs described under [Requirements](#requirements), offers to
+start auto-sort whenever you log in, and opens its page. It starts in
+**preview mode**: it shows where everything would go and moves nothing
+until you say so.
+
+Run the same line again to update. Your rules and everything auto-sort has
+learnt live outside that folder and are not touched; the version before is
+kept beside it as `auto-sort.previous`.
+
+**If it does not work**, double-click `REPORT-A-PROBLEM` in that folder
+(`.command` on a Mac, `.bat` on Windows, `.sh` on Linux). It writes a report
+to your Desktop — naming none of your files — and opens it, with a space at
+the top for what happened and how to send it. See
+[Where it has run, and where it should](#where-it-has-run-and-where-it-should).
+
 ## What works now
 
 ```sh

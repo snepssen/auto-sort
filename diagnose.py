@@ -89,6 +89,76 @@ def render(found):
     return "\n".join(lines)
 
 
+ISSUES = "https://github.com/snepssen/auto-sort/issues/new"
+
+
+def report_text(found, now=None):
+    """The whole file somebody sends: what to do with it, then the report.
+
+    Written for a person who has never filed an issue: the one thing only
+    they can say goes at the top, with room to say it, and how to send the
+    file comes before anything technical.
+    """
+    import time
+    stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(now))
+    return "\n".join([
+        "auto-sort problem report, written %s" % stamp,
+        "",
+        "WHAT HAPPENED? Write it here, in your own words: what you did, what",
+        "you expected, and what you saw instead. A screenshot helps too.",
+        "",
+        "",
+        "",
+        "HOW TO SEND IT: open %s" % ISSUES,
+        "(a free GitHub account is needed), give it a short title, and drag",
+        "this file into the box.",
+        "",
+        "Nothing below names any of your files. Read it before you send it",
+        "if you like -- it is yours to send or not.",
+        "",
+        "-" * 72,
+        render(found),
+        "",
+    ])
+
+
+def write_to_desktop(found, folder=None, now=None):
+    """Write the report beside everything else they can find: the Desktop.
+
+    A new file every time, named by when it was written -- never over an
+    older report somebody may still mean to send.
+    """
+    import time
+    folder = folder or userdirs.path("desktop") or userdirs.home()
+    if not os.path.isdir(folder):
+        folder = userdirs.home()
+    stamp = time.strftime("%Y-%m-%d %H%M", time.localtime(now))
+    base = os.path.join(folder, "auto-sort problem report %s" % stamp)
+    target, number = base + ".txt", 1
+    while os.path.exists(target):
+        number += 1
+        target = "%s (%d).txt" % (base, number)
+    with open(target, "x", encoding="utf-8", newline="\n") as handle:
+        handle.write(report_text(found, now))
+    return target
+
+
+def show(path):
+    """Open the report in whatever this computer opens text files with."""
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(path)                           # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        return True
+    except (OSError, AttributeError):
+        return False
+
+
 def _plain(value):
     if isinstance(value, (dict, list)):
         return json.dumps(value, sort_keys=True)

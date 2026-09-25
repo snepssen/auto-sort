@@ -1,0 +1,7 @@
+# Windows scripts keep Windows line endings wherever they are checked out;
+# cmd.exe misreads a batch file with bare LF in places.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+# And shell scripts keep Unix ones, or sh will not run them.
+*.sh text eol=lf
+*.command text eol=lf
