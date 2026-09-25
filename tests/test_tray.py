@@ -13,16 +13,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import daemon                                             # noqa: E402
+import dbuswire                                           # noqa: E402
 import tray                                               # noqa: E402
 
 
 class TrayAvailability(unittest.TestCase):
 
-    def test_linux_without_status_notifier_is_explicitly_headless(self):
-        with mock.patch("tray.sys.platform", "linux"):
+    def test_linux_without_a_session_bus_is_explicitly_headless(self):
+        """No bus in the environment -- a daemon started from a bare SSH
+        login, or a desktop with no D-Bus at all -- is no icon and a
+        reason, never an exception. And never the real bus of whoever
+        runs the tests: an icon appeared on a desktop during a test run."""
+        environment = dict((key, value) for key, value in os.environ.items()
+                           if key not in ("DBUS_SESSION_BUS_ADDRESS",
+                                          "XDG_RUNTIME_DIR"))
+        with mock.patch("tray.sys.platform", "linux"), \
+                mock.patch.dict(os.environ, environment, clear=True):
             item = tray.create({})
         self.assertFalse(item.available)
-        self.assertIn("StatusNotifier", item.reason)
+        self.assertIn("session bus", item.reason)
 
     def test_windows_backend_failure_falls_back_without_raising(self):
         with mock.patch("tray.sys.platform", "win32"), \
@@ -180,6 +189,214 @@ class NativeBackend(unittest.TestCase):
             self.assertTrue(item.pause_item)
         finally:
             item.close()
+
+
+class FakeBus(object):
+    """A session bus as far as the tray can tell: calls are recorded,
+    signals are kept, and exported handlers are called directly."""
+
+    def __init__(self, watcher=True):
+        self.watcher = watcher
+        self.closed = False
+        self.objects = {}
+        self.calls = []
+        self.emitted = []
+        self.matches = []
+
+    def export(self, path, interface, handlers):
+        self.objects.setdefault(path, {})[interface] = handlers
+
+    def call(self, destination, path, interface, member, signature="",
+             body=(), timeout=None):
+        self.calls.append((destination, member, list(body)))
+        if member == "RegisterStatusNotifierItem" and not self.watcher:
+            raise dbuswire.DBusError("org.freedesktop.DBus.Error."
+                                     "ServiceUnknown")
+        return []
+
+    def add_match(self, rule, predicate, callback):
+        self.matches.append((rule, predicate, callback))
+
+    def emit(self, path, interface, member, signature="", body=()):
+        self.emitted.append((path, interface, member, list(body)))
+
+    def pump(self, seconds):
+        pass
+
+    def close(self):
+        self.closed = True
+
+    def invoke(self, path, interface, member, *body):
+        """Call an exported method as the desktop would, and put the
+        answer through the real marshaller with the signature the handler
+        says it has -- which is what would reach the desktop."""
+        message = dbuswire.Message(dbuswire.METHOD_CALL, path=path,
+                                   interface=interface, member=member,
+                                   body=body)
+        signature, reply = self.objects[path][interface][member](message)
+        if signature:
+            dbuswire.marshal(signature, reply)
+        return reply
+
+    def owner_changed(self, old, new):
+        signal = dbuswire.Message(
+            dbuswire.SIGNAL, interface="org.freedesktop.DBus",
+            member="NameOwnerChanged", signature="sss",
+            body=["org.kde.StatusNotifierWatcher", old, new])
+        for _rule, predicate, callback in self.matches:
+            if predicate(signal):
+                callback(signal)
+
+    def registrations(self):
+        return [body for _dest, member, body in self.calls
+                if member == "RegisterStatusNotifierItem"]
+
+
+class LinuxBackend(unittest.TestCase):
+    """The StatusNotifierItem, against a bus that records what it is told.
+
+    Plasma showed the icon and its menu on a Steam Deck; these hold the
+    item to what it told Plasma, so the next change cannot quietly send a
+    property of the wrong type or a menu the host cannot read.
+    """
+
+    def tray(self, watcher=True):
+        self.bus = FakeBus(watcher)
+        self.done = []
+        actions = dict((name, (lambda name=name: self.done.append(name)))
+                       for name in ("open_log", "toggle_pause", "sort_now",
+                                    "restart", "quit"))
+        return tray._linux_tray(actions, connect=lambda: self.bus)
+
+    def labels(self, item):
+        _revision, (_id, _properties, children) = self.bus.invoke(
+            tray.MENU_PATH, tray.MENU, "GetLayout", 0, -1, [])
+        return [child.value[1].get("label", child.value[1].get("type")).value
+                for child in children]
+
+    def test_it_takes_a_name_and_registers_it_with_the_watcher(self):
+        item = self.tray()
+        self.assertTrue(item.available)
+        name = "org.kde.StatusNotifierItem-%d-1" % os.getpid()
+        self.assertIn(("org.freedesktop.DBus", "RequestName", [name, 4]),
+                      self.bus.calls)
+        self.assertEqual(self.bus.registrations(), [[name]])
+
+    def test_every_property_the_host_reads(self):
+        item = self.tray()
+        properties = self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES,
+                                     "GetAll", tray.SNI)[0]
+        self.assertEqual(properties["IconName"].value, "folder")
+        self.assertEqual(properties["Status"].value, "Active")
+        self.assertEqual(properties["Menu"].value, tray.MENU_PATH)
+        self.assertEqual(properties["Menu"].signature, "o")
+        self.assertEqual(properties["ToolTip"].value[3],
+                         "Watching your folders")
+        self.assertEqual(self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES,
+                                         "Get", tray.SNI, "Title")[0].value,
+                         "auto-sort")
+        self.assertEqual(self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES,
+                                         "GetAll", "some.Other")[0], {})
+        item.close()
+
+    def test_the_menu_has_the_same_actions_as_the_other_two(self):
+        item = self.tray()
+        self.assertEqual(self.labels(item),
+                         ["Open log", "Pause sorting", "Sort now",
+                          "separator", "Restart auto-sort",
+                          "Quit auto-sort"])
+        groups = self.bus.invoke(tray.MENU_PATH, tray.MENU,
+                                 "GetGroupProperties", [1, 2], ["label"])[0]
+        self.assertEqual([(number, properties["label"].value)
+                          for number, properties in groups],
+                         [(1, "Open log"), (2, "Pause sorting")])
+        self.assertEqual(self.bus.invoke(tray.MENU_PATH, tray.PROPERTIES,
+                                         "Get", tray.MENU,
+                                         "Version")[0].value, 3)
+
+    def test_each_entry_does_what_it_says(self):
+        item = self.tray()
+        for number in (1, 2, 3, 5, 6):
+            self.bus.invoke(tray.MENU_PATH, tray.MENU, "Event", number,
+                            "clicked", dbuswire.Variant("s", ""), 0)
+        self.bus.invoke(tray.MENU_PATH, tray.MENU, "Event", 1, "hovered",
+                        dbuswire.Variant("s", ""), 0)
+        self.assertEqual(self.done, ["open_log", "toggle_pause", "sort_now",
+                                     "restart", "quit"])
+        self.bus.invoke(tray.MENU_PATH, tray.MENU, "EventGroup",
+                        [(3, "clicked", dbuswire.Variant("s", ""), 0)])
+        self.assertEqual(self.done[-1], "sort_now")
+
+    def test_a_left_click_opens_the_log(self):
+        item = self.tray()
+        self.bus.invoke(tray.SNI_PATH, tray.SNI, "Activate", 10, 10)
+        self.assertEqual(self.done, ["open_log"])
+
+    def test_pausing_renames_the_entry_and_tells_the_host(self):
+        item = self.tray()
+        item.set_paused(True)
+        self.assertEqual(self.labels(item)[1], "Resume sorting")
+        properties = self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES,
+                                     "GetAll", tray.SNI)[0]
+        self.assertEqual(properties["OverlayIconName"].value,
+                         "media-playback-pause")
+        self.assertEqual(properties["ToolTip"].value[3], "Paused")
+        members = [member for _path, _interface, member, _body
+                   in self.bus.emitted]
+        self.assertEqual(members, ["LayoutUpdated", "NewOverlayIcon",
+                                   "NewToolTip"])
+        revision = self.bus.emitted[0][3][0]
+        self.assertEqual(self.bus.invoke(tray.MENU_PATH, tray.MENU,
+                                         "GetLayout", 0, -1, [])[0], revision)
+        item.set_paused(True)                  # the loop says so every cycle
+        self.assertEqual(len(self.bus.emitted), 3)
+
+    def test_a_watcher_that_restarts_is_registered_with_again(self):
+        """kded owns the watcher on Plasma 6 and forgets every item when it
+        restarts, without telling any of them."""
+        item = self.tray()
+        self.bus.owner_changed(":1.30", "")
+        self.assertFalse(item.registered)
+        self.bus.owner_changed("", ":1.31")
+        self.assertTrue(item.registered)
+        self.assertEqual(len(self.bus.registrations()), 2)
+
+    def test_no_watcher_yet_is_a_reason_and_an_icon_later(self):
+        """A login where auto-sort beat the desktop to it."""
+        item = self.tray(watcher=False)
+        self.assertFalse(item.available)
+        self.assertIn("will appear", item.reason)
+        self.bus.watcher = True
+        self.bus.owner_changed("", ":1.40")
+        self.assertTrue(item.registered)
+
+    def test_a_bus_that_breaks_never_reaches_the_daemon(self):
+        item = self.tray()
+        self.bus.pump = mock.Mock(side_effect=dbuswire.DBusError("gone"))
+        item.pump(0.25)
+        self.assertTrue(self.bus.closed)
+        item.pump(0.25)                        # and stays quiet
+        item.set_paused(True)
+
+    def test_introspection_describes_what_is_there(self):
+        import xml.etree.ElementTree as ElementTree
+        self.tray()
+        for path, interface in ((tray.SNI_PATH, tray.SNI),
+                                (tray.MENU_PATH, tray.MENU)):
+            text = self.bus.invoke(path, "org.freedesktop.DBus."
+                                   "Introspectable", "Introspect")[0]
+            names = [node.get("name") for node
+                     in ElementTree.fromstring(text.split("\n", 2)[2])]
+            self.assertIn(interface, names)
+
+    def test_a_bus_that_will_not_connect_is_headless(self):
+        with mock.patch("tray.sys.platform", "linux"), \
+                mock.patch("dbuswire.Connection",
+                           side_effect=dbuswire.DBusError(
+                               "cannot reach the session bus")):
+            item = tray.create({})
+        self.assertFalse(item.available)
+        self.assertIn("session bus", item.reason)
 
 
 if __name__ == "__main__":

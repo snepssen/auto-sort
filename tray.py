@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 
@@ -28,8 +29,7 @@ def create(actions):
             return _mac_tray(actions)
         if sys.platform.startswith("win"):
             return _windows_tray(actions)
-        return UnavailableTray(
-            "no StatusNotifier backend on this Linux desktop")
+        return _linux_tray(actions)
     except Exception as error:
         return UnavailableTray("native tray unavailable: %s" % error)
 
@@ -492,3 +492,358 @@ def _windows_tray(actions):                                  # pragma: no cover
             user32.UnregisterClassW(self.class_name, self.instance)
 
     return WindowsTray()
+
+
+# ---------------------------------------------------------------------------
+# Linux, as a StatusNotifierItem on the session bus
+# ---------------------------------------------------------------------------
+#
+# KDE, and anything that hosts the same protocol, draws tray icons for
+# objects on the session bus: an `org.kde.StatusNotifierItem` describing the
+# icon, registered with `org.kde.StatusNotifierWatcher`, and a
+# `com.canonical.dbusmenu` object for its menu. The desktop calls in; this
+# answers. `dbuswire` speaks the protocol with the standard library, so the
+# Linux icon costs what the other two do: nothing installed.
+#
+# Registration is by a well-known name of our own, which every host
+# understands. The watcher forgets every item when it restarts -- kded, not
+# plasmashell, owns it on Plasma 6 -- and says nothing to them, so the item
+# listens for the watcher's name changing hands and registers again.
+
+SNI_PATH = "/StatusNotifierItem"
+MENU_PATH = "/MenuBar"
+SNI = "org.kde.StatusNotifierItem"
+MENU = "com.canonical.dbusmenu"
+PROPERTIES = "org.freedesktop.DBus.Properties"
+WATCHER = ("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+           "org.kde.StatusNotifierWatcher")
+
+# A name from the freedesktop icon naming specification, so every icon
+# theme has one; the same icon the applications-menu entry uses.
+ICON = "folder"
+PAUSED_OVERLAY = "media-playback-pause"
+
+# Menu item ids. Zero is the root, by the protocol.
+_OPEN, _TOGGLE, _SORT, _SEPARATOR, _RESTART, _QUIT = 1, 2, 3, 4, 5, 6
+
+
+def _linux_tray(actions, connect=None):
+    import dbuswire
+
+    if connect is None:
+        connect = dbuswire.Connection
+    connection = connect()
+    try:
+        return LinuxTray(actions, connection, dbuswire)
+    except Exception:
+        connection.close()
+        raise
+
+
+class LinuxTray(object):
+    """A tray icon on any desktop that hosts StatusNotifierItems.
+
+    `available` says whether a host was there to show it when it started.
+    Where none was -- a desktop that has no tray protocol, or a login where
+    auto-sort beat the desktop to it -- the item still listens, and appears
+    by itself if a watcher turns up later.
+    """
+
+    def __init__(self, actions, connection, dbuswire):
+        self.actions = actions
+        self.bus = connection
+        self.dbus = dbuswire
+        self.paused = False
+        self.revision = 1
+        self.name = "org.kde.StatusNotifierItem-%d-1" % os.getpid()
+        self.registered = False
+        variant = dbuswire.Variant
+
+        connection.export(SNI_PATH, SNI, {
+            "Activate": self._activate,
+            "SecondaryActivate": lambda _message: ("", []),
+            "ContextMenu": lambda _message: ("", []),
+            "Scroll": lambda _message: ("", []),
+        })
+        connection.export(SNI_PATH, PROPERTIES, {
+            "Get": lambda message: ("v", [self._item_properties()[
+                message.body[1]]]),
+            "GetAll": lambda message: ("a{sv}", [
+                self._item_properties() if message.body[0] == SNI else {}]),
+        })
+        connection.export(MENU_PATH, MENU, {
+            "GetLayout": self._get_layout,
+            "GetGroupProperties": self._get_group_properties,
+            "GetProperty": lambda message: ("v", [self._menu_items()[
+                message.body[0]][message.body[1]]]),
+            "Event": self._event,
+            "EventGroup": self._event_group,
+            "AboutToShow": lambda _message: ("b", [False]),
+            "AboutToShowGroup": lambda _message: ("aiai", [[], []]),
+        })
+        connection.export(MENU_PATH, PROPERTIES, {
+            "Get": lambda message: ("v", [self._menu_properties()[
+                message.body[1]]]),
+            "GetAll": lambda message: ("a{sv}", [
+                self._menu_properties() if message.body[0] == MENU else {}]),
+        })
+        for path, interfaces in ((SNI_PATH, (SNI, PROPERTIES)),
+                                 (MENU_PATH, (MENU, PROPERTIES))):
+            connection.export(path, "org.freedesktop.DBus.Introspectable", {
+                "Introspect": lambda _message, interfaces=interfaces: (
+                    "s", [_introspection(interfaces)])})
+            connection.export(path, "org.freedesktop.DBus.Peer", {
+                "Ping": lambda _message: ("", [])})
+        self._variant = variant
+
+        # DO_NOT_QUEUE: this pid's name is ours or nobody's.
+        connection.call(*dbuswire.BUS, member="RequestName", signature="su",
+                        body=[self.name, 4])
+        connection.add_match(
+            "type='signal',sender='org.freedesktop.DBus',"
+            "interface='org.freedesktop.DBus',member='NameOwnerChanged',"
+            "arg0='%s'" % WATCHER[0],
+            lambda message: message.member == "NameOwnerChanged"
+            and message.body and message.body[0] == WATCHER[0],
+            self._watcher_changed)
+        self.available = self._register()
+        self.reason = "" if self.available else (
+            "no StatusNotifier host on this desktop yet; the icon will "
+            "appear if one starts")
+
+    # -- registration -------------------------------------------------------
+
+    def _register(self):
+        try:
+            self.bus.call(*WATCHER, member="RegisterStatusNotifierItem",
+                          signature="s", body=[self.name])
+        except self.dbus.DBusError:
+            self.registered = False
+            return False
+        self.registered = True
+        return True
+
+    def _watcher_changed(self, message):
+        _name, _old, new = message.body[:3]
+        if new:
+            self._register()
+        else:
+            self.registered = False
+
+    # -- the item -----------------------------------------------------------
+
+    def _item_properties(self):
+        variant = self._variant
+        state = "Paused" if self.paused else "Watching your folders"
+        return {
+            "Category": variant("s", "ApplicationStatus"),
+            "Id": variant("s", "auto-sort"),
+            "Title": variant("s", "auto-sort"),
+            "Status": variant("s", "Active"),
+            "WindowId": variant("i", 0),
+            "IconName": variant("s", ICON),
+            "IconThemePath": variant("s", ""),
+            "IconPixmap": variant("a(iiay)", []),
+            "OverlayIconName": variant("s", PAUSED_OVERLAY
+                                       if self.paused else ""),
+            "OverlayIconPixmap": variant("a(iiay)", []),
+            "AttentionIconName": variant("s", ""),
+            "AttentionIconPixmap": variant("a(iiay)", []),
+            "AttentionMovieName": variant("s", ""),
+            "ToolTip": variant("(sa(iiay)ss)",
+                               (ICON, [], "auto-sort", state)),
+            "ItemIsMenu": variant("b", False),
+            "Menu": variant("o", MENU_PATH),
+        }
+
+    def _activate(self, _message):
+        # A left click opens the log, as it does on a Mac; the menu is a
+        # right click away.
+        self._run("open_log")
+        return "", []
+
+    # -- the menu -----------------------------------------------------------
+
+    def _menu_properties(self):
+        variant = self._variant
+        return {"Version": variant("u", 3),
+                "TextDirection": variant("s", "ltr"),
+                "Status": variant("s", "normal"),
+                "IconThemePath": variant("as", [])}
+
+    def _menu_items(self):
+        variant = self._variant
+        # Restart is here because a daemon cannot reload its own code, and
+        # asking for a terminal is the wrong answer for somebody whose whole
+        # interface is this icon.
+        items = {0: {"children-display": variant("s", "submenu")}}
+        for number, label in ((_OPEN, "Open log"),
+                              (_TOGGLE, "Resume sorting" if self.paused
+                               else "Pause sorting"),
+                              (_SORT, "Sort now"),
+                              (_SEPARATOR, None),
+                              (_RESTART, "Restart auto-sort"),
+                              (_QUIT, "Quit auto-sort")):
+            if label is None:
+                items[number] = {"type": variant("s", "separator")}
+            else:
+                items[number] = {"label": variant("s", label),
+                                 "enabled": variant("b", True),
+                                 "visible": variant("b", True)}
+        return items
+
+    def _node(self, number, names, depth):
+        properties = self._menu_items()[number]
+        if names:
+            properties = dict((key, value) for key, value
+                              in properties.items() if key in names)
+        children = []
+        if number == 0 and depth != 0:
+            children = [self._variant("(ia{sv}av)",
+                                      self._node(child, names, depth - 1))
+                        for child in (_OPEN, _TOGGLE, _SORT, _SEPARATOR,
+                                      _RESTART, _QUIT)]
+        return (number, properties, children)
+
+    def _get_layout(self, message):
+        parent, depth, names = message.body
+        if parent not in self._menu_items():
+            raise ValueError("no menu item %d" % parent)
+        return "u(ia{sv}av)", [self.revision,
+                               self._node(parent, set(names), depth)]
+
+    def _get_group_properties(self, message):
+        ids, names = message.body
+        items = self._menu_items()
+        wanted = ids or sorted(items)
+        return "a(ia{sv})", [[
+            (number, dict((key, value) for key, value
+                          in items[number].items()
+                          if not names or key in names))
+            for number in wanted if number in items]]
+
+    def _event(self, message):
+        number, event_id = message.body[0], message.body[1]
+        if event_id == "clicked":
+            self._clicked(number)
+        return "", []
+
+    def _event_group(self, message):
+        for number, event_id, _data, _timestamp in message.body[0]:
+            if event_id == "clicked":
+                self._clicked(number)
+        return "ai", [[]]
+
+    def _clicked(self, number):
+        self._run({_OPEN: "open_log", _TOGGLE: "toggle_pause",
+                   _SORT: "sort_now", _RESTART: "restart",
+                   _QUIT: "quit"}.get(number))
+
+    def _run(self, action):
+        callback = self.actions.get(action) if action else None
+        if callback is not None:
+            callback()
+
+    # -- the contract -------------------------------------------------------
+
+    def set_paused(self, paused):
+        paused = bool(paused)
+        if paused == self.paused or self.bus.closed:
+            return
+        self.paused = paused
+        self.revision += 1
+        try:
+            self.bus.emit(MENU_PATH, MENU, "LayoutUpdated", "ui",
+                          [self.revision, 0])
+            self.bus.emit(SNI_PATH, SNI, "NewOverlayIcon")
+            self.bus.emit(SNI_PATH, SNI, "NewToolTip")
+        except self.dbus.DBusError:
+            pass
+
+    def pump(self, seconds):
+        """Answer the desktop for at most `seconds`, and never raise.
+
+        The daemon calls this four times a second between sorts. A bus that
+        has gone away -- the session ended under a daemon that outlived
+        it -- leaves the icon gone and the sorting exactly as it was.
+        """
+        if self.bus.closed:
+            return
+        try:
+            self.bus.pump(seconds)
+        except Exception:                        # noqa: BLE001
+            self.bus.close()
+
+    def close(self):
+        self.bus.close()
+
+
+def _introspection(interfaces):
+    """Enough introspection data for a tool that asks what is here.
+
+    Hosts use generated proxies and never ask, but `busctl`, `qdbus` and
+    D-Feet do, and an object that cannot say what it is looks broken.
+    """
+    known = {
+        SNI: """  <interface name="org.kde.StatusNotifierItem">
+    <method name="Activate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+    <method name="SecondaryActivate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+    <method name="ContextMenu"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+    <method name="Scroll"><arg type="i" direction="in"/><arg type="s" direction="in"/></method>
+    <property name="Category" type="s" access="read"/>
+    <property name="Id" type="s" access="read"/>
+    <property name="Title" type="s" access="read"/>
+    <property name="Status" type="s" access="read"/>
+    <property name="WindowId" type="i" access="read"/>
+    <property name="IconName" type="s" access="read"/>
+    <property name="IconThemePath" type="s" access="read"/>
+    <property name="IconPixmap" type="a(iiay)" access="read"/>
+    <property name="OverlayIconName" type="s" access="read"/>
+    <property name="OverlayIconPixmap" type="a(iiay)" access="read"/>
+    <property name="AttentionIconName" type="s" access="read"/>
+    <property name="AttentionIconPixmap" type="a(iiay)" access="read"/>
+    <property name="AttentionMovieName" type="s" access="read"/>
+    <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
+    <property name="ItemIsMenu" type="b" access="read"/>
+    <property name="Menu" type="o" access="read"/>
+    <signal name="NewTitle"/><signal name="NewIcon"/>
+    <signal name="NewAttentionIcon"/><signal name="NewOverlayIcon"/>
+    <signal name="NewToolTip"/>
+    <signal name="NewStatus"><arg type="s"/></signal>
+  </interface>
+""",
+        MENU: """  <interface name="com.canonical.dbusmenu">
+    <method name="GetLayout"><arg type="i" direction="in"/><arg type="i" direction="in"/><arg type="as" direction="in"/><arg type="u" direction="out"/><arg type="(ia{sv}av)" direction="out"/></method>
+    <method name="GetGroupProperties"><arg type="ai" direction="in"/><arg type="as" direction="in"/><arg type="a(ia{sv})" direction="out"/></method>
+    <method name="GetProperty"><arg type="i" direction="in"/><arg type="s" direction="in"/><arg type="v" direction="out"/></method>
+    <method name="Event"><arg type="i" direction="in"/><arg type="s" direction="in"/><arg type="v" direction="in"/><arg type="u" direction="in"/></method>
+    <method name="EventGroup"><arg type="a(isvu)" direction="in"/><arg type="ai" direction="out"/></method>
+    <method name="AboutToShow"><arg type="i" direction="in"/><arg type="b" direction="out"/></method>
+    <method name="AboutToShowGroup"><arg type="ai" direction="in"/><arg type="ai" direction="out"/><arg type="ai" direction="out"/></method>
+    <property name="Version" type="u" access="read"/>
+    <property name="TextDirection" type="s" access="read"/>
+    <property name="Status" type="s" access="read"/>
+    <property name="IconThemePath" type="as" access="read"/>
+    <signal name="LayoutUpdated"><arg type="u"/><arg type="i"/></signal>
+    <signal name="ItemsPropertiesUpdated"><arg type="a(ia{sv})"/><arg type="a(ias)"/></signal>
+    <signal name="ItemActivationRequested"><arg type="i"/><arg type="u"/></signal>
+  </interface>
+""",
+        PROPERTIES: """  <interface name="org.freedesktop.DBus.Properties">
+    <method name="Get"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="v" direction="out"/></method>
+    <method name="GetAll"><arg type="s" direction="in"/><arg type="a{sv}" direction="out"/></method>
+  </interface>
+""",
+    }
+    return ('<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object '
+            'Introspection 1.0//EN"\n "http://www.freedesktop.org/standards/'
+            'dbus/1.0/introspect.dtd">\n<node>\n'
+            + "".join(known[name] for name in interfaces)
+            + """  <interface name="org.freedesktop.DBus.Introspectable">
+    <method name="Introspect"><arg type="s" direction="out"/></method>
+  </interface>
+  <interface name="org.freedesktop.DBus.Peer">
+    <method name="Ping"/>
+  </interface>
+</node>
+""")
