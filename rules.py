@@ -881,6 +881,12 @@ def render_template(template, facts):
         result = os.sep + result
     if drive:
         result = drive + result
+    elif absolute and os.name == "nt":
+        # `into = /Sorted/...` on Windows means the root of the current
+        # drive. Python 3.8 called that absolute and 3.13 does not, so the
+        # same rule filed to D:\Sorted on one and was refused on the other.
+        # Windows' own answer, on every version.
+        result = os.path.abspath(result)
     return result or (os.sep if absolute else "_")
 
 

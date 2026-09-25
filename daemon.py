@@ -87,8 +87,20 @@ class DaemonLock(object):
         # let a second live daemon bind: two listeners on one address need
         # SO_REUSEPORT, which is deliberately not set, so the socket keeps
         # working as the single-instance lock.
+        #
+        # Windows means something else by it: SO_REUSEADDR there lets a
+        # second socket take a port another is still listening on, and two
+        # daemons ran side by side (found by the first run of the tests on
+        # Windows). Its lock is SO_EXCLUSIVEADDRUSE, and it has no
+        # TIME_WAIT problem for a listening socket to begin with.
         try:
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if os.name == "nt":
+                self.socket.setsockopt(
+                    socket.SOL_SOCKET,
+                    getattr(socket, "SO_EXCLUSIVEADDRUSE", -5), 1)
+            else:
+                self.socket.setsockopt(socket.SOL_SOCKET,
+                                       socket.SO_REUSEADDR, 1)
         except OSError:
             pass
         try:

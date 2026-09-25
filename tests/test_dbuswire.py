@@ -271,6 +271,8 @@ class FakeBus(object):
         self.server.close()
 
 
+@unittest.skipIf(os.name == "nt", "the session bus is a Linux desktop's; "
+                 "authenticating to it needs a Unix uid")
 class TheConnection(unittest.TestCase):
 
     def connect(self, script=None):
@@ -374,6 +376,7 @@ class FindingTheBus(unittest.TestCase):
             self.assertEqual(dbuswire.session_address(),
                              "unix:path=/run/user/7/bus")
 
+    @unittest.skipIf(os.name == "nt", "a Unix socket path, on Linux only")
     def test_the_runtime_directory_when_the_variable_is_gone(self):
         directory = os.path.dirname(os.path.abspath(__file__))
         with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": directory},

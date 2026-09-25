@@ -63,7 +63,7 @@ class Autostart(unittest.TestCase):
         with mock.patch("autostart.platform_name", return_value="macos"), \
                 mock.patch("autostart.os.path.expanduser",
                            side_effect=lambda value: value.replace("~", home, 1)), \
-                mock.patch("autostart.os.getuid", return_value=501):
+                mock.patch("autostart.os.getuid", return_value=501, create=True):
             installed = autostart.install(self.rules, runner)
             self.assertTrue(installed["installed"])
             self.assertEqual(calls[-1][:3], ["launchctl", "bootstrap", "gui/501"])
@@ -75,7 +75,7 @@ class Autostart(unittest.TestCase):
         with mock.patch("autostart.platform_name", return_value="macos"), \
                 mock.patch("autostart.os.path.expanduser",
                            side_effect=lambda value: value.replace("~", home, 1)), \
-                mock.patch("autostart.os.getuid", return_value=501):
+                mock.patch("autostart.os.getuid", return_value=501, create=True):
             with self.assertRaises(autostart.AutostartError):
                 autostart.install(self.rules,
                                   lambda *_args, **_kwargs: Result(1, stderr=b"bad"))

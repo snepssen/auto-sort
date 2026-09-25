@@ -375,6 +375,12 @@ def assess(found):
 
 
 def same_volume_as_home(target):
+    # A folder not made yet is on the disk of the nearest one that is: a
+    # machine with no Downloads folder -- a fresh CI runner had none -- has
+    # it on the home disk the moment it is created.
+    target = os.path.abspath(target)
+    while not os.path.exists(target) and os.path.dirname(target) != target:
+        target = os.path.dirname(target)
     try:
         return os.stat(target).st_dev == os.stat(userdirs.home()).st_dev
     except OSError:

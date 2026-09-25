@@ -139,7 +139,9 @@ class ServiceRestart(unittest.TestCase):
                                return_value={"installed": True,
                                              "platform": "macos",
                                              "path": "/x"}):
-            restarted, reason = autostart.restart(runner=runner)
+            with mock.patch("autostart.os.getuid", return_value=501,
+                            create=True):
+                restarted, reason = autostart.restart(runner=runner)
         self.assertTrue(restarted, reason)
         self.assertEqual(calls[0][:3], ["launchctl", "kickstart", "-k"])
 
@@ -151,7 +153,9 @@ class ServiceRestart(unittest.TestCase):
                                return_value={"installed": True,
                                              "platform": "macos",
                                              "path": "/x"}):
-            restarted, reason = autostart.restart(runner=runner)
+            with mock.patch("autostart.os.getuid", return_value=501,
+                            create=True):
+                restarted, reason = autostart.restart(runner=runner)
         self.assertFalse(restarted)
         self.assertIn("no such job", reason)
 

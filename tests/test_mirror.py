@@ -48,6 +48,8 @@ class IsTheDiskThere(unittest.TestCase):
     def test_a_folder_that_does_not_exist_is_not_available(self):
         self.assertFalse(mirror.available(os.path.join(self.dir, "nope")))
 
+    @unittest.skipIf(os.name == "nt", "Windows ignores a read-only mode on "
+                     "a folder, so there is no such folder to make here")
     def test_availability_is_decided_by_writing_not_by_looking(self):
         """An empty mount point is still a directory.
 

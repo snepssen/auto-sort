@@ -125,7 +125,9 @@ class SpellingAFolderTheWayTheDiskDoes(unittest.TestCase):
                                       (name.rsplit("/", 1)[-1].lower(),
                                        name.rsplit("/", 1)[-1])
                                       for name in existing)):
-            return paths.settled(wanted)
+            # The same folder however the system spells its separators.
+            return os.path.normpath(paths.settled(wanted)).replace(
+                os.sep, "/")
 
     def test_a_folder_that_exists_in_another_case_is_that_folder(self):
         self.assertEqual(
@@ -194,7 +196,8 @@ class FilingThemByWhatTheyAre(unittest.TestCase):
         folders = set(os.path.dirname(where).lower()
                       for where, _rule in placed.values())
         self.assertEqual(len(folders), 1, placed)
-        self.assertTrue(folders.pop().endswith("installers/firefox"))
+        self.assertTrue(folders.pop().replace(os.sep, "/").endswith(
+            "installers/firefox"))
 
     def test_one_that_admits_nothing_still_leaves_the_funnel(self):
         placed = self.plan_for("7z2301-x64.exe")

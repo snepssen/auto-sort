@@ -182,8 +182,8 @@ class Extraction(unittest.TestCase):
             "into = /out/{artist}\n")
         decision, _miss = rule_set.decide(
             self.record("1789229605.kostino_doppel"), source_root="/x")
-        self.assertEqual(decision.destination,
-                         "/out/kostino/1789229605.kostino_doppel.png")
+        self.assertEqual(decision.destination, os.path.abspath(os.path.join(
+            os.sep, "out", "kostino", "1789229605.kostino_doppel.png")))
 
     def test_the_original_filename_is_kept(self):
         # The bug this exists for renamed every file to the captured value
@@ -405,7 +405,8 @@ class TheRuleForIt(unittest.TestCase):
             "documents say it", "/Docs", values=[
                 "Details of employee leaving work"] * 3)
         self.assertIn("when = heading contains Details", lines)
-        self.assertIn("into = /Docs/Details of employee leaving work", lines)
+        self.assertIn("into = %s" % os.path.join(
+            "/Docs", "Details of employee leaving work"), lines)
 
 
 class LettersInsideAnIdentifier(unittest.TestCase):

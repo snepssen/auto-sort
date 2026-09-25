@@ -118,8 +118,9 @@ class StarterRules(unittest.TestCase):
                 record = identify.identify(bundles.Item(path))
                 decision, _miss = self.rule_set.decide(
                     record, source_root=self.directory)
-                self.assertRegex(os.path.dirname(decision.destination),
-                                 r"/Documents/PDF/Encrypted/\d{4}-\d{2}-\d{2}$")
+                self.assertRegex(
+                    os.path.dirname(decision.destination).replace(os.sep, "/"),
+                    r"/Documents/PDF/Encrypted/\d{4}-\d{2}-\d{2}$")
             # One that opens is read, and goes wherever its words say.
             path = self.build("open.pdf", fixtures.text,
                               body=test_pdfcrypt._rc4_pdf())
@@ -357,7 +358,7 @@ class Init(unittest.TestCase):
         import userdirs
         with open(paths.example_rules_file(), encoding="utf-8") as handle:
             body = userdirs.localise(handle.read())
-        video = userdirs.short(userdirs.path("video"))
+        video = userdirs.short(userdirs.path("video")).replace(os.sep, "/")
         other = "~/Videos" if video.endswith("Movies") else "~/Movies"
         self.assertIn("into = %s/" % video, body)
         self.assertNotIn(other + "/", body)
