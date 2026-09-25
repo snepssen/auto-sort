@@ -381,9 +381,9 @@ process spawn cost hurts item 1. Deleted files go to a `Trash (auto-sort)`
 folder rather than the Recycle Bin until the Recycle Bin can be checked.
 
 The decision on record stands: **ship, say plainly that it has not been
-run, and ask for `auto-sort diagnose` from whoever tries it.** A GitHub
-Actions runner would run the test suite on real Windows without anybody
-owning a Windows machine; it cannot show a tray icon.
+run, and ask for `auto-sort diagnose` from whoever tries it.** GitHub
+Actions now runs the test suite and the install line on real Windows on
+every push (`.github/workflows/tests.yml`); it cannot show a tray icon.
 
 ---
 

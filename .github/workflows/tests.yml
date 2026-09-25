@@ -1,0 +1,105 @@
+# The test suite on the three systems auto-sort is for, and the real
+# install lines on each. Nobody working on it owns a Windows machine: this
+# is where its Windows code runs at all. A red Windows run is expected
+# until that code has been fixed against what this finds.
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest Python auto-sort promises, and a current one.
+          - { os: ubuntu-22.04, python: "3.8" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.8" }
+          - { os: windows-latest, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run the test suite
+        run: python -m unittest discover -s tests -v
+
+  install:
+    # The line people paste, fetching this branch. Push events only: the
+    # scripts download from the branch on GitHub, which a pull request
+    # from a fork does not have.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      AUTO_SORT_BRANCH: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install with install.sh
+        if: runner.os != 'Windows'
+        run: sh install.sh --yes --no-tools --no-login --no-start
+      - name: Check the installed copy
+        if: runner.os != 'Windows'
+        run: |
+          case "$RUNNER_OS" in
+            macOS) folder="$HOME/Applications/auto-sort" ;;
+            *) folder="${XDG_DATA_HOME:-$HOME/.local/share}/auto-sort" ;;
+          esac
+          python "$folder/autosort.py" check-rules
+          python "$folder/autosort.py" diagnose
+          sh install.sh --yes --no-tools --no-login --no-start   # updating
+          test -d "$folder.previous"
+      - name: Report a problem (sh)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p "$HOME/Desktop"
+          sh REPORT-A-PROBLEM.sh
+          ls "$HOME/Desktop"/auto-sort\ problem\ report*.txt
+
+      - name: Parse install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD\install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors; exit 1 }
+      - name: Install with install.ps1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\install.ps1 --yes --no-tools --no-login --no-start
+      - name: Check the installed copy
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $folder = "$env:LOCALAPPDATA\Programs\auto-sort"
+          python "$folder\autosort.py" check-rules
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python "$folder\autosort.py" diagnose
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Report a problem (bat)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          echo.| call REPORT-A-PROBLEM.bat
+          powershell -NoProfile -Command "$d=[Environment]::GetFolderPath('Desktop'); Get-ChildItem \"$d\auto-sort problem report*.txt\" -ErrorAction Stop"

@@ -1204,6 +1204,12 @@ the author's laptop" wastes everybody's afternoon:
 | Linux without a tray (plain GNOME) | No icon, by design: the applications-menu entry is the way in. |
 | Windows | **Built to the Win32 documentation, never run.** Every Windows call is declared with its documented signature and held to it by tests, the notification-icon structure is the documented 976 bytes, and the icon is re-added when Explorer restarts. It should work. Deleted files go to a folder called `Trash (auto-sort)` beside your profile rather than the Recycle Bin, until somebody can check the Recycle Bin code on a real machine. |
 
+The test suite, and the install lines themselves, also run on every push on
+GitHub's own Ubuntu, macOS and Windows machines
+([tests](.github/workflows/tests.yml)) — the only place the Windows code is
+run at all. That checks the code, not the icon: those machines have no
+desktop anybody looks at.
+
 "Should" is the honest word, and the way to turn it into "does" is somebody
 trying it. If something does not work, run
 
