@@ -988,11 +988,18 @@ def _spawn_daemon(command):
 def _say(message):
     """Tell somebody who may not have a terminal.
 
-    Standard error for the one who does, and the daemon log for the one who
-    clicked a menu entry: that file is where the log page, `status` and a
-    person looking for what happened all end up.
+    Standard error for the one who does; a desktop notification for the one
+    who clicked a menu entry, because that is where they are looking; and
+    the daemon log, where the log page, `status` and anybody looking for
+    what happened later all end up. A desktop with no notifications, or no
+    session bus, simply gets the other two.
     """
     print(message, file=sys.stderr)
+    try:
+        import dbuswire
+        dbuswire.notify("auto-sort", message)
+    except Exception:                        # noqa: BLE001
+        pass
     try:
         paths.ensure(paths.state_dir())
         with open(os.path.join(paths.state_dir(), "daemon.log"), "a",

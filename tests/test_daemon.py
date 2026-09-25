@@ -528,9 +528,11 @@ class DaemonCli(unittest.TestCase):
                 mock.patch("subprocess.Popen") as popen, \
                 mock.patch("autosort._wait_for_new_daemon",
                            return_value=answers), \
-                mock.patch("logpage.open_log", return_value=opened) as page:
+                mock.patch("logpage.open_log", return_value=opened) as page, \
+                mock.patch("dbuswire.notify") as notify:
             result = self.run_cli("open-log", "--start", "--rules", rules_file,
                                   "--state", self.state_file)
+        self.notified = [call[0] for call in notify.call_args_list]
         return result, popen, page, rules_file
 
     def daemon_log(self):
@@ -562,12 +564,17 @@ class DaemonCli(unittest.TestCase):
         page.assert_not_called()
         self.assertIn("did not start", errors)
         self.assertIn("did not start", self.daemon_log())
+        # And on the desktop, where the person who clicked is looking.
+        self.assertEqual(len(self.notified), 1)
+        self.assertIn("did not start", " ".join(self.notified[0]))
 
     def test_a_page_that_would_not_open_says_so_somewhere(self):
         (code, _output, _errors), _popen, _page, _rules = \
             self.menu_click(answers=True, opened=False)
         self.assertEqual(code, 1)
         self.assertIn("could not open the log page", self.daemon_log())
+        self.assertIn("could not open the log page",
+                      " ".join(self.notified[0]))
 
     def test_open_log_from_a_terminal_still_starts_nothing(self):
         with mock.patch("daemon.wake", return_value=False), \
