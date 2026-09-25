@@ -195,8 +195,10 @@ class FakeBus(object):
     """A session bus as far as the tray can tell: calls are recorded,
     signals are kept, and exported handlers are called directly."""
 
-    def __init__(self, watcher=True):
-        self.watcher = watcher
+    def __init__(self, watcher=True, name="org.kde.StatusNotifierWatcher"):
+        # The watchers on this bus, by name; a desktop runs one or both.
+        self.watchers = {name} if watcher else set()
+        self.accepted = []
         self.closed = False
         self.objects = {}
         self.calls = []
@@ -209,9 +211,11 @@ class FakeBus(object):
     def call(self, destination, path, interface, member, signature="",
              body=(), timeout=None):
         self.calls.append((destination, member, list(body)))
-        if member == "RegisterStatusNotifierItem" and not self.watcher:
-            raise dbuswire.DBusError("org.freedesktop.DBus.Error."
-                                     "ServiceUnknown")
+        if member == "RegisterStatusNotifierItem":
+            if destination not in self.watchers:
+                raise dbuswire.DBusError("org.freedesktop.DBus.Error."
+                                         "ServiceUnknown")
+            self.accepted.append((destination, list(body)))
         return []
 
     def add_match(self, rule, predicate, callback):
@@ -238,18 +242,22 @@ class FakeBus(object):
             dbuswire.marshal(signature, reply)
         return reply
 
-    def owner_changed(self, old, new):
+    def owner_changed(self, old, new, name="org.kde.StatusNotifierWatcher"):
+        if new:
+            self.watchers.add(name)
+        else:
+            self.watchers.discard(name)
         signal = dbuswire.Message(
             dbuswire.SIGNAL, interface="org.freedesktop.DBus",
             member="NameOwnerChanged", signature="sss",
-            body=["org.kde.StatusNotifierWatcher", old, new])
+            body=[name, old, new])
         for _rule, predicate, callback in self.matches:
             if predicate(signal):
                 callback(signal)
 
     def registrations(self):
-        return [body for _dest, member, body in self.calls
-                if member == "RegisterStatusNotifierItem"]
+        """What each watcher that took the item was given."""
+        return [body for _watcher, body in self.accepted]
 
 
 class LinuxBackend(unittest.TestCase):
@@ -260,8 +268,8 @@ class LinuxBackend(unittest.TestCase):
     property of the wrong type or a menu the host cannot read.
     """
 
-    def tray(self, watcher=True):
-        self.bus = FakeBus(watcher)
+    def tray(self, watcher=True, name="org.kde.StatusNotifierWatcher"):
+        self.bus = FakeBus(watcher, name)
         self.done = []
         actions = dict((name, (lambda name=name: self.done.append(name)))
                        for name in ("open_log", "toggle_pause", "sort_now",
@@ -361,12 +369,64 @@ class LinuxBackend(unittest.TestCase):
         self.assertTrue(item.registered)
         self.assertEqual(len(self.bus.registrations()), 2)
 
+    def test_a_freedesktop_watcher_takes_it_too(self):
+        """swaybar runs its watcher under freedesktop's name as well as
+        KDE's, and reads an item registered there under the matching
+        interface -- which the item answers to."""
+        item = self.tray(name="org.freedesktop.StatusNotifierWatcher")
+        self.assertTrue(item.available)
+        self.assertEqual(item.watcher, "org.freedesktop.StatusNotifierWatcher")
+        properties = self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES, "GetAll",
+                                     tray.SNI_FREEDESKTOP)[0]
+        self.assertEqual(properties["Menu"].value, tray.MENU_PATH)
+        self.bus.invoke(tray.SNI_PATH, tray.SNI_FREEDESKTOP, "Activate", 0, 0)
+        self.assertEqual(self.done, ["open_log"])
+        item.set_paused(True)
+        self.assertIn((tray.SNI_PATH, tray.SNI_FREEDESKTOP, "NewOverlayIcon",
+                       []), self.bus.emitted)
+
+    def test_when_one_watcher_goes_the_other_takes_it(self):
+        item = self.tray()
+        self.bus.watchers.add("org.freedesktop.StatusNotifierWatcher")
+        self.bus.owner_changed(":1.30", "")
+        self.assertTrue(item.registered)
+        self.assertEqual(item.watcher, "org.freedesktop.StatusNotifierWatcher")
+
+    def test_the_icon_is_there_as_pixels_for_a_host_without_the_name(self):
+        """The specification's fallback: without it, a host whose icon
+        theme has no `folder` draws an empty square."""
+        item = self.tray()
+        properties = self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES,
+                                     "GetAll", tray.SNI)[0]
+        pixmaps = properties["IconPixmap"].value
+        self.assertEqual([width for width, _height, _data in pixmaps],
+                         list(tray.PIXMAP_SIZES))
+        for width, height, data in pixmaps:
+            self.assertEqual(len(data), width * height * 4)
+            alphas = data[0::4]
+            self.assertTrue(0 < alphas.count(0xFF) < width * height)
+        self.assertEqual(properties["OverlayIconPixmap"].value, [])
+        item.set_paused(True)
+        overlay = self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES, "Get",
+                                  tray.SNI, "OverlayIconPixmap")[0].value
+        self.assertEqual(len(overlay), len(tray.PIXMAP_SIZES))
+
+    def test_the_report_says_what_the_host_asked_for(self):
+        """A desktop that shows no menu because it asks the item to draw
+        one itself is told apart, in a report, from one that never asked."""
+        item = self.tray()
+        self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES, "GetAll", tray.SNI)
+        self.bus.invoke(tray.SNI_PATH, tray.SNI, "ContextMenu", 10, 10)
+        report = item.report()
+        self.assertEqual(report["watcher"], "org.kde.StatusNotifierWatcher")
+        self.assertEqual(report["host_asked"],
+                         {"ContextMenu": 1, "GetAll": 1})
+
     def test_no_watcher_yet_is_a_reason_and_an_icon_later(self):
         """A login where auto-sort beat the desktop to it."""
         item = self.tray(watcher=False)
         self.assertFalse(item.available)
         self.assertIn("will appear", item.reason)
-        self.bus.watcher = True
         self.bus.owner_changed("", ":1.40")
         self.assertTrue(item.registered)
 

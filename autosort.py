@@ -1870,6 +1870,7 @@ USAGE = """auto-sort %s
   auto-sort pause|resume        persistently pause or resume background sorting
   auto-sort status              show daemon and queue state
   auto-sort costs               which files were expensive to read, and why
+  auto-sort diagnose            a report to paste into an issue; names no file
   auto-sort open-log            open the live loopback log page
   auto-sort sort-now            wake the daemon for an immediate scan
   auto-sort autostart [ACTION]  show, install, or remove login launch (default status)
@@ -2027,6 +2028,14 @@ def main(argv=None):
                   file=sys.stderr)
             return 2
         return watch(rule_path, state_file, dry_run, port, once)
+    if command == "diagnose":
+        import diagnose
+        found = diagnose.collect(state_file, rule_path)
+        if as_json:
+            print(json.dumps(found, indent=2, default=str))
+        else:
+            print(diagnose.render(found))
+        return 0
     if command == "costs":
         if targets:
             print("costs takes no arguments", file=sys.stderr)

@@ -22,6 +22,23 @@ class UnavailableTray(object):
         pass
 
 
+def report(item):
+    """What a diagnostics report says about a tray, whichever kind it is.
+
+    Never a file name or a path: this is pasted into public issues.
+    """
+    own = getattr(item, "report", None)
+    if callable(own):
+        return own()
+    backend = {"darwin": "macOS status item"}.get(
+        sys.platform, "Windows notification icon"
+        if sys.platform.startswith("win") else "none")
+    return {"backend": backend if getattr(item, "available", False)
+            else "none",
+            "available": bool(getattr(item, "available", False)),
+            "reason": getattr(item, "reason", "")}
+
+
 def create(actions):
     """Return a best-effort native tray, never an object that can stop sorting."""
     try:
@@ -580,15 +597,81 @@ def _windows_structures(window_procedure):
 SNI_PATH = "/StatusNotifierItem"
 MENU_PATH = "/MenuBar"
 SNI = "org.kde.StatusNotifierItem"
+# The same protocol under freedesktop's names. swaybar runs a watcher under
+# each, and reads an item registered with this one through this interface
+# name; the item answers to both, so it does not matter which one is there.
+SNI_FREEDESKTOP = "org.freedesktop.StatusNotifierItem"
 MENU = "com.canonical.dbusmenu"
 PROPERTIES = "org.freedesktop.DBus.Properties"
 WATCHER = ("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
            "org.kde.StatusNotifierWatcher")
+WATCHER_FREEDESKTOP = ("org.freedesktop.StatusNotifierWatcher",
+                       "/StatusNotifierWatcher",
+                       "org.freedesktop.StatusNotifierWatcher")
+WATCHERS = (WATCHER, WATCHER_FREEDESKTOP)
 
 # A name from the freedesktop icon naming specification, so every icon
 # theme has one; the same icon the applications-menu entry uses.
 ICON = "folder"
 PAUSED_OVERLAY = "media-playback-pause"
+
+# The same icons as pixels, for a host that does not look names up or whose
+# icon theme has no "folder": the specification's fallback, and without it
+# such a host draws an empty square. Sizes the common panels ask for.
+PIXMAP_SIZES = (16, 22, 32, 48)
+
+
+def _folder_pixmap(size):
+    """`(width, height, ARGB32 bytes)`: a plain folder, drawn by rule.
+
+    Big-endian ARGB, as the specification asks. Nothing is loaded from
+    disk, so there is nothing to ship and nothing to be missing.
+    """
+    body = (0xFF, 0x4A, 0x8F, 0xD9)          # alpha, red, green, blue
+    edge = (0xFF, 0x2F, 0x6D, 0xB5)
+    tab = (0xFF, 0x6E, 0xA8, 0xE8)
+    clear = (0x00, 0x00, 0x00, 0x00)
+    top = size * 5 // 16                     # where the body starts
+    tab_right = size * 7 // 16
+    margin = max(1, size // 16)
+    out = bytearray()
+    for y in range(size):
+        for x in range(size):
+            inside_x = margin <= x < size - margin
+            if not inside_x or y < margin * 3 or y >= size - margin * 2:
+                colour = clear
+            elif y < top:
+                colour = tab if x < tab_right else clear
+            elif (x in (margin, size - margin - 1) or y == top
+                  or y == size - margin * 2 - 1):
+                colour = edge
+            else:
+                colour = body
+            out.extend(colour)
+    return size, size, bytes(out)
+
+
+def _pause_pixmap(size):
+    """Two bars in the lower right, on nothing: the paused overlay."""
+    bar = (0xFF, 0xF2, 0xF2, 0xF2)
+    back = (0xFF, 0x33, 0x33, 0x33)
+    clear = (0x00, 0x00, 0x00, 0x00)
+    badge = max(6, size // 2)
+    left = size - badge
+    out = bytearray()
+    for y in range(size):
+        for x in range(size):
+            bx, by = x - left, y - left
+            if bx < 0 or by < 0:
+                out.extend(clear)
+                continue
+            inner = badge // 5
+            in_bar = inner <= by < badge - inner and (
+                inner <= bx < inner * 2 or badge - inner * 2 <= bx
+                < badge - inner)
+            out.extend(bar if in_bar else back)
+    return size, size, bytes(out)
+
 
 # Menu item ids. Zero is the root, by the protocol.
 _OPEN, _TOGGLE, _SORT, _SEPARATOR, _RESTART, _QUIT = 1, 2, 3, 4, 5, 6
@@ -624,21 +707,33 @@ class LinuxTray(object):
         self.revision = 1
         self.name = "org.kde.StatusNotifierItem-%d-1" % os.getpid()
         self.registered = False
+        self.watcher = None
+        # What the host has asked of the item, by method: the difference
+        # between "no icon" and "an icon whose menu nothing reads" in a
+        # report from a desktop nobody here has used. See `report`.
+        self.asked = {}
         variant = dbuswire.Variant
 
-        connection.export(SNI_PATH, SNI, {
+        item_methods = {
             "Activate": self._activate,
             "SecondaryActivate": lambda _message: ("", []),
+            # A host that asks the item to draw its own menu, rather than
+            # reading `Menu`: there is no toolkit here to draw one with.
+            # Counted, so a report can say that is what this desktop does.
             "ContextMenu": lambda _message: ("", []),
             "Scroll": lambda _message: ("", []),
-        })
-        connection.export(SNI_PATH, PROPERTIES, {
+        }
+        for interface in (SNI, SNI_FREEDESKTOP):
+            connection.export(SNI_PATH, interface, self._counting(
+                item_methods))
+        connection.export(SNI_PATH, PROPERTIES, self._counting({
             "Get": lambda message: ("v", [self._item_properties()[
                 message.body[1]]]),
             "GetAll": lambda message: ("a{sv}", [
-                self._item_properties() if message.body[0] == SNI else {}]),
-        })
-        connection.export(MENU_PATH, MENU, {
+                self._item_properties()
+                if message.body[0] in (SNI, SNI_FREEDESKTOP) else {}]),
+        }))
+        connection.export(MENU_PATH, MENU, self._counting({
             "GetLayout": self._get_layout,
             "GetGroupProperties": self._get_group_properties,
             "GetProperty": lambda message: ("v", [self._menu_items()[
@@ -647,14 +742,15 @@ class LinuxTray(object):
             "EventGroup": self._event_group,
             "AboutToShow": lambda _message: ("b", [False]),
             "AboutToShowGroup": lambda _message: ("aiai", [[], []]),
-        })
+        }))
         connection.export(MENU_PATH, PROPERTIES, {
             "Get": lambda message: ("v", [self._menu_properties()[
                 message.body[1]]]),
             "GetAll": lambda message: ("a{sv}", [
                 self._menu_properties() if message.body[0] == MENU else {}]),
         })
-        for path, interfaces in ((SNI_PATH, (SNI, PROPERTIES)),
+        for path, interfaces in ((SNI_PATH, (SNI, SNI_FREEDESKTOP,
+                                             PROPERTIES)),
                                  (MENU_PATH, (MENU, PROPERTIES))):
             connection.export(path, "org.freedesktop.DBus.Introspectable", {
                 "Introspect": lambda _message, interfaces=interfaces: (
@@ -666,13 +762,15 @@ class LinuxTray(object):
         # DO_NOT_QUEUE: this pid's name is ours or nobody's.
         connection.call(*dbuswire.BUS, member="RequestName", signature="su",
                         body=[self.name, 4])
-        connection.add_match(
-            "type='signal',sender='org.freedesktop.DBus',"
-            "interface='org.freedesktop.DBus',member='NameOwnerChanged',"
-            "arg0='%s'" % WATCHER[0],
-            lambda message: message.member == "NameOwnerChanged"
-            and message.body and message.body[0] == WATCHER[0],
-            self._watcher_changed)
+        for watcher in WATCHERS:
+            connection.add_match(
+                "type='signal',sender='org.freedesktop.DBus',"
+                "interface='org.freedesktop.DBus',member='NameOwnerChanged',"
+                "arg0='%s'" % watcher[0],
+                lambda message, name=watcher[0]:
+                message.member == "NameOwnerChanged"
+                and message.body and message.body[0] == name,
+                self._watcher_changed)
         self.available = self._register()
         self.reason = "" if self.available else (
             "no StatusNotifier host on this desktop yet; the icon will "
@@ -681,21 +779,45 @@ class LinuxTray(object):
     # -- registration -------------------------------------------------------
 
     def _register(self):
-        try:
-            self.bus.call(*WATCHER, member="RegisterStatusNotifierItem",
-                          signature="s", body=[self.name])
-        except self.dbus.DBusError:
-            self.registered = False
-            return False
-        self.registered = True
-        return True
+        """Register with whichever watcher is there, KDE's name first."""
+        for watcher in WATCHERS:
+            try:
+                self.bus.call(*watcher, member="RegisterStatusNotifierItem",
+                              signature="s", body=[self.name])
+            except self.dbus.DBusError:
+                continue
+            self.registered = True
+            self.watcher = watcher[0]
+            return True
+        self.registered = False
+        self.watcher = None
+        return False
 
     def _watcher_changed(self, message):
-        _name, _old, new = message.body[:3]
+        name, _old, new = message.body[:3]
         if new:
             self._register()
-        else:
-            self.registered = False
+        elif name == self.watcher:
+            # The one we were registered with has gone; another may still
+            # be there to take us.
+            self._register()
+
+    def _counting(self, handlers):
+        def counted(member, handler):
+            def call(message):
+                self.asked[member] = self.asked.get(member, 0) + 1
+                return handler(message)
+            return call
+        return dict((member, counted(member, handler))
+                    for member, handler in handlers.items())
+
+    def report(self):
+        """What a diagnostics report says about the tray. No file names."""
+        return {"backend": "StatusNotifierItem",
+                "available": bool(self.available),
+                "registered": self.registered,
+                "watcher": self.watcher or "",
+                "host_asked": dict(sorted(self.asked.items()))}
 
     # -- the item -----------------------------------------------------------
 
@@ -710,10 +832,11 @@ class LinuxTray(object):
             "WindowId": variant("i", 0),
             "IconName": variant("s", ICON),
             "IconThemePath": variant("s", ""),
-            "IconPixmap": variant("a(iiay)", []),
+            "IconPixmap": variant("a(iiay)", _FOLDER_PIXMAPS),
             "OverlayIconName": variant("s", PAUSED_OVERLAY
                                        if self.paused else ""),
-            "OverlayIconPixmap": variant("a(iiay)", []),
+            "OverlayIconPixmap": variant("a(iiay)", _PAUSE_PIXMAPS
+                                         if self.paused else []),
             "AttentionIconName": variant("s", ""),
             "AttentionIconPixmap": variant("a(iiay)", []),
             "AttentionMovieName": variant("s", ""),
@@ -822,8 +945,10 @@ class LinuxTray(object):
         try:
             self.bus.emit(MENU_PATH, MENU, "LayoutUpdated", "ui",
                           [self.revision, 0])
-            self.bus.emit(SNI_PATH, SNI, "NewOverlayIcon")
-            self.bus.emit(SNI_PATH, SNI, "NewToolTip")
+            interface = SNI_FREEDESKTOP if self.watcher == \
+                WATCHER_FREEDESKTOP[0] else SNI
+            self.bus.emit(SNI_PATH, interface, "NewOverlayIcon")
+            self.bus.emit(SNI_PATH, interface, "NewToolTip")
         except self.dbus.DBusError:
             pass
 
@@ -843,6 +968,10 @@ class LinuxTray(object):
 
     def close(self):
         self.bus.close()
+
+
+_FOLDER_PIXMAPS = [_folder_pixmap(size) for size in PIXMAP_SIZES]
+_PAUSE_PIXMAPS = [_pause_pixmap(size) for size in PIXMAP_SIZES]
 
 
 def _introspection(interfaces):
@@ -902,6 +1031,7 @@ def _introspection(interfaces):
   </interface>
 """,
     }
+    known[SNI_FREEDESKTOP] = known[SNI].replace(SNI, SNI_FREEDESKTOP)
     return ('<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object '
             'Introspection 1.0//EN"\n "http://www.freedesktop.org/standards/'
             'dbus/1.0/introspect.dtd">\n<node>\n'

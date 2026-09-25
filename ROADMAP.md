@@ -346,24 +346,44 @@ Still open:
   the applications-menu entry -- which now starts the daemon if nothing is
   running -- is the way in there.
 - **Other hosts.** Only Plasma has been looked at. XFCE, Cinnamon and
-  waybar implement the same protocol and have not.
+  waybar implement the same protocol and have not. What is known to differ
+  between them is covered from the specifications: the item answers under
+  the freedesktop names as well as KDE's (swaybar runs a watcher under
+  each), carries its icon as pixels as well as a theme name, and answers
+  the newer dbusmenu calls (`EventGroup`, `AboutToShowGroup`) waybar's
+  menu library uses. What a host asked the item for is counted and kept,
+  so `auto-sort diagnose` can tell "no icon" from "an icon whose host
+  wanted it to draw its own menu". Waiting on somebody with those desktops.
 
 ## 4. Windows
 
-Code-reviewed, never executed. Not once.
+Code-reviewed against the Win32 documentation, never executed. Not once.
+
+The review found the tray could not have appeared on any 64-bit Windows:
+every call went through `ctypes.windll` with no declared signature, so
+ctypes cut each handle to 32 bits -- `GetModuleHandleW`'s address halved,
+`DefWindowProcW` raising on the window's first message. And the
+notification-icon structure stopped at `szTip`, a size no Windows version
+accepts. Now every call goes through `winapi.py`, which declares all of them
+from the documentation; tests on any machine hold every call in the program
+to that table and the structure to its documented 976 bytes. The menu posts
+`WM_NULL` after itself as Microsoft documents, and the icon is re-added when
+Explorer restarts.
 
 What is known to be right by reading: `paths.state_dir()` resolves
 `%APPDATA%`, the kind folders map to `Videos` rather than macOS's `Movies`,
 `$RECYCLE.BIN` is recognised as a wastebasket.
 
-What cannot be known without a machine: the Startup-folder shortcut (needs
-PowerShell), the tray (`Shell_NotifyIcon` through `ctypes`), whether
-`Zone.Identifier` provenance survives real browsers, and how badly process
-spawn cost hurts item 1.
+What cannot be known without a machine: whether the icon then actually
+appears and its menu works, the Startup-folder shortcut (needs PowerShell),
+whether `Zone.Identifier` provenance survives real browsers, and how badly
+process spawn cost hurts item 1. Deleted files go to a `Trash (auto-sort)`
+folder rather than the Recycle Bin until the Recycle Bin can be checked.
 
-The decision on record is to **ship and wait for complaints through approved
-channels** rather than guess. That remains sensible. It is listed here so it
-is listed somewhere.
+The decision on record stands: **ship, say plainly that it has not been
+run, and ask for `auto-sort diagnose` from whoever tries it.** A GitHub
+Actions runner would run the test suite on real Windows without anybody
+owning a Windows machine; it cannot show a tray icon.
 
 ---
 

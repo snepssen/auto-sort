@@ -41,6 +41,7 @@ python3 autosort.py propose ~/Downloads --out my-rules.ini
 python3 autosort.py regroup ~/Downloads
 python3 autosort.py refile
 python3 autosort.py costs
+python3 autosort.py diagnose
 python3 autosort.py corrections ~/Downloads
 python3 autosort.py adopt --apply
 python3 autosort.py duplicates ~/Music --apply
@@ -1149,8 +1150,37 @@ is nobody to answer, and never blocks the sorter when something fails.
 python3 -m unittest discover -s tests
 ```
 
-418 tests, no binary fixtures committed: every sample file is assembled from
-its own specification at test time.
+About a thousand tests, no binary fixtures committed: every sample file is
+assembled from its own specification at test time.
+
+## Where it has run, and where it should
+
+Plainly, because a program that says "cross-platform" and means "it ran on
+the author's laptop" wastes everybody's afternoon:
+
+| | Status |
+| --- | --- |
+| macOS | **Run for real**: daily, on the machine it was built on — sorting, reading, OCR, the menu bar icon, starting at login. |
+| Linux, KDE Plasma | **Run for real** on a Steam Deck in Desktop Mode: the whole test suite, a first run from nothing, the tray icon and every menu entry checked on screen, the icon surviving the tray restarting, desktop notifications. |
+| Linux, other desktops with a tray (XFCE, Cinnamon, sway/waybar, GNOME with the AppIndicator extension) | **Built to the specification, not yet seen.** The icon is a StatusNotifierItem answering under both the KDE and the freedesktop names, with the icon as a theme name *and* as pixels, and a `com.canonical.dbusmenu` menu that answers the older and the newer calls. It should appear. |
+| Linux without a tray (plain GNOME) | No icon, by design: the applications-menu entry is the way in. |
+| Windows | **Built to the Win32 documentation, never run.** Every Windows call is declared with its documented signature and held to it by tests, the notification-icon structure is the documented 976 bytes, and the icon is re-added when Explorer restarts. It should work. Deleted files go to a folder called `Trash (auto-sort)` beside your profile rather than the Recycle Bin, until somebody can check the Recycle Bin code on a real machine. |
+
+"Should" is the honest word, and the way to turn it into "does" is somebody
+trying it. If something does not work, run
+
+```sh
+auto-sort diagnose
+```
+
+and paste what it prints into an issue. It is written for exactly that: the
+system, the desktop, who answers on the session bus, what the tray host
+asked the icon for, whether the daemon is running, and the last problems in
+its log. **It names no file** — not a watched path, not a rule (rules are
+learnt from your own documents and can say whose they are), and every name
+and path in a log line is taken out — but it is printed rather than sent,
+so read it first. What it cannot say, you can: what you expected to see,
+and what you saw.
 
 ## Where this is going
 

@@ -934,8 +934,24 @@ class PollingDaemon(object):
                     if self.rule_set is not None else 5
                 status_item.set_paused(self.journal.paused())
                 self._wait_with_tray(interval, status_item)
+                self._keep_tray_report(status_item)
         finally:
             status_item.close()
+
+    def _keep_tray_report(self, status_item):
+        """What the tray has seen, where `auto-sort diagnose` can read it.
+
+        The tray lives in this process and a report is asked for from
+        another, so it is kept in the ledger -- only when it changes, which
+        after the desktop's first look is almost never.
+        """
+        try:
+            text = json.dumps(tray.report(status_item), sort_keys=True)
+        except Exception:                    # noqa: BLE001
+            return
+        if text != getattr(self, "_tray_report", None):
+            self._tray_report = text
+            self.journal.set_state("tray_report", text)
 
     def _wait_with_tray(self, interval, status_item):
         deadline = time.monotonic() + interval
