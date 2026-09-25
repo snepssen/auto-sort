@@ -131,8 +131,14 @@ class StarterRules(unittest.TestCase):
 
     def test_the_example_parses(self):
         self.assertTrue(self.rule_set.rules)
-        self.assertTrue(self.rule_set.settings.dry_run,
-                        "the example must never ship with dry run off")
+        # It sorts: a starter that only ever proposes was installed,
+        # proposed, and deleted in exasperation. What it does first is
+        # still a preview, and that preview waits long enough to be read
+        # -- and not so long that nobody is there when it ends.
+        self.assertFalse(self.rule_set.settings.dry_run)
+        wait = self.rule_set.settings.preview_wait
+        self.assertIsNotNone(wait)
+        self.assertTrue(5 * 60 <= wait <= 60 * 60, wait)
 
     def test_it_passes_its_own_check(self):
         """A folder named only by a file's type is a waiting room.

@@ -87,7 +87,11 @@ class LogPage(object):
                 return _json_response(400, {
                     "error": "limit must be a multiple of 50, from 50 to 500"})
             text = query.get("q", [""])[0].strip()[:200]
-            previews = query.get("previews", ["0"])[0] == "1"
+            # While sorting is paused -- by a preview waiting, or by
+            # somebody who chose Keep previewing -- the preview is the
+            # page: where their files would go, without a filter to find.
+            previews = query.get("previews", ["0"])[0] == "1" or \
+                self.journal.paused()
             rows = self.journal.search_moves(text, limit, previews) if text \
                 else self.journal.recent_moves(limit, previews)
             return _json_response(200, {"moves": [self._move(row)
@@ -217,12 +221,31 @@ class LogPage(object):
         return headers.get("origin") == "http://127.0.0.1:%d" % self.port
 
     def _status(self):
+        preview = self._preview_waiting()
         return {
             "paused": self.journal.paused(),
             "port": self.port,
             "queue": dict((row["status"], row["count"])
                           for row in self.journal.queue_counts()),
+            # A preview waiting to be approved, and when it will be anyway.
+            "preview": preview,
+            "starts_at": self._preview_ends() if preview else None,
         }
+
+    def _preview_waiting(self):
+        return self.journal.paused() and \
+            self.journal.get_state("paused_by") == "preview"
+
+    def _preview_ends(self):
+        """When an unanswered preview starts sorting, or None for never."""
+        try:
+            rule_set = self.rules_getter() if self.rules_getter else None
+            wait = getattr(rule_set.settings, "preview_wait", None) \
+                if rule_set is not None else None
+            since = float(self.journal.get_state("paused_at") or 0)
+        except (TypeError, ValueError, AttributeError):
+            return None
+        return since + wait if wait is not None and since else None
 
     def _reading(self):
         """What this machine can read, and what it could not.

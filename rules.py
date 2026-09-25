@@ -474,7 +474,7 @@ _SETTINGS_KEYS = {
     "dry_run", "unsorted", "unsorted_into", "on_collision",
     "min_confidence", "settle_seconds", "poll_seconds", "preserve_dates",
     "ocr", "tools",
-    "regroup", "learn",
+    "regroup", "learn", "preview_wait",
 }
 _WATCH_KEYS = {"folders", "ignore", "depth"}
 _RULE_KEYS = {
@@ -505,6 +505,14 @@ class Settings(object):
         # thing it ever writes here. `report` says so in the log instead.
         self.learn = _choice(values.get("learn", "apply"),
                              ("off", "report", "apply"), "learn")
+        # How long a preview waits for somebody before it counts as
+        # approved and sorting starts. Without it the daemon showed where
+        # everything would go and then waited for a click that somebody
+        # who installed it and walked away would never make: installed,
+        # proposed, asleep for ever, deleted in exasperation. `never` waits
+        # for Resume, as it used to.
+        self.preview_wait = _wait(values.get("preview_wait", "15m"),
+                                  "preview_wait")
         self.on_collision = _choice(values.get("on_collision", "suffix"),
                                     ("suffix", "skip"), "on_collision")
         self.min_confidence = _bounded_float(
@@ -915,6 +923,18 @@ def _template_value(match, facts):
 
 
 _CASES = ("upper", "lower", "title")
+
+
+def _wait(value, key):
+    """Seconds, from `15m`, `1h` or `90s`; None for `never`."""
+    text = str(value).strip().lower()
+    if text in ("never", "no", "off"):
+        return None
+    match = re.match(r"^(\d+(?:\.\d+)?)\s*([smhdw]?)$", text)
+    if not match:
+        raise RuleError("%s must be a time such as 15m or 1h, or never; "
+                        "got %r" % (key, value))
+    return float(match.group(1)) * _TIME_UNITS[match.group(2) or "s"]
 
 
 def _datetime(value):

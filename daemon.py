@@ -53,6 +53,15 @@ def _stamped(message):
           flush=True)
 
 
+def _spoken(seconds):
+    """`15 minutes`, `1 hour`: a wait as somebody would say it."""
+    for size, unit in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        if seconds >= size and seconds % size == 0:
+            count = int(seconds // size)
+            return "%d %s%s" % (count, unit, "" if count == 1 else "s")
+    return "%d seconds" % seconds
+
+
 def _json_list(value):
     try:
         found = json.loads(value or "[]")
@@ -614,9 +623,7 @@ class PollingDaemon(object):
             for message in result.messages:
                 self.output("  %s" % message)
             if forced:
-                self.journal.set_paused(True)
-                self.output("Preview run %d created; daemon paused. Review "
-                            "it and run 'auto-sort resume'." % result.run_id)
+                self._paused_for_preview(rule_set, result.run_id)
         return previewed
 
     def _heartbeat(self, rule_set, now_value):
@@ -667,6 +674,7 @@ class PollingDaemon(object):
             if self.dry_run is None else bool(self.dry_run)
         queue_fingerprint = _queue_rules_hash(
             plan_fingerprint, requested_dry)
+        self._approve_unanswered_preview(rule_set)
         messages = sorter.reconcile(self.journal)
         for message in messages:
             self.output("Recovered: %s" % message)
@@ -861,9 +869,7 @@ class PollingDaemon(object):
                         planned_item.operation, planned_item.item.primary,
                         planned_item.members[0].destination,
                         planned_item.rule_name))
-                self.journal.set_paused(True)
-                self.output("Preview run %d created; daemon paused. Review it "
-                            "and run 'auto-sort resume'." % result.run_id)
+                self._paused_for_preview(rule_set, result.run_id)
             return [result]
 
         results = []
@@ -894,7 +900,7 @@ class PollingDaemon(object):
             elif result.forced_preview:
                 self.journal.set_queue_status(
                     row["id"], "pending", "awaiting preview approval")
-                self.journal.set_paused(True)
+                self.journal.set_paused(True, by="preview")
                 break
             else:
                 self.journal.set_queue_status(row["id"], "done")
@@ -937,6 +943,42 @@ class PollingDaemon(object):
                 self._keep_tray_report(status_item)
         finally:
             status_item.close()
+
+    def _paused_for_preview(self, rule_set, run_id):
+        self.journal.set_paused(True, by="preview")
+        wait = getattr(rule_set.settings, "preview_wait", None)
+        self.output("Preview run %d created; daemon paused. %s The log page "
+                    "shows where everything would go."
+                    % (run_id, "Sorting starts by itself in %s unless it is "
+                       "paused." % _spoken(wait) if wait is not None
+                       else "Run 'auto-sort resume' to start sorting."))
+
+    def _approve_unanswered_preview(self, rule_set, now_value=None):
+        """Start sorting once a preview has waited long enough for anybody.
+
+        Only a pause the preview took. One somebody asked for -- the tray,
+        the page, `auto-sort pause`, or "Keep previewing" -- is theirs and
+        is never lifted by anything but them. Every move made after this is
+        in the ledger and undone like any other.
+        """
+        if not self.journal.paused() or \
+                self.journal.get_state("paused_by") != "preview":
+            return False
+        wait = getattr(rule_set.settings, "preview_wait", None)
+        if wait is None:
+            return False
+        try:
+            since = float(self.journal.get_state("paused_at") or 0)
+        except (TypeError, ValueError):
+            since = 0.0
+        now_value = time.time() if now_value is None else now_value
+        if since and now_value - since < wait:
+            return False
+        self.journal.set_paused(False)
+        self.output("Nobody paused the preview in %s, so sorting has "
+                    "started. Every move can be undone from the log page "
+                    "or with `auto-sort undo all`." % _spoken(wait))
+        return True
 
     def _keep_tray_report(self, status_item):
         """What the tray has seen, where `auto-sort diagnose` can read it.

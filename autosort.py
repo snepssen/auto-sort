@@ -1840,7 +1840,8 @@ def init(destination=None):
         return 1
 
     print("Wrote %s" % target)
-    print("  %s, and dry run is on." % summary)
+    print("  %s. The first sort is a preview; it starts by itself if" % summary)
+    print("  nobody pauses it within the preview_wait it names.")
     print()
     print("Read it, then:")
     print("  auto-sort sort ~/Downloads     see what it would do")

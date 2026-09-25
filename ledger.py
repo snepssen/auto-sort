@@ -882,6 +882,7 @@ class Ledger(object):
         """
         self.set_state("paused", "1" if paused else "0")
         self.set_state("paused_by", by if paused else "")
+        self.set_state("paused_at", repr(time.time()) if paused else "")
 
     # -- persistent work queue -------------------------------------------
 

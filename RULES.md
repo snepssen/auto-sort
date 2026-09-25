@@ -277,7 +277,8 @@ support conversation about this tool will start here, so it ships in milestone
 
 ## Previewing, applying and undoing
 
-`sort` is read-only while `dry_run = yes` (the default):
+`sort` is read-only while `dry_run = yes` (the starter file ships with
+`no`):
 
 ```sh
 auto-sort sort ~/Downloads
@@ -286,7 +287,10 @@ auto-sort sort ~/Downloads
 Use `--apply` to explicitly request the moves. The first apply for each watched
 folder and exact rules-file revision is still forced to be a dry run; review
 its output and repeat the command to apply it. Changing the rules requires a
-fresh preview.
+fresh preview. In the background sorter that preview pauses it for
+`preview_wait` (15 minutes in the starter file) and then counts as approved;
+`never` waits for `auto-sort resume`. A pause somebody chose is never lifted
+by it.
 
 ```sh
 auto-sort sort ~/Downloads --apply

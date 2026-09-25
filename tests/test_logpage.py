@@ -87,6 +87,38 @@ class LogPageTests(unittest.TestCase):
         self.assertEqual(resumed.status, 200)
         self.assertFalse(self.journal.paused())
 
+    def test_a_waiting_preview_says_when_it_starts(self):
+        """The page is the preview while one waits: when sorting starts by
+        itself, and Keep previewing makes the pause somebody's own."""
+        settings = type("Settings", (), {"preview_wait": 900.0})()
+        self.page.rules_getter = lambda: type("Rules", (), {
+            "settings": settings})()
+        self.journal.set_paused(True, by="preview")
+        since = float(self.journal.get_state("paused_at"))
+        status = self.payload(self.request("GET", self.url("/api/status")))
+        self.assertTrue(status["preview"])
+        self.assertAlmostEqual(status["starts_at"], since + 900, places=3)
+        kept = self.payload(self.request("POST", self.url("/api/pause"),
+                                         self.origin()))
+        self.assertFalse(kept["preview"])
+        self.assertTrue(kept["paused"])
+        self.assertEqual(self.journal.get_state("paused_by"), "user")
+
+    def test_while_paused_the_preview_is_listed(self):
+        run = self.journal.start_run("sort", self.directory, "rules", True)
+        self.journal.add_move(run, 1, 1, "move", "images", self.source,
+                              self.destination + ".would", 11, "hash",
+                              status="dry-run", facts={"kind": "image"})
+        self.journal.finish_run(run, "dry-run")
+
+        def statuses():
+            moves = self.payload(self.request(
+                "GET", self.url("/api/moves")))["moves"]
+            return set(move["status"] for move in moves)
+        self.assertNotIn("dry-run", statuses())
+        self.journal.set_paused(True)                  # Keep previewing
+        self.assertIn("dry-run", statuses())
+
     def test_reveal_uses_a_ledger_id_not_a_client_path(self):
         with mock.patch("logpage.reveal") as reveal:
             response = self.request(

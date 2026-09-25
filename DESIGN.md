@@ -283,8 +283,10 @@ a `Duplicates/` folder for a human to empty.
 The ledger is the feature. Every move is a row in SQLite before it happens and
 is confirmed after: source, destination, size, content hash, rule that fired,
 run id, timestamp. `auto-sort undo <run>` walks it backwards. The log window
-reads from it. Dry-run is the default until the user says otherwise, and the
-first run on a new folder is always a dry run whose report they are shown.
+reads from it. The first run on a new folder is always a dry run whose
+report they are shown -- and one they do not answer is approved after
+`preview_wait`, because a sorter that proposes and then sleeps for ever gets
+deleted, not reviewed. Every move is still undoable.
 
 The hazards are mostly filesystem, and mostly silent:
 

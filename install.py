@@ -13,8 +13,9 @@ Both lines fetch this file and run it with the Python they found. It then:
 1. downloads the latest auto-sort into a folder of its own -- never over a
    folder it did not put there itself;
 2. offers the optional programs (`bootstrap.py`, which never runs sudo);
-3. writes the starter rules if there are none -- with dry run on, so
-   nothing moves until the person says so;
+3. writes the starter rules if there are none: the first sort is a
+   preview on the page, and sorting starts by itself 15 minutes later
+   unless somebody pauses it -- every move undoable;
 4. offers to start auto-sort at login, and starts it now.
 
 Run again, it updates: the new code replaces the old, and the rules, the
@@ -219,7 +220,7 @@ def main(argv=None):
                          os.path.join(folder, "bootstrap.py")]
                         + (["--yes"] if options.yes else []))
 
-    # The starter rules, if there are none: dry run on, nothing moves.
+    # The starter rules, if there are none. Their first sort is a preview.
     fresh = not _asks(folder, "import os, paths; "
                               "ok = os.path.exists(paths.rules_file())")
     if fresh:
@@ -244,9 +245,10 @@ def main(argv=None):
     print("  Open its page:     %s" % _command(folder, "open-log"))
     if fresh:
         print()
-        print("  It starts in preview mode: it shows where everything would")
-        print("  go and moves nothing. When the page looks right, set")
-        print("  dry_run = no in the rules file it names.")
+        print("  First it shows, on that page, where everything would go.")
+        print("  After 15 minutes it starts sorting by itself; click Keep")
+        print("  previewing to wait longer, or Start sorting now. Every move")
+        print("  can be undone.")
     print()
     print("  To update later, run the same line you installed it with.")
     print("  If something goes wrong: %s" % os.path.join(

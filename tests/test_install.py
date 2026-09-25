@@ -175,7 +175,7 @@ class TheWholeThing(unittest.TestCase):
              "check-rules"], env=environment, capture_output=True,
             text=True, timeout=120)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
-        self.assertIn("dry run on", check.stdout)
+        self.assertIn("dry run off", check.stdout)
 
 
 if __name__ == "__main__":

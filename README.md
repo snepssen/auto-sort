@@ -7,9 +7,9 @@ each file actually is, and file it where the rules say — one file at a time,
 as they arrive, for as long as the machine is on.
 
 Identification, the safety-critical moving core, and the persistent watcher
-are complete. A sort is a dry run by default, every member is written to a
-SQLite ledger before it is touched, and the first attempted apply for a folder
-and rule file is forcibly turned into a preview. Real moves verify content,
+are complete. The first sort of a folder, and the first under rules
+somebody edited, is always a preview; every member is written to a SQLite
+ledger before it is touched. Real moves verify content,
 never overwrite, keep bundles together, and can be restored with `undo`. The
 watcher keeps its settle queue and paused state across restarts. Its local log
 shows every ledgered operation and can reveal the recorded file safely. See
@@ -36,9 +36,11 @@ Windows it offers to install it). Then it downloads auto-sort into a folder
 of its own — `~/Applications/auto-sort` on a Mac, `~/.local/share/auto-sort`
 on Linux, `%LOCALAPPDATA%\Programs\auto-sort` on Windows — offers the
 optional programs described under [Requirements](#requirements), offers to
-start auto-sort whenever you log in, and opens its page. It starts in
-**preview mode**: it shows where everything would go and moves nothing
-until you say so.
+start auto-sort whenever you log in, and opens its page. The first thing it
+does is a **preview**: that page shows where everything would go, and
+nothing moves for 15 minutes. Then it starts sorting by itself — so it works
+even if you install it and walk away. Click **Keep previewing** to wait as
+long as you like, or **Start sorting now**. Every move can be undone.
 
 Run the same line again to update. Your rules and everything auto-sort has
 learnt live outside that folder and are not touched; the version before is
@@ -1111,9 +1113,11 @@ auto-sort sort ~/Downloads
 
 `init` copies [rules.example.ini](rules.example.ini) to the platform's
 configuration folder and refuses to touch one that is already there. The
-starter arrives with dry run **on**, and even once that is off the first run
-against a new folder is forced to a preview you have to look at before a
-second run will move anything.
+starter arrives sorting — a starter that only ever proposes is one nobody
+keeps — but the first run against a new folder is still a preview, which
+waits `preview_wait` (15 minutes) for somebody to look before it starts by
+itself. `preview_wait = never` waits for Resume; `dry_run = yes` never moves
+anything.
 
 Every rule in that file is tested against a built fixture, because a rules
 file that parses and then silently does nothing is the worst way this tool can
@@ -1124,7 +1128,7 @@ be wrong -- it looks like it worked.
 Double-click **Start auto-sort.command** on macOS, `start.sh` on Linux, or
 `start.bat` on Windows. With no arguments the launcher runs `auto-sort start`,
 which writes a rules file if there is not one, says what it is about to watch,
-points out that dry run is on, and then runs — leaving an icon in the menu bar
+and then runs — leaving an icon in the menu bar
 or the system tray and a log page to click through to.
 
 Nothing about that path requires knowing what Python is.
