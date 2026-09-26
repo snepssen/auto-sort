@@ -268,7 +268,8 @@ def _kind(name):
 
 
 def _rank(path):
-    kind = _kind(os.path.basename(path))
+    name = os.path.basename(path)
+    kind = _kind(name)
     try:
         index = _PRIMARY_ORDER.index(kind)
     except ValueError:
@@ -277,7 +278,11 @@ def _rank(path):
         size = os.path.getsize(path)
     except OSError:
         size = 0
-    return (index, -size)
+    # A companion cannot displace the asset it accompanies, even when it is
+    # larger or appears first in the filesystem's listing. Break remaining
+    # ties by name so every platform selects the same primary.
+    return (_extension(name) in SIDECAR_EXTENSIONS,
+            index, -size, name.casefold(), name)
 
 
 def group(directory, names=None):
@@ -364,9 +369,11 @@ def group(directory, names=None):
         for other in members[1:]:
             extension = _extension(os.path.basename(other))
             if extension in _ART_EXTENSIONS:
-                # A JPEG beside a film is cover art. A JPEG beside another
-                # JPEG is just two photographs.
-                if primary_kind in _ART_PRIMARY_KINDS:
+                # A JPEG beside a film is cover art; beside a RAW it is the
+                # rendered half of the photograph. Two rendered pictures
+                # remain separate.
+                if (primary_kind in _ART_PRIMARY_KINDS
+                        or _extension(os.path.basename(primary)) in RAW_EXTENSIONS):
                     kept.append(other)
                 else:
                     loose.append(other)
