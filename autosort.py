@@ -918,19 +918,21 @@ def relaunch(rule_path=None, state=None, port=None, wait_seconds=20):
     another. This is the inside view, and it runs in the process that has
     just stopped being the daemon.
 
-    Where launchd owns the login item there is nothing to do but say so: it
-    keeps this alive, so exiting is the restart. Anywhere else a detached
-    replacement is started here, which also covers the daemon somebody
-    started by hand in a terminal they have since closed.
+    Where launchd owns the login item there is nothing to do but go: it
+    keeps this alive, so exiting is the restart. It must not wait to see
+    the replacement, because launchd starts one only once this process --
+    its job -- has exited. Waiting for it did exactly that: every Restart
+    from the tray left no daemon and no icon for twenty seconds, then said
+    launchd had not brought it back, and only then let launchd do so.
+
+    Anywhere else a detached replacement is started here, which also
+    covers the daemon somebody started by hand in a terminal they have
+    since closed.
     """
     mine = os.getpid()
     if state is None and port is None and _launchd_manages():
-        if _wait_for_new_daemon(state, mine, wait_seconds):
-            print("Restarted by launchd. %s" % _daemon_line(state))
-            return 0
-        print("Stood down for a restart, but launchd has not brought it "
-              "back yet.", file=sys.stderr)
-        return 1
+        print("Stood down for a restart; launchd starts the new code.")
+        return 0
 
     # Detached, so it outlives this command rather than dying with it.
     failure = _spawn_daemon(_watch_command(rule_path, state, port))

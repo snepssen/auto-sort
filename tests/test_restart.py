@@ -259,17 +259,21 @@ class RestartingItself(unittest.TestCase):
 
     def test_launchd_is_left_to_do_it(self):
         """KeepAlive means exiting *is* the restart; a second one would be
-        a daemon racing its own replacement for the port."""
-        started = []
+        a daemon racing its own replacement for the port. And it is left to
+        do it at once: launchd starts the replacement only after this
+        process has exited, so waiting here for it only delays it."""
+        started, waited = [], []
         with mock.patch.object(autosort, "_launchd_manages",
                                return_value=True), \
                 mock.patch("subprocess.Popen",
                            side_effect=lambda cmd, **k: started.append(cmd)), \
                 mock.patch.object(autosort, "_wait_for_new_daemon",
-                                  return_value=True), \
+                                  side_effect=lambda *a, **k:
+                                  waited.append(a) or True), \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(autosort.relaunch(), 0)
         self.assertEqual(started, [])
+        self.assertEqual(waited, [], "waited for launchd, which waits for us")
 
     def test_a_named_daemon_is_never_left_to_launchd(self):
         """A state file or a port names a daemon launchd knows nothing of."""
