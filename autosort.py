@@ -886,7 +886,7 @@ def restart(rule_path=None, state=None, port=None, wait_seconds=20):
 
     if not was_running:
         print("auto-sort is not running (%s)." % reason)
-        print("Start it with: auto-sort start")
+        print("Start it with: auto-sort open-log --start")
         return 1
 
     if not daemon_module.wake(state, "quit"):
@@ -1853,7 +1853,8 @@ def init(destination=None):
 
 USAGE = """auto-sort %s
 
-  auto-sort start               set up if needed, then run in the background
+  auto-sort start               set up if needed, then run here until Ctrl-C
+  auto-sort open-log --start    start it in the background, and open its page
   auto-sort restart             stop it and start it again on the current code
   auto-sort explain PATH        every fact about one file, and where it came from
   auto-sort scan FOLDER         what is in a folder, grouped into items
