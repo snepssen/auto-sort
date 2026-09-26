@@ -459,5 +459,88 @@ class LinuxBackend(unittest.TestCase):
         self.assertIn("session bus", item.reason)
 
 
+
+class AnyProgramsMenu(unittest.TestCase):
+    """The tray is auto-sort's, but nothing in it is: a `Look` says what the
+    icon is called and what its menu holds, and every backend draws that.
+    This is what lets tools-core carry the same file for other programs."""
+
+    def setUp(self):
+        self.done = []
+        self.actions = dict((name, (lambda name=name: self.done.append(name)))
+                            for name in ("open", "pause", "quit"))
+        self.look = tray.Look("My Backups", [
+            tray.Entry("open", "Open the folder"),
+            tray.Entry("pause", "Pause", paused_label="Resume"),
+            None,
+            tray.Entry("quit", "Quit"),
+        ], click="open", status="Idle", status_paused="Held")
+
+    def linux(self, look):
+        self.bus = FakeBus()
+        return tray._linux_tray(self.actions, connect=lambda: self.bus,
+                                look=look)
+
+    def labels(self):
+        _revision, (_id, _properties, children) = self.bus.invoke(
+            tray.MENU_PATH, tray.MENU, "GetLayout", 0, -1, [])
+        return [child.value[1].get("label", child.value[1].get("type")).value
+                for child in children]
+
+    def test_the_menu_is_the_one_it_was_given(self):
+        item = self.linux(self.look)
+        self.assertEqual(self.labels(),
+                         ["Open the folder", "Pause", "separator", "Quit"])
+        for number in (1, 2, 4):
+            self.bus.invoke(tray.MENU_PATH, tray.MENU, "Event", number,
+                            "clicked", dbuswire.Variant("s", ""), 0)
+        self.bus.invoke(tray.SNI_PATH, tray.SNI, "Activate", 1, 1)
+        self.assertEqual(self.done, ["open", "pause", "quit", "open"])
+        item.set_paused(True)
+        self.assertEqual(self.labels()[1], "Resume")
+        properties = self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES,
+                                     "GetAll", tray.SNI)[0]
+        self.assertEqual(properties["Title"].value, "My Backups")
+        self.assertEqual(properties["Id"].value, "my-backups")
+        self.assertEqual(properties["ToolTip"].value[2:], ("My Backups",
+                                                           "Held"))
+        self.assertFalse(properties["ItemIsMenu"].value)
+
+    def test_without_a_click_action_a_click_is_the_menu(self):
+        look = tray.Look("Menu only", [tray.Entry("quit", "Quit")])
+        self.linux(look)
+        properties = self.bus.invoke(tray.SNI_PATH, tray.PROPERTIES,
+                                     "GetAll", tray.SNI)[0]
+        self.assertTrue(properties["ItemIsMenu"].value)
+        self.bus.invoke(tray.SNI_PATH, tray.SNI, "Activate", 1, 1)
+        self.assertEqual(self.done, [])
+
+    def test_a_menu_it_cannot_draw_is_refused_when_described(self):
+        with self.assertRaises(ValueError):
+            tray.Look("Empty", [None])
+        with self.assertRaises(ValueError):
+            tray.Look("Long", [tray.Entry("x", str(n)) for n in range(33)])
+
+    def test_the_one_line_tooltip(self):
+        self.assertEqual(self.look.tooltip(False), "My Backups")
+        self.assertEqual(self.look.tooltip(True), "My Backups (held)")
+        self.assertEqual(tray.AUTO_SORT.tooltip(True), "auto-sort (paused)")
+
+    def test_the_native_menu_follows_the_look(self):
+        if sys.platform != "darwin":
+            self.skipTest("the native status item is macOS only")
+        item = tray.create(self.actions, self.look)
+        try:
+            self.assertTrue(item.available, getattr(item, "reason", ""))
+            self.assertEqual(item.runtime.send(
+                item.runtime.ctypes.c_long, item.menu, "numberOfItems"), 4)
+            item._clicked()
+            item._run_entry(3)
+            item.set_paused(True)
+            self.assertEqual(self.done, ["open", "quit"])
+        finally:
+            item.close()
+
+
 if __name__ == "__main__":
     unittest.main()

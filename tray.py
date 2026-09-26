@@ -1,9 +1,92 @@
-"""Optional native tray control, with a deliberately harmless headless mode."""
+"""A tray icon with a menu on macOS, Windows and Linux, from the standard library.
+
+    import tray
+
+    look = tray.Look("Backups", [
+        tray.Entry("open", "Open the folder"),
+        tray.Entry("pause", "Pause", paused_label="Resume"),
+        None,                                    # a separator
+        tray.Entry("quit", "Quit"),
+    ], click="open")
+    icon = tray.create({"open": ..., "pause": ..., "quit": ...}, look)
+    while running:
+        icon.pump(0.25)                          # answer clicks, then return
+    icon.close()
+
+Nothing is installed and nothing runs on a thread: the owner calls `pump`
+from its own loop, and clicks run its callbacks from inside that call. A
+left click runs the `click` action; the menu is a right click away.
+`set_paused(True)` is the item's one second state: each entry that has a
+`paused_label` shows it, and the icon says so where the platform can.
+
+`create` never raises. Where there is no tray to be had -- no desktop, no
+session bus, a failure in a backend -- it returns an object with the same
+methods that does nothing and says why in `reason`, because an icon must
+never be the thing that stops the program it belongs to.
+
+auto-sort's own menu is `AUTO_SORT`, and what `create` uses by default.
+"""
 
 from __future__ import annotations
 
 import os
+import re
 import sys
+
+
+class Entry(object):
+    """One line of the menu: the action it runs, and what it says."""
+
+    def __init__(self, action, label, paused_label=None):
+        self.action = action
+        self.label = label
+        self.paused_label = paused_label
+
+    def text(self, paused):
+        return self.paused_label if paused and self.paused_label \
+            else self.label
+
+
+class Look(object):
+    """What the icon is called, what its menu holds, and what it looks like.
+
+    `entries` are `Entry` objects, or None for a separator. `click` is the
+    action a left click runs. `status` and `status_paused` are the line
+    under the title in a Linux tooltip. `symbol` is an SF Symbol name for
+    the macOS menu bar; `icon` a freedesktop icon name for Linux, with
+    `pixmaps` -- `(width, height, big-endian ARGB bytes)` -- drawn instead by
+    a host whose theme has no such icon. Windows shows the shell's icon for
+    a plain file: loading an icon of one's own is Win32 surface that nobody
+    has seen run.
+    """
+
+    MAX_ENTRIES = 32
+
+    def __init__(self, title, entries, click=None, status="",
+                 status_paused="Paused", symbol="doc", icon="folder",
+                 pixmaps=None):
+        entries = list(entries)
+        if not any(entries):
+            raise ValueError("a tray menu needs at least one entry")
+        if len(entries) > self.MAX_ENTRIES:
+            raise ValueError("at most %d menu entries" % self.MAX_ENTRIES)
+        self.title = title
+        self.entries = entries
+        self.click = click
+        self.status = status
+        self.status_paused = status_paused
+        self.symbol = symbol
+        self.icon = icon
+        self.pixmaps = pixmaps
+
+    def tooltip(self, paused):
+        """One line, for the platforms whose tooltip is one line."""
+        return "%s (%s)" % (self.title, self.status_paused.lower()) \
+            if paused and self.status_paused else self.title
+
+    def slug(self):
+        return re.sub(r"[^A-Za-z0-9]+", "-", self.title).strip("-").lower() \
+            or "tray"
 
 
 class UnavailableTray(object):
@@ -39,14 +122,32 @@ def report(item):
             "reason": getattr(item, "reason", "")}
 
 
-def create(actions):
-    """Return a best-effort native tray, never an object that can stop sorting."""
+# Restart is in the menu because a daemon cannot reload its own code, so
+# every change to auto-sort itself needs one -- and asking for a terminal is
+# the wrong answer for somebody whose whole interface is this icon.
+AUTO_SORT = Look("auto-sort", [
+    Entry("open_log", "Open log"),
+    Entry("toggle_pause", "Pause sorting", paused_label="Resume sorting"),
+    Entry("sort_now", "Sort now"),
+    None,
+    Entry("restart", "Restart auto-sort"),
+    Entry("quit", "Quit auto-sort"),
+], click="open_log", status="Watching your folders", status_paused="Paused",
+    symbol="doc", icon="folder")
+
+
+def create(actions, look=None):
+    """Return a best-effort native tray, never an object that can stop sorting.
+
+    `actions` maps each entry's action name to a function of no arguments.
+    """
+    look = look or AUTO_SORT
     try:
         if sys.platform == "darwin":
-            return _mac_tray(actions)
+            return _mac_tray(actions, look)
         if sys.platform.startswith("win"):
-            return _windows_tray(actions)
-        return _linux_tray(actions)
+            return _windows_tray(actions, look)
+        return _linux_tray(actions, look=look)
     except Exception as error:
         return UnavailableTray("native tray unavailable: %s" % error)
 
@@ -69,8 +170,9 @@ def create(actions):
 
 # Objective-C registers class names process-wide, so the target class can be
 # built exactly once. The methods therefore cannot close over one tray's
-# callbacks; they go through whichever tray is currently active instead.
-# There is only ever one.
+# callbacks; they go through whichever tray is currently active instead,
+# and name menu entries by position -- `entry0:` to `entry31:` -- rather
+# than by action. There is only ever one tray.
 _MAC_TARGET = None
 _ACTIVE = None
 
@@ -154,25 +256,24 @@ class _Runtime(object):                                      # pragma: no cover
         return created
 
 
-def _dispatch(name):                                         # pragma: no cover
+def _dispatch(position):                                     # pragma: no cover
     """Route a menu selector to the tray that is currently up."""
     tray = _ACTIVE
     if tray is None:
         return
-    if name == "clicked":
+    if position is None:
         tray._clicked()
         return
-    action = tray.actions.get(name)
-    if action:
-        action()
+    tray._run_entry(position)
 
 
-def _mac_tray(actions):                                      # pragma: no cover
+def _mac_tray(actions, look=None):                           # pragma: no cover
     """A status item built on the Objective-C runtime, with no dependencies."""
     import ctypes
 
     runtime = _Runtime()
     void_p = ctypes.c_void_p
+    look = look or AUTO_SORT
 
     class MacTray(object):
         available = True
@@ -181,6 +282,7 @@ def _mac_tray(actions):                                      # pragma: no cover
         def __init__(self):
             self.runtime = runtime
             self.actions = actions
+            self.look = look
             self.menu_showing = False
             application = runtime.send(void_p, runtime.cls("NSApplication"),
                                        "sharedApplication")
@@ -217,44 +319,33 @@ def _mac_tray(actions):                                      # pragma: no cover
             global _MAC_TARGET
             if _MAC_TARGET is not None:
                 return _MAC_TARGET
-            _MAC_TARGET = runtime.define("AutoSortStatusTarget", {
-                "clicked:": lambda: _dispatch("clicked"),
-                "openLog:": lambda: _dispatch("open_log"),
-                "togglePause:": lambda: _dispatch("toggle_pause"),
-                "sortNow:": lambda: _dispatch("sort_now"),
-                "restart:": lambda: _dispatch("restart"),
-                "quit:": lambda: _dispatch("quit"),
-            })
+            methods = {"clicked:": lambda: _dispatch(None)}
+            for position in range(Look.MAX_ENTRIES):
+                methods["entry%d:" % position] = (
+                    lambda position=position: _dispatch(position))
+            _MAC_TARGET = runtime.define("StdlibTrayStatusTarget", methods)
             return _MAC_TARGET
 
         def _set_icon(self):
             image = runtime.send(
                 void_p, runtime.cls("NSImage"),
                 "imageWithSystemSymbolName:accessibilityDescription:",
-                (void_p, runtime.string("doc")),
-                (void_p, runtime.string("auto-sort")))
+                (void_p, runtime.string(look.symbol or "")),
+                (void_p, runtime.string(look.title)))
             if image:
                 runtime.send(None, image, "setTemplate:", (ctypes.c_bool, True))
                 runtime.send(None, self.button, "setImage:", (void_p, image))
             else:
                 runtime.send(None, self.button, "setTitle:",
-                             (void_p, runtime.string("AS")))
+                             (void_p, runtime.string(look.title[:2])))
 
         def _build_menu(self):
             self.menu = runtime.send(void_p, runtime.send(
                 void_p, runtime.cls("NSMenu"), "alloc"), "init")
             self.pause_item = None
-            # Restart is in the menu because a daemon cannot reload its own
-            # code, so every change to auto-sort itself needs one -- and
-            # asking for a terminal is the wrong answer for somebody whose
-            # whole interface is this icon.
-            for title, selector in (("Open log", "openLog:"),
-                                    ("Pause sorting", "togglePause:"),
-                                    ("Sort now", "sortNow:"),
-                                    (None, None),
-                                    ("Restart auto-sort", "restart:"),
-                                    ("Quit auto-sort", "quit:")):
-                if title is None:
+            self.items = {}
+            for position, entry in enumerate(look.entries):
+                if entry is None:
                     separator = runtime.send(void_p,
                                              runtime.cls("NSMenuItem"),
                                              "separatorItem")
@@ -265,20 +356,29 @@ def _mac_tray(actions):                                      # pragma: no cover
                     void_p, runtime.send(void_p, runtime.cls("NSMenuItem"),
                                          "alloc"),
                     "initWithTitle:action:keyEquivalent:",
-                    (void_p, runtime.string(title)),
-                    (void_p, runtime.sel(selector)),
+                    (void_p, runtime.string(entry.label)),
+                    (void_p, runtime.sel("entry%d:" % position)),
                     (void_p, runtime.string("")))
                 runtime.send(None, item, "setTarget:", (void_p, self.instance))
                 runtime.send(None, self.menu, "addItem:", (void_p, item))
-                if selector == "togglePause:":
+                self.items[position] = item
+                if entry.paused_label and self.pause_item is None:
                     self.pause_item = item
 
-        def _clicked(self):
-            """Left click opens the log; right click raises the menu.
+        def _run_entry(self, position):
+            entries = self.look.entries
+            entry = entries[position] if position < len(entries) else None
+            callback = self.actions.get(entry.action) if entry else None
+            if callback:
+                callback()
 
-            A menu attached permanently swallows every click and the icon
-            stops opening the log, so it is attached for the length of one
-            right click and taken away again.
+        def _clicked(self):
+            """Left click runs the click action; right click raises the menu.
+
+            A menu attached permanently swallows every click and the left
+            click stops doing anything, so it is attached for the length of
+            one right click and taken away again. With no click action there
+            is nothing to lose, and every click raises the menu.
             """
             event = runtime.send(void_p, self.application, "currentEvent")
             secondary = False
@@ -288,7 +388,9 @@ def _mac_tray(actions):                                      # pragma: no cover
                                          "modifierFlags")
                 secondary = (kind == 4                      # RightMouseUp
                              or bool(modifiers & (1 << 18)))  # Control
-            if secondary:
+            click = self.actions.get(self.look.click) \
+                if self.look.click else None
+            if secondary or click is None:
                 runtime.send(None, self.status_item, "setMenu:",
                              (void_p, self.menu))
                 runtime.send(None, self.button, "performClick:",
@@ -296,14 +398,14 @@ def _mac_tray(actions):                                      # pragma: no cover
                 runtime.send(None, self.status_item, "setMenu:",
                              (void_p, None))
             else:
-                actions["open_log"]()
+                click()
 
         def set_paused(self, paused):
-            if self.pause_item:
-                runtime.send(None, self.pause_item, "setTitle:",
-                             (void_p, runtime.string(
-                                 "Resume sorting" if paused
-                                 else "Pause sorting")))
+            for position, item in self.items.items():
+                entry = self.look.entries[position]
+                if entry.paused_label:
+                    runtime.send(None, item, "setTitle:",
+                                 (void_p, runtime.string(entry.text(paused))))
 
         def pump(self, seconds):
             """Dequeue and dispatch what the window server has sent.
@@ -344,7 +446,7 @@ def _mac_tray(actions):                                      # pragma: no cover
     return _ACTIVE
 
 
-def _windows_tray(actions):                                  # pragma: no cover
+def _windows_tray(actions, look=None):                       # pragma: no cover
     """Shell_NotifyIcon implementation using only ctypes and a hidden window.
 
     The callback lives on the daemon thread: `PollingDaemon` calls `pump` at
@@ -362,6 +464,7 @@ def _windows_tray(actions):                                  # pragma: no cover
 
     import winapi
 
+    look = look or AUTO_SORT
     user32 = winapi.load("user32")
     shell32 = winapi.load("shell32")
     kernel32 = winapi.load("kernel32")
@@ -378,7 +481,7 @@ def _windows_tray(actions):                                  # pragma: no cover
     TPM_RIGHTBUTTON = 0x0002
     MF_SEPARATOR = 0x0800
     PM_REMOVE = 0x0001
-    ID_OPEN, ID_TOGGLE, ID_SORT, ID_QUIT, ID_RESTART = 1, 2, 3, 4, 5
+    # A menu entry's command id is its position plus one; zero is "none".
     IDI_APPLICATION = 32512
     SHGFI_ICON, SHGFI_SMALLICON, SHGFI_USEFILEATTRIBUTES = 0x100, 0x1, 0x10
     FILE_ATTRIBUTE_NORMAL = 0x80
@@ -394,7 +497,7 @@ def _windows_tray(actions):                                  # pragma: no cover
 
         def __init__(self):
             self.instance = kernel32.GetModuleHandleW(None)
-            self.class_name = "auto-sort-tray-%d" % id(self)
+            self.class_name = "%s-tray-%d" % (look.slug(), id(self))
             self.paused = False
             self.closed = False
             # Explorer broadcasts this when the taskbar comes back after a
@@ -434,7 +537,7 @@ def _windows_tray(actions):                                  # pragma: no cover
             self.icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
             self.icon_data.uCallbackMessage = CALLBACK
             self.icon_data.hIcon = self.icon
-            self.icon_data.szTip = "auto-sort"
+            self.icon_data.szTip = look.tooltip(False)[:127]
             if not shell32.Shell_NotifyIconW(NIM_ADD,
                                              ctypes.byref(self.icon_data)):
                 error = winapi.last_error()
@@ -445,7 +548,11 @@ def _windows_tray(actions):                                  # pragma: no cover
 
         def _window_proc(self, window, message, wparam, lparam):
             if message == CALLBACK and lparam == WM_LBUTTONUP:
-                actions["open_log"]()
+                click = actions.get(look.click) if look.click else None
+                if click:
+                    click()
+                else:
+                    self._show_menu()
                 return 0
             if message == CALLBACK and lparam == WM_RBUTTONUP:
                 self._show_menu()
@@ -463,14 +570,12 @@ def _windows_tray(actions):                                  # pragma: no cover
         def _show_menu(self):
             menu = user32.CreatePopupMenu()
             try:
-                user32.AppendMenuW(menu, 0, ID_OPEN, "Open log")
-                user32.AppendMenuW(menu, 0, ID_TOGGLE,
-                                   "Resume sorting" if self.paused
-                                   else "Pause sorting")
-                user32.AppendMenuW(menu, 0, ID_SORT, "Sort now")
-                user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
-                user32.AppendMenuW(menu, 0, ID_RESTART, "Restart auto-sort")
-                user32.AppendMenuW(menu, 0, ID_QUIT, "Quit auto-sort")
+                for position, entry in enumerate(look.entries):
+                    if entry is None:
+                        user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+                    else:
+                        user32.AppendMenuW(menu, 0, position + 1,
+                                           entry.text(self.paused))
                 point = wintypes.POINT()
                 user32.GetCursorPos(ctypes.byref(point))
                 user32.SetForegroundWindow(self.window)
@@ -484,10 +589,10 @@ def _windows_tray(actions):                                  # pragma: no cover
                 user32.DestroyMenu(menu)
 
         def _run_action(self, item):
-            mapping = {ID_OPEN: "open_log", ID_TOGGLE: "toggle_pause",
-                       ID_SORT: "sort_now", ID_RESTART: "restart",
-                       ID_QUIT: "quit"}
-            callback = actions.get(mapping.get(item))
+            position = item - 1
+            entry = look.entries[position] \
+                if 0 <= position < len(look.entries) else None
+            callback = actions.get(entry.action) if entry else None
             if callback:
                 callback()
 
@@ -497,8 +602,7 @@ def _windows_tray(actions):                                  # pragma: no cover
                 return
             self.paused = paused
             self.icon_data.uFlags = NIF_TIP
-            self.icon_data.szTip = ("auto-sort (paused)" if paused
-                                    else "auto-sort")
+            self.icon_data.szTip = look.tooltip(paused)[:127]
             shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self.icon_data))
             self.icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
 
@@ -610,8 +714,9 @@ WATCHER_FREEDESKTOP = ("org.freedesktop.StatusNotifierWatcher",
                        "org.freedesktop.StatusNotifierWatcher")
 WATCHERS = (WATCHER, WATCHER_FREEDESKTOP)
 
-# A name from the freedesktop icon naming specification, so every icon
-# theme has one; the same icon the applications-menu entry uses.
+# auto-sort's icon: a name from the freedesktop icon naming specification,
+# so every icon theme has one; the same icon the applications-menu entry
+# uses. Another program's is its `Look.icon`.
 ICON = "folder"
 PAUSED_OVERLAY = "media-playback-pause"
 
@@ -673,18 +778,18 @@ def _pause_pixmap(size):
     return size, size, bytes(out)
 
 
-# Menu item ids. Zero is the root, by the protocol.
-_OPEN, _TOGGLE, _SORT, _SEPARATOR, _RESTART, _QUIT = 1, 2, 3, 4, 5, 6
+# Menu item ids are an entry's position plus one. Zero is the root, by the
+# protocol.
 
 
-def _linux_tray(actions, connect=None):
+def _linux_tray(actions, connect=None, look=None):
     import dbuswire
 
     if connect is None:
         connect = dbuswire.Connection
     connection = connect()
     try:
-        return LinuxTray(actions, connection, dbuswire)
+        return LinuxTray(actions, connection, dbuswire, look)
     except Exception:
         connection.close()
         raise
@@ -695,12 +800,13 @@ class LinuxTray(object):
 
     `available` says whether a host was there to show it when it started.
     Where none was -- a desktop that has no tray protocol, or a login where
-    auto-sort beat the desktop to it -- the item still listens, and appears
-    by itself if a watcher turns up later.
+    the program beat the desktop to it -- the item still listens, and
+    appears by itself if a watcher turns up later.
     """
 
-    def __init__(self, actions, connection, dbuswire):
+    def __init__(self, actions, connection, dbuswire, look=None):
         self.actions = actions
+        self.look = look or AUTO_SORT
         self.bus = connection
         self.dbus = dbuswire
         self.paused = False
@@ -823,16 +929,19 @@ class LinuxTray(object):
 
     def _item_properties(self):
         variant = self._variant
-        state = "Paused" if self.paused else "Watching your folders"
+        look = self.look
+        state = look.status_paused if self.paused else look.status
+        icon = look.icon or ""
+        pixmaps = _FOLDER_PIXMAPS if look.pixmaps is None else look.pixmaps
         return {
             "Category": variant("s", "ApplicationStatus"),
-            "Id": variant("s", "auto-sort"),
-            "Title": variant("s", "auto-sort"),
+            "Id": variant("s", look.slug()),
+            "Title": variant("s", look.title),
             "Status": variant("s", "Active"),
             "WindowId": variant("i", 0),
-            "IconName": variant("s", ICON),
+            "IconName": variant("s", icon),
             "IconThemePath": variant("s", ""),
-            "IconPixmap": variant("a(iiay)", _FOLDER_PIXMAPS),
+            "IconPixmap": variant("a(iiay)", pixmaps),
             "OverlayIconName": variant("s", PAUSED_OVERLAY
                                        if self.paused else ""),
             "OverlayIconPixmap": variant("a(iiay)", _PAUSE_PIXMAPS
@@ -841,15 +950,16 @@ class LinuxTray(object):
             "AttentionIconPixmap": variant("a(iiay)", []),
             "AttentionMovieName": variant("s", ""),
             "ToolTip": variant("(sa(iiay)ss)",
-                               (ICON, [], "auto-sort", state)),
-            "ItemIsMenu": variant("b", False),
+                               (icon, [], look.title, state or "")),
+            # With no click action, a left click shows the menu too.
+            "ItemIsMenu": variant("b", not look.click),
             "Menu": variant("o", MENU_PATH),
         }
 
     def _activate(self, _message):
-        # A left click opens the log, as it does on a Mac; the menu is a
-        # right click away.
-        self._run("open_log")
+        # A left click runs the click action, as it does on a Mac; the menu
+        # is a right click away.
+        self._run(self.look.click)
         return "", []
 
     # -- the menu -----------------------------------------------------------
@@ -863,21 +973,14 @@ class LinuxTray(object):
 
     def _menu_items(self):
         variant = self._variant
-        # Restart is here because a daemon cannot reload its own code, and
-        # asking for a terminal is the wrong answer for somebody whose whole
-        # interface is this icon.
         items = {0: {"children-display": variant("s", "submenu")}}
-        for number, label in ((_OPEN, "Open log"),
-                              (_TOGGLE, "Resume sorting" if self.paused
-                               else "Pause sorting"),
-                              (_SORT, "Sort now"),
-                              (_SEPARATOR, None),
-                              (_RESTART, "Restart auto-sort"),
-                              (_QUIT, "Quit auto-sort")):
-            if label is None:
+        for position, entry in enumerate(self.look.entries):
+            number = position + 1
+            if entry is None:
                 items[number] = {"type": variant("s", "separator")}
             else:
-                items[number] = {"label": variant("s", label),
+                items[number] = {"label": variant("s",
+                                                  entry.text(self.paused)),
                                  "enabled": variant("b", True),
                                  "visible": variant("b", True)}
         return items
@@ -891,8 +994,7 @@ class LinuxTray(object):
         if number == 0 and depth != 0:
             children = [self._variant("(ia{sv}av)",
                                       self._node(child, names, depth - 1))
-                        for child in (_OPEN, _TOGGLE, _SORT, _SEPARATOR,
-                                      _RESTART, _QUIT)]
+                        for child in range(1, len(self.look.entries) + 1)]
         return (number, properties, children)
 
     def _get_layout(self, message):
@@ -925,9 +1027,9 @@ class LinuxTray(object):
         return "ai", [[]]
 
     def _clicked(self, number):
-        self._run({_OPEN: "open_log", _TOGGLE: "toggle_pause",
-                   _SORT: "sort_now", _RESTART: "restart",
-                   _QUIT: "quit"}.get(number))
+        entries = self.look.entries
+        entry = entries[number - 1] if 0 < number <= len(entries) else None
+        self._run(entry.action if entry else None)
 
     def _run(self, action):
         callback = self.actions.get(action) if action else None
