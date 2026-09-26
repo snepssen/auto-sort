@@ -22,11 +22,23 @@ import ledger                                            # noqa: E402
 import sorter                                            # noqa: E402
 
 
+def spend(seconds):
+    """Take at least `seconds` by the clock the watch reads.
+
+    Not `time.sleep`: on Windows a sleep is timed by a different clock and
+    can end a fraction early by this one, and a block that took 9.7 ms
+    failed a test for being measured at 9.7 ms.
+    """
+    deadline = time.perf_counter() + seconds
+    while time.perf_counter() < deadline:
+        pass
+
+
 class TakingTheReading(unittest.TestCase):
 
     def test_a_watch_times_the_block(self):
         with costs.Watch() as watch:
-            time.sleep(0.02)
+            spend(0.02)
         self.assertGreaterEqual(watch.seconds, 0.02)
 
     def test_a_failure_is_still_measured(self):
@@ -34,7 +46,7 @@ class TakingTheReading(unittest.TestCase):
         watch = costs.Watch()
         with self.assertRaises(ValueError):
             with watch:
-                time.sleep(0.01)
+                spend(0.01)
                 raise ValueError("unreadable")
         self.assertGreaterEqual(watch.seconds, 0.01)
 
