@@ -1338,3 +1338,16 @@ and regression checks.
 hazards that have to be handled before anything is allowed to move a file.
 [ROADMAP.md](ROADMAP.md) covers what is not built: the rest of the job
 manager and Windows, and what is still open about the Linux tray.
+
+## Licence
+
+auto-sort is released under the MIT licence, copyright 2026 snepssen. The
+terms are in [LICENSE](LICENSE).
+
+The project page's type is self-hosted in [docs/fonts](docs/fonts): Inter,
+JetBrains Mono and Space Grotesk. Those files are under the SIL Open Font
+License 1.1, not the MIT licence. The copyright line for each family is in
+[docs/fonts/OFL.txt](docs/fonts/OFL.txt).
+
+`tesseract`, `ffprobe` and `exiftool` are optional external programs. They
+are not bundled.
