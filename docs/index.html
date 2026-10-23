@@ -168,9 +168,8 @@
     </a>
     <div class="ecosystem-rail__jumps" role="navigation" aria-label="On this page">
       <a href="#evidence">How it decides</a>
-      <a href="#learns">What it learns</a>
-      <a href="#safe">Safety</a>
       <a href="#running">Running it</a>
+      <a href="#in-depth">How it works</a>
       <a href="#contact">Contact</a>
     </div>
     <div class="ecosystem-rail__more" hidden>
@@ -204,7 +203,7 @@
 
 <div class="wrap">
 <header id="top" class="mast">
-  <span class="badge"><span class="dot"></span>macOS · Windows · Linux · MIT</span>
+  <span class="badge"><span class="dot"></span>macOS · Linux · tested on Windows · MIT</span>
   <h1>auto-sort</h1>
   <p class="subhead">Almost everything unwanted on a computer arrived through the Downloads folder. It is not somewhere anybody keeps things — it is where files land on the way to somewhere else — so auto-sort treats it as a funnel: everything leaves, and nothing is kept back. It works out what each file is from its bytes rather than its name, learns the structure from the folder itself, and writes down every move so that all of it can be undone.</p>
   <div class="headmeta">
@@ -249,9 +248,39 @@
   <p>A fact that could not be established is absent rather than empty. A missing reader therefore narrows what can match instead of making it match wrongly — which is what lets one rules file work on a capable machine and a bare one.</p>
 </section>
 
-<section id="learns">
-  <p class="eyebrow">Structure</p>
-  <h2>It learns the folder, rather than being told</h2>
+<section id="running">
+  <p class="eyebrow">Getting started</p>
+  <h2>It runs itself, from an icon</h2>
+  <p class="lede">Double-click <b>Start auto-sort.command</b> on macOS, <span class="mono">start.sh</span> on Linux or <span class="mono">start.bat</span> on Windows. It writes a rules file if there is not one, says what it is about to watch, points out that dry run is on, and then runs — leaving an icon in the menu bar and a log page behind it. None of that requires knowing what Python is.</p>
+  <figure class="shot">
+    <picture>
+      <img src="screens/ledger.png" alt="The log page auto-sort leaves behind: a ledger of every file it has moved, newest first, with the destination, the rule that placed it and the status. A search box asks the whole history, not just the page on screen, and each row can be revealed, restored, or sent to the system bin." width="2000"
+           height="1082" loading="lazy"
+           decoding="async">
+    </picture>
+    <figcaption>This is the whole interface. There is no install wizard and no settings screen to learn — the icon opens this page, and this page is where a file that has gone missing is found again.</figcaption>
+  </figure>
+  <div class="figure">
+<pre class="report mono">auto-sort propose ~/Downloads --out my-rules.ini <span class="muted">what this folder needs</span>
+auto-sort sort ~/Downloads --rules my-rules.ini  <span class="muted">see what it would do</span>
+auto-sort explain FILE                           <span class="muted">why one file goes where</span>
+auto-sort corrections                            <span class="muted">what you moved back</span>
+auto-sort undo last                              <span class="muted">take it all back</span></pre>
+<p class="caption">The terminal is optional and the icon is not a wrapper around it — both drive the same ledger.</p>
+</div>
+  <h3>What it needs</h3>
+  <p><b>Python 3.8 or newer, and nothing else</b> — no pip install, on any platform. Reading headers, learning conventions, deciding, moving files and remembering all of it are done with <span class="mono">struct</span>, <span class="mono">re</span>, <span class="mono">os</span> and <span class="mono">sqlite3</span>, which every Python already has.</p>
+  <p>Even the menu bar icon has no dependency: it is built on the Objective-C runtime through <span class="mono">ctypes</span>, the same way the Windows one is built on <span class="mono">Shell_NotifyIcon</span>. <span class="mono">ffprobe</span> and <span class="mono">exiftool</span> are used if they happen to be installed, and declining both still leaves a working sorter.</p>
+  <h3>What it deliberately does not do</h3>
+  <p>It does not look at content — no image, audio or video recognition. Files named after their own checksum carry nothing to sort by, and the report says how many there are rather than pretending otherwise. It does not rename a film library from an online database; that is Radarr's job and it is better at it. And it does not delete.</p>
+</section>
+
+<section id="in-depth" class="folds">
+  <p class="eyebrow">In depth</p>
+  <h2>How it works</h2>
+  <details class="fold" id="learns">
+    <summary><span class="fold__title">It learns the folder, rather than being told</span><span class="fold__teaser">It reads the shape a folder already has, from the naming conventions that repeat in it, instead of a rules file.</span></summary>
+    <div class="fold__body">
   <p class="lede">Writing a rules file by hand means deciding in advance what shape a folder should be. That is backwards: a disk with four hundred thousand files on it already has a shape, and the job is to find it.</p>
   <h3>Conventions it works out</h3>
   <p>A naming convention is, by definition, something that repeats — so it can be counted rather than tabulated. <em>In a filename written by software, a field that repeats across many files is a category; a field different in every file is an identifier.</em></p>
@@ -280,11 +309,11 @@ into    = ~/Pictures/furaffinity/{group}</pre>
   <p>The ledger says where each file was put; the disk says where it is. Any difference is you disagreeing, and where you moved it to is the answer. auto-sort reports which rules you kept overriding — often more useful than any guess — and proposes a rule when enough corrections agree. It proposes; it never silently adjusts.</p>
   <h3>What it filed too early</h3>
   <p>A folder reveals itself gradually, so the files that arrive first are always filed worst — not through error, but because there was nothing to learn from yet. <span class="mono">regroup</span> goes back for them, moving what sits in a holding folder into structure that has since become visible, without anybody dragging files back into Downloads. Only provisional placements are revisited, so it is idempotent and cannot reshuffle a disk.</p>
-</section>
-
-<section id="safe">
-  <p class="eyebrow">Reversibility</p>
-  <h2>It is careful, and it can be undone</h2>
+    </div>
+  </details>
+  <details class="fold" id="safe">
+    <summary><span class="fold__title">It is careful, and it can be undone</span><span class="fold__teaser">Every move is in a ledger before it happens, so any of it can be undone. Nothing touches the network.</span></summary>
+    <div class="fold__body">
   <p class="lede">Every move is a row in a ledger before it happens and is confirmed after: source, destination, size, content hash, and the rule that fired. That ledger is the feature. It is the difference between a tool somebody points at their home directory and one they run once and delete.</p>
   <div class="cards">
     <div class="card"><h3>Preview first</h3><p class="mono">dry run by default</p><p>And the first real run against any folder is forced to a preview you have to look at before a second run will move anything.</p></div>
@@ -304,33 +333,8 @@ into    = ~/Pictures/furaffinity/{group}</pre>
     </picture>
     <figcaption>Same page, same click depth as everything else here. Turning it on protects what is already on disk, not only what arrives next.</figcaption>
   </figure>
-</section>
-
-<section id="running">
-  <p class="eyebrow">Getting started</p>
-  <h2>It runs itself, from an icon</h2>
-  <p class="lede">Double-click <b>Start auto-sort.command</b> on macOS, <span class="mono">start.sh</span> on Linux or <span class="mono">start.bat</span> on Windows. It writes a rules file if there is not one, says what it is about to watch, points out that dry run is on, and then runs — leaving an icon in the menu bar and a log page behind it. None of that requires knowing what Python is.</p>
-  <figure class="shot">
-    <picture>
-      <img src="screens/ledger.png" alt="The log page auto-sort leaves behind: a ledger of every file it has moved, newest first, with the destination, the rule that placed it and the status. A search box asks the whole history, not just the page on screen, and each row can be revealed, restored, or sent to the system bin." width="2000"
-           height="1082" loading="lazy"
-           decoding="async">
-    </picture>
-    <figcaption>This is the whole interface. There is no install wizard and no settings screen to learn — the icon opens this page, and this page is where a file that has gone missing is found again.</figcaption>
-  </figure>
-  <div class="figure">
-<pre class="report mono">auto-sort propose ~/Downloads --out my-rules.ini <span class="muted">what this folder needs</span>
-auto-sort sort ~/Downloads --rules my-rules.ini  <span class="muted">see what it would do</span>
-auto-sort explain FILE                           <span class="muted">why one file goes where</span>
-auto-sort corrections                            <span class="muted">what you moved back</span>
-auto-sort undo last                              <span class="muted">take it all back</span></pre>
-<p class="caption">The terminal is optional and the icon is not a wrapper around it — both drive the same ledger.</p>
-</div>
-  <h3>What it needs</h3>
-  <p><b>Python 3.8 or newer, and nothing else</b> — no pip install, on any platform. Reading headers, learning conventions, deciding, moving files and remembering all of it are done with <span class="mono">struct</span>, <span class="mono">re</span>, <span class="mono">os</span> and <span class="mono">sqlite3</span>, which every Python already has.</p>
-  <p>Even the menu bar icon has no dependency: it is built on the Objective-C runtime through <span class="mono">ctypes</span>, the same way the Windows one is built on <span class="mono">Shell_NotifyIcon</span>. <span class="mono">ffprobe</span> and <span class="mono">exiftool</span> are used if they happen to be installed, and declining both still leaves a working sorter.</p>
-  <h3>What it deliberately does not do</h3>
-  <p>It does not look at content — no image, audio or video recognition. Files named after their own checksum carry nothing to sort by, and the report says how many there are rather than pretending otherwise. It does not rename a film library from an online database; that is Radarr's job and it is better at it. And it does not delete.</p>
+    </div>
+  </details>
 </section>
 
 <section class="ecosystem-more" aria-labelledby="ecosystem-heading">
@@ -343,56 +347,56 @@ auto-sort undo last                              <span class="muted">take it all
   </div>
   <div class="ecosystem-grid">
     <a class="ecosystem-card" data-project="gateway-forge" style="--card-accent: var(--eco-gateway)" href="https://snepssen.github.io/gateway-forge/">
-      <div class="ecosystem-card__index"><span>01 / JOURNEYS</span><span>macOS · Windows · Linux</span></div>
+      <div class="ecosystem-card__index"><span>01 / JOURNEYS</span><span>macOS</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">F10 ── F27</div>
       <h3>Gateway Forge</h3>
       <p>Assemble guided sessions and keep published maps beside what was actually found.</p>
       <span class="ecosystem-card__go">Explore Gateway Forge →</span>
     </a>
     <a class="ecosystem-card" data-project="voice-forge" style="--card-accent: var(--eco-voice)" href="https://snepssen.github.io/voice-forge/">
-      <div class="ecosystem-card__index"><span>02 / SPEECH</span><span>macOS · Windows · Linux</span></div>
+      <div class="ecosystem-card__index"><span>02 / SPEECH</span><span>macOS · Linux · untested: Windows</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">⌁ / həˈləʊ /</div>
       <h3>Voice Forge</h3>
       <p>A transparent Piper workbench for timing, pronunciation, and honest audio export.</p>
       <span class="ecosystem-card__go">Explore Voice Forge →</span>
     </a>
     <a class="ecosystem-card" data-project="protoke" style="--card-accent: var(--eco-protoke)" href="https://snepssen.github.io/protoke/">
-      <div class="ecosystem-card__index"><span>03 / VIDEO</span><span>macOS · Windows · Linux</span></div>
+      <div class="ecosystem-card__index"><span>03 / VIDEO</span><span>macOS · tested on Linux, Windows</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">◤ w ◥</div>
       <h3>Protoke</h3>
       <p>Karaoke and narration video with a vector visor face that mouths every word.</p>
       <span class="ecosystem-card__go">Explore Protoke →</span>
     </a>
     <a class="ecosystem-card" data-project="media-preflight" style="--card-accent: var(--eco-preflight)" href="https://snepssen.github.io/media-preflight/">
-      <div class="ecosystem-card__index"><span>04 / DELIVERY</span><span>macOS · Windows · Linux</span></div>
+      <div class="ecosystem-card__index"><span>04 / DELIVERY</span><span>macOS · tested on Linux, Windows</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">✓ ≤ -3 dB</div>
       <h3>Media Preflight</h3>
       <p>Check a finished file against where it is going, and correct it without touching the original.</p>
       <span class="ecosystem-card__go">Explore Media Preflight →</span>
     </a>
     <a class="ecosystem-card" data-project="siphon" style="--card-accent: var(--eco-siphon)" href="https://snepssen.github.io/siphon/">
-      <div class="ecosystem-card__index"><span>05 / INTAKE</span><span>macOS · Windows · Linux</span></div>
+      <div class="ecosystem-card__index"><span>05 / INTAKE</span><span>macOS · tested on Linux · untested: Windows</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">webm ⟶ mp3</div>
       <h3>siphon</h3>
       <p>Fetch from a link or convert what you already have, without re-encoding what it does not have to.</p>
       <span class="ecosystem-card__go">Explore siphon →</span>
     </a>
     <a class="ecosystem-card" data-project="auto-sort" style="--card-accent: var(--eco-autosort)" href="https://snepssen.github.io/auto-sort/" aria-current="page">
-      <div class="ecosystem-card__index"><span>06 / FILING</span><span>macOS · Windows · Linux</span></div>
+      <div class="ecosystem-card__index"><span>06 / FILING</span><span>macOS · Linux · tested on Windows</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">↓ Downloads → ∅</div>
       <h3>auto-sort</h3>
       <p>Empty the Downloads funnel into structure the folder taught it, and undo any of it.</p>
       <span class="ecosystem-card__go">Explore auto-sort →</span>
     </a>
     <a class="ecosystem-card" data-project="interpreter-forge" style="--card-accent: var(--eco-interpreter)" href="https://snepssen.github.io/interpreter-forge/">
-      <div class="ecosystem-card__index"><span>07 / INTERPRETING</span><span>macOS · iPhone</span></div>
+      <div class="ecosystem-card__index"><span>07 / INTERPRETING</span><span>macOS · iPhone · iPad · untested: Android</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">halb elf → 10:30</div>
       <h3>Interpreter</h3>
       <p>Hear the table in English a few seconds behind, cut at the end of each thought, on your own phone.</p>
       <span class="ecosystem-card__go">Explore Interpreter →</span>
     </a>
     <a class="ecosystem-card" data-project="companion-forge" style="--card-accent: var(--eco-companion)" href="https://snepssen.github.io/companion-forge/">
-      <div class="ecosystem-card__index"><span>08 / COMPANION</span><span>Mac · iPhone · iPad</span></div>
+      <div class="ecosystem-card__index"><span>08 / COMPANION</span><span>macOS · iPhone · iPad</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">mic → visor</div>
       <h3>companion-forge</h3>
       <p>A local voice companion for Mac, iPhone and iPad, with a protogen LED-visor face.</p>
@@ -413,7 +417,7 @@ auto-sort undo last                              <span class="muted">take it all
       <span class="ecosystem-card__go">Open the repository →</span>
     </a>
     <a class="ecosystem-card" data-project="voice-core" style="--card-accent: var(--eco-voicecore)" href="https://github.com/snepssen/voice-core">
-      <div class="ecosystem-card__index"><span>11 / ENGINE</span><span>Swift · macOS · iOS</span></div>
+      <div class="ecosystem-card__index"><span>11 / ENGINE</span><span>Swift · macOS · iOS · tested on Linux</span></div>
       <div class="ecosystem-card__glyph" aria-hidden="true">text → /ipa/ → ids</div>
       <h3>voice-core</h3>
       <p>The speech engine the apps share: espeak-ng, the phonemizer and Piper inference, from one source.</p>
@@ -440,6 +444,7 @@ auto-sort undo last                              <span class="muted">take it all
   <p class="eyebrow">Get in touch</p>
   <h2>If something looks wrong, say so</h2>
   <p>There is no analytics here and no crash reporter, so a failure has no way of reaching me on its own.</p>
+  <p>Its tests pass on Windows, but nobody has used it there by hand yet. If you use it on it, say what happened, working or not.</p>
   <div class="contact-card">
     <a href="https://github.com/snepssen/auto-sort/issues">Open an issue<span>github.com/snepssen/auto-sort ↗</span></a>
     <a href="https://t.me/snepssen">Telegram<span>@snepssen ↗</span></a>

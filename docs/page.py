@@ -16,7 +16,7 @@ PAGE = {
         "slug": "auto-sort",
         "name": "auto-sort",
         "title": "auto-sort",
-        "badge": "macOS · Windows · Linux · MIT",
+        "license": "MIT",
         "fonts": FONTS,
         "description": (
             "A Downloads folder that empties itself. auto-sort learns how a "
@@ -127,6 +127,8 @@ PAGE = {
             "jump": "What it learns",
             "eyebrow": "Structure",
             "heading": "It learns the folder, rather than being told",
+            "fold": True,
+            "teaser": 'It reads the shape a folder already has, from the naming conventions that repeat in it, instead of a rules file.',
             "blocks": [
                 {"kind": "prose", "class": "lede", "text": [
                     "Writing a rules file by hand means deciding in advance "
@@ -215,6 +217,8 @@ PAGE = {
             "jump": "Safety",
             "eyebrow": "Reversibility",
             "heading": "It is careful, and it can be undone",
+            "fold": True,
+            "teaser": 'Every move is in a ledger before it happens, so any of it can be undone. Nothing touches the network.',
             "blocks": [
                 {"kind": "prose", "class": "lede", "text": [
                     "Every move is a row in a ledger before it happens and is "
@@ -348,6 +352,7 @@ PAGE = {
                     "job and it is better at it. And it does not delete."]},
             ],
         },
+        {"folds": True},
     ],
 
     "footer": {
