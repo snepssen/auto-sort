@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -404,6 +405,33 @@ class EndToEnd(unittest.TestCase):
                                                 audio_tracks=2))
         self.assertEqual(record.value("video_tracks"), 1)
         self.assertEqual(record.value("audio_tracks"), 2)
+
+    def test_video_dimensions_are_width_then_height(self):
+        record = identify.identify(fixtures.mp4(self.path("wide.mp4"),
+                                                width=1920, height=1080))
+        self.assertEqual((record.value("width"), record.value("height")),
+                         (1920, 1080))
+
+    def test_a_rotated_phone_video_reads_as_portrait(self):
+        # Phones store the frame landscape and turn it with the matrix.
+        record = identify.identify(fixtures.mp4(self.path("phone.mov"),
+                                                width=1920, height=1080,
+                                                rotation=90))
+        self.assertEqual((record.value("width"), record.value("height")),
+                         (1080, 1920))
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is not installed: "
+                         "brew install ffmpeg / apt install ffmpeg")
+    def test_dimensions_of_a_file_ffmpeg_wrote(self):
+        # Written by a real muxer, not by fixtures.py, so a fixture that
+        # shares the reader's mistake cannot hide it.
+        path = self.path("real.mp4")
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i",
+                        "testsrc=duration=1:size=640x360:rate=5",
+                        "-pix_fmt", "yuv420p", path], check=True)
+        record = identify.identify(path, tier=identify.TIER_HEADER)
+        self.assertEqual((record.value("width"), record.value("height")),
+                         (640, 360))
 
     def test_tier_stat_reads_no_bytes(self):
         path = fixtures.png(self.path("thing.jpg"))

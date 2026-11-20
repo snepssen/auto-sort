@@ -54,8 +54,12 @@ def _mp4(peek):
             try:
                 width = int.from_bytes(body[offset + 68:offset + 70], "big")
                 height = int.from_bytes(body[offset + 72:offset + 74], "big")
-                matrix_a = struct.unpack(">i", body[offset + 28:offset + 32])[0]
-                matrix_b = struct.unpack(">i", body[offset + 32:offset + 36])[0]
+                # The matrix follows layer, alternate group, volume and a
+                # reserved word: 32 bytes past `offset`, not 28. Reading
+                # four bytes early took the volume for `a` and `a` for `b`,
+                # so every unrotated video read as turned a quarter.
+                matrix_a = struct.unpack(">i", body[offset + 32:offset + 36])[0]
+                matrix_b = struct.unpack(">i", body[offset + 36:offset + 40])[0]
             except (struct.error, IndexError):
                 width = height = 0
                 matrix_a = matrix_b = 0

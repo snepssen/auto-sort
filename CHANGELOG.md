@@ -8,6 +8,12 @@
 - Regression checks cover paths with spaces, unquoted document headings,
   invalid rules, saved tray errors, desktop metadata and broken-install
   reporting. The batch fallback check runs on Windows CI.
+- MP4 and MOV dimensions are read the right way round. The track header's
+  rotation matrix was read four bytes early, so every unrotated video was
+  taken for a turned one and reported with width and height swapped, while
+  portrait phone video read as landscape. Rules that depend on orientation
+  now see the real shape. The test fixture shared the mistake, which is why
+  nothing caught it; a test now reads a file FFmpeg wrote.
 
 ## 0.9.0 — the first release
 
