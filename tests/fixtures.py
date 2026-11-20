@@ -206,7 +206,15 @@ def pdf(path, producer="HP ScanJet Pro firmware", pages=3, text=None,
     return _write(path, out)
 
 
-def mp4(path, width=1920, height=1080, seconds=42.0, audio_tracks=1):
+def mp4(path, width=1920, height=1080, seconds=42.0, audio_tracks=1,
+        rotation=0):
+    """An MP4 whose video track header is laid out as ISO/IEC 14496-12 says.
+
+    The track header's matrix starts at byte 40 of a version-0 body, after
+    the layer, alternate group, volume and a reserved word. `rotation` 90
+    writes the matrix a phone writes for portrait video: the stored frame
+    stays landscape and the matrix turns it on playback.
+    """
     timescale = 1000
 
     def box(name, payload):
@@ -216,7 +224,12 @@ def mp4(path, width=1920, height=1080, seconds=42.0, audio_tracks=1):
                                                    int(seconds * timescale))
                + b"\x00" * 80)
     tkhd_body = bytearray(b"\x00" * 84)
-    struct.pack_into(">i", tkhd_body, 36, 0x00010000)
+    one, unity = 0x00010000, 0x40000000
+    if rotation == 90:
+        matrix = (0, one, 0, -one, 0, 0, 0, 0, unity)
+    else:
+        matrix = (one, 0, 0, 0, one, 0, 0, 0, unity)
+    struct.pack_into(">9i", tkhd_body, 40, *matrix)
     struct.pack_into(">HH", tkhd_body, 76, width, 0)
     struct.pack_into(">HH", tkhd_body, 80, height, 0)
     video = box(b"trak", box(b"tkhd", bytes(tkhd_body))
