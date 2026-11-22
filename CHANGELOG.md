@@ -1,6 +1,8 @@
 # Changes
 
-## Unreleased
+## 0.9.1
+
+A fix for how video is measured, and safer problem reports.
 
 - Problem reports now select known diagnostic fields instead of attempting
   to redact arbitrary text. Folder paths, learned names, raw errors and
